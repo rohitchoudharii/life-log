@@ -7,17 +7,17 @@ import { Group, Text } from './ui'
 export const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'ui-monospace, Menlo, monospace' })
 
 /** Renders stored content blocks natively. No foreign HTML is ever rendered. */
-export function BlockView({ block }: { block: Block }) {
+export function BlockView({ block, selectable = true }: { block: Block; selectable?: boolean }) {
 	const c = useColors()
 	switch (block.type) {
 		case 'heading':
-			return <Text variant="heading" selectable>{block.text}</Text>
+			return <Text variant="heading" selectable={selectable}>{block.text}</Text>
 		case 'paragraph':
-			return <Text selectable style={{ fontSize: 16, lineHeight: 26 }}>{block.text}</Text>
+			return <Text selectable={selectable} style={{ fontSize: 16, lineHeight: 26 }}>{block.text}</Text>
 		case 'quote':
 			return (
 				<View style={{ paddingLeft: space.md, borderLeftWidth: 2, borderColor: c.ring }}>
-					<Text selectable style={{ fontSize: 16, lineHeight: 26, color: c.sub }}>{block.text}</Text>
+					<Text selectable={selectable} style={{ fontSize: 16, lineHeight: 26, color: c.sub }}>{block.text}</Text>
 				</View>
 			)
 		case 'list':
@@ -26,7 +26,7 @@ export function BlockView({ block }: { block: Block }) {
 					{block.items.map((item, i) => (
 						<View key={i} style={{ flexDirection: 'row', gap: space.sm }}>
 							<Text style={{ fontSize: 16, lineHeight: 26, minWidth: 18 }}>{block.ordered ? `${i + 1}.` : '•'}</Text>
-							<Text selectable style={{ flex: 1, fontSize: 16, lineHeight: 26 }}>{item}</Text>
+							<Text selectable={selectable} style={{ flex: 1, fontSize: 16, lineHeight: 26 }}>{item}</Text>
 						</View>
 					))}
 				</Group>
@@ -50,7 +50,7 @@ export function BlockView({ block }: { block: Block }) {
 				/>
 			)
 		case 'code':
-			return <CodeBlock code={block.text} />
+			return <CodeBlock code={block.text} selectable={selectable} />
 	}
 }
 
@@ -58,10 +58,10 @@ export function BlockView({ block }: { block: Block }) {
  * Code in monospace. In the reader it scrolls sideways so long lines keep their shape; in a
  * question it wraps (`wrap`), so no line is hidden from someone who must read all of it.
  */
-export function CodeBlock({ code, wrap = false }: { code: string; wrap?: boolean }) {
+export function CodeBlock({ code, wrap = false, selectable = true }: { code: string; wrap?: boolean; selectable?: boolean }) {
 	const c = useColors()
 	const text = (
-		<RNText selectable style={{ fontFamily: mono, fontSize: 13, lineHeight: 20, color: c.fg }}>
+		<RNText selectable={selectable} style={{ fontFamily: mono, fontSize: 13, lineHeight: 20, color: c.fg }}>
 			{code}
 		</RNText>
 	)

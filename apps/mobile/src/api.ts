@@ -109,6 +109,17 @@ export type Today = {
 	ongoing: { id: string; title: string }[]
 }
 export type Me = { email: string; timezone: string; reminderTime: string | null; dailyReviewCap: number; qualityCheck: boolean }
+export type ExplainLevel = 'new' | 'standard' | 'expert'
+export type ExplainKind = 'explain' | 'analogy' | 'example'
+export type TeachMessage = { role: 'learner' | 'student'; text: string }
+type NoteBase = { id: string; itemId: string; sectionId: string; ideaId: string | null; passage: string | null; createdAt: string }
+export type Note =
+	| (NoteBase & { kind: 'explanation'; detail: { level: ExplainLevel; kind: ExplainKind; text: string; code: string | null; quote: string | null } })
+	| (NoteBase & {
+			kind: 'feynman'
+			detail: { idea: string; messages: TeachMessage[]; result: { gaps: string[]; strengths: string[]; summary: string } | null }
+	  })
+export type IdeaRef = { id: string; text: string; section: string }
 export type Provider = 'anthropic' | 'openai'
 export type KeyInfo = { provider: Provider; model: string; last4: string }
 
@@ -157,6 +168,13 @@ export const api = {
 		request<{ session: StudySession }>('POST', `/items/${itemId}/sessions`, { plannedMinutes }),
 	finishSession: (id: string) => request<{ session: StudySession }>('POST', `/sessions/${id}/finish`),
 	cancelSession: (id: string) => request('DELETE', `/sessions/${id}`),
+	notes: (itemId: string) => request<{ notes: Note[] }>('GET', `/items/${itemId}/notes`),
+	explain: (itemId: string, input: { sectionId: string; passage: string; level: ExplainLevel; kind: ExplainKind }) =>
+		request<{ note: Note }>('POST', `/items/${itemId}/explain`, input),
+	deleteNote: (id: string) => request('DELETE', `/notes/${id}`),
+	ideas: (itemId: string) => request<{ ideas: IdeaRef[] }>('GET', `/items/${itemId}/ideas`),
+	startTeaching: (ideaId: string, text: string) => request<{ note: Note }>('POST', `/ideas/${ideaId}/teach`, { text }),
+	teach: (noteId: string, text: string) => request<{ note: Note }>('POST', `/notes/${noteId}/teach`, { text }),
 	recall: (itemId: string, sectionIds: string[], text: string) => request<{ recall: Recall }>('POST', `/items/${itemId}/recall`, { sectionIds, text }),
 	regradeRecall: (id: string) => request<{ recall: Recall }>('POST', `/recall/${id}/grade`),
 	testQuestions: (itemId: string, sectionIds: string[], recallId?: string) =>

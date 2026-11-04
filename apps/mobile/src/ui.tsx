@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
-import type { ReactNode } from 'react'
+import { useRef, type ComponentRef, type ReactNode } from 'react'
 import {
 	ActivityIndicator,
 	Platform,
@@ -56,13 +56,17 @@ export function Text({
  * A scrolling page with the theme's screen margins and the safe area applied. The keyboard
  * shrinks the page, so text boxes and the footer's buttons stay above it.
  */
-export function Screen({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
+/** `stickToEnd` keeps the newest content in view as it grows, as in a chat. */
+export function Screen({ children, footer, stickToEnd = false }: { children: ReactNode; footer?: ReactNode; stickToEnd?: boolean }) {
 	const c = useColors()
+	const scroll = useRef<ComponentRef<typeof ScrollView>>(null)
 	const insets = useSafeAreaInsets()
 	const web = Platform.OS === 'web'
 	return (
 		<KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: c.bg }}>
 			<ScrollView
+				ref={scroll}
+				onContentSizeChange={stickToEnd ? () => scroll.current?.scrollToEnd({ animated: true }) : undefined}
 				contentContainerStyle={{
 					paddingTop: (web ? 0 : insets.top) + space.screenTop,
 					paddingHorizontal: space.screenX,

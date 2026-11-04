@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
+import { blockText } from '@peak/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Pressable, ScrollView, View } from 'react-native'
-import { api, type StudySession } from '@/api'
+import { Platform, Pressable, ScrollView, View } from 'react-native'
+import { api, type Note, type Section, type StudySession } from '@/api'
 import { BlockView } from '@/blocks'
 import { BucketPicker } from '@/buckets'
+import { ExplanationView, Passage } from '@/notes'
 import { cancelSessionEnd, scheduleSessionEnd } from '@/reminders'
 import { font, hairline, space, useColors } from '@/theme'
 import { Button, Choice, ChoiceRow, ErrorText, Group, Loading, Row, Text } from '@/ui'
@@ -13,6 +15,41 @@ import { formatClock, useNow } from '@/useNow'
 const DURATIONS = [15, 25, 45]
 /** The clock stays hidden so it does not pull attention, until the last seconds. */
 const SHOW_CLOCK_MS = 15_000
+
+const squash = (text: string) => text.replace(/\s+/g, ' ').trim()
+
+/**
+ * On the web, text selected in the reader, with the section it is in, so it can be explained.
+ * A selection across sections belongs to the section it starts in.
+ */
+function useWebSelection(sections: Section[] | undefined) {
+	const [selection, setSelection] = useState<{ text: string; sectionId: string } | null>(null)
+	useEffect(() => {
+		if (Platform.OS !== 'web' || !sections) return
+		const texts = sections.map((s) => ({ id: s.id, text: squash(s.blocks.map(blockText).join(' ')) }))
+		const onChange = () => {
+			const text = squash(window.getSelection()?.toString() ?? '')
+			const start = text.slice(0, 40)
+			const section = text.length >= 3 ? texts.find((s) => s.text.includes(start)) : undefined
+			setSelection(section ? { text, sectionId: section.id } : null)
+		}
+		document.addEventListener('selectionchange', onChange)
+		return () => document.removeEventListener('selectionchange', onChange)
+	}, [sections])
+	return selection
+}
+
+function SavedExplanation({ note, onDelete }: { note: Extract<Note, { kind: 'explanation' }>; onDelete(): void }) {
+	return (
+		<Group gap={space.md}>
+			<Passage text={note.passage ?? ''} />
+			<ExplanationView note={note} />
+			<Pressable accessibilityRole="button" onPress={onDelete} hitSlop={8} style={{ alignSelf: 'flex-start' }}>
+				<Text variant="muted">Delete</Text>
+			</Pressable>
+		</Group>
+	)
+}
 
 const headingStyle = (level: number) =>
 	level === 1
@@ -32,7 +69,12 @@ export default function Reader() {
 		refetchInterval: (q) => (q.state.data?.item.status === 'processing' ? 3000 : false),
 	})
 	const { refetch } = data
-	useFocusEffect(useCallback(() => void refetch(), [refetch]))
+	const notes = useQuery({ queryKey: ['notes', id], queryFn: () => api.notes(id) })
+	const refetchNotes = notes.refetch
+	useFocusEffect(useCallback(() => void (refetch(), refetchNotes()), [refetch, refetchNotes]))
+	const selection = useWebSelection(data.data?.sections)
+	const deleteNote = useMutation({ mutationFn: api.deleteNote, onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notes', id] }) })
+	const explanations = (notes.data?.notes ?? []).filter((n): n is Extract<Note, { kind: 'explanation' }> => n.kind === 'explanation')
 
 	const [minutes, setMinutes] = useState(25)
 	const session = data.data?.activeSession ?? null
@@ -159,11 +201,36 @@ export default function Reader() {
 								{s.title}
 							</Text>
 						)}
-						{s.blocks.map((b, j) => (
-							<BlockView key={j} block={b} />
-						))}
+						{s.blocks.map((b, j) =>
+							// Phones explain a block on long-press; the web explains selected text instead, so dragging to select stays free.
+							Platform.OS === 'web' || b.type === 'image' || b.type === 'page' ? (
+								<BlockView key={j} block={b} />
+							) : (
+								<Pressable
+									key={j}
+									onLongPress={() => router.push({ pathname: '/explain/[id]', params: { id, section: s.id, block: String(j) } })}
+									accessibilityHint="Long-press to have it explained"
+								>
+									<BlockView block={b} selectable={false} />
+								</Pressable>
+							),
+						)}
 					</View>
 				))}
+				{explanations.length > 0 && (
+					<Group gap={space.lg}>
+						<Text variant="heading">Your explanations</Text>
+						{explanations.map((n) => (
+							<SavedExplanation key={n.id} note={n} onDelete={() => deleteNote.mutate(n.id)} />
+						))}
+					</Group>
+				)}
+				<Group gap={space.sm}>
+					<Text variant="muted">
+						{Platform.OS === 'web' ? 'Select any text to have it explained.' : 'Long-press a paragraph to have it explained.'} Teach an idea back to find what you cannot explain yet.
+					</Text>
+					<Button title="Teach it back" kind="outline" onPress={() => router.push({ pathname: '/teach/[id]', params: { id } })} />
+				</Group>
 				<Group gap={space.sm}>
 					<BucketPicker value={item.collectionId} onChange={(id) => move.mutate(id)} />
 					<ErrorText error={move.error} />
@@ -188,7 +255,14 @@ export default function Reader() {
 					alignSelf: 'center',
 				}}
 			>
-				{footer}
+				{selection ? (
+					<Button
+						title="Explain selection"
+						onPress={() => router.push({ pathname: '/explain/[id]', params: { id, section: selection.sectionId, text: selection.text.slice(0, 4000) } })}
+					/>
+				) : (
+					footer
+				)}
 				<ErrorText error={finish.error ?? cancel.error} />
 			</View>
 		</View>

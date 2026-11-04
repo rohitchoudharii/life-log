@@ -9,6 +9,7 @@ import { auth } from './routes/auth'
 import { library } from './routes/library'
 import { llm } from './routes/llm'
 import { me } from './routes/me'
+import { notes } from './routes/notes'
 import { recall } from './routes/recall'
 import { sessions } from './routes/sessions'
 import { study } from './routes/study'
@@ -29,6 +30,7 @@ const app = new Hono()
 	.route('/', study)
 	.route('/', web)
 	.route('/', books)
+	.route('/', notes)
 	.onError((err, c) => {
 		if (err instanceof HTTPException) return c.json({ error: err.message }, err.status)
 		console.error(err)

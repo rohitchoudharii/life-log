@@ -1,5 +1,5 @@
 import type { Block, ContentSourceType, IdeaSchedule, PointStatus, QuestionIntensity, QuestionLevel, QuestionStyle, QuestionType, Rating } from '@peak/core'
-import type { ProviderId } from '@peak/llm'
+import type { ExplainKind, ExplainLevel, ProviderId, TeachMessage } from '@peak/llm'
 import { sql } from 'drizzle-orm'
 import { boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 
@@ -249,4 +249,37 @@ export const media = pgTable(
 		createdAt: createdAt(),
 	},
 	(t) => [index('media_user_idx').on(t.userId)],
+)
+
+export type ExplanationDetail = { level: ExplainLevel; kind: ExplainKind; text: string; code: string | null; quote: string | null }
+export type FeynmanDetail = {
+	/** The idea as it was when the session started; ideas can be rewritten later. */
+	idea: string
+	messages: TeachMessage[]
+	/** Set when the student has summed up. */
+	result: { gaps: string[]; strengths: string[]; summary: string } | null
+}
+
+/** What the learner keeps from the AI while reading: explanations of passages, and Feynman sessions on ideas. */
+export const notes = pgTable(
+	'notes',
+	{
+		id: id(),
+		userId: userRef(),
+		itemId: uuid('item_id')
+			.notNull()
+			.references(() => contentItems.id, { onDelete: 'cascade' }),
+		sectionId: uuid('section_id')
+			.notNull()
+			.references(() => sections.id, { onDelete: 'cascade' }),
+		/** The idea a Feynman session teaches; kept as text in `detail` if the idea is rewritten. */
+		ideaId: uuid('idea_id').references(() => ideas.id, { onDelete: 'set null' }),
+		kind: text('kind').$type<'explanation' | 'feynman'>().notNull(),
+		/** The text the learner picked, for explanations. */
+		passage: text('passage'),
+		detail: jsonb('detail').$type<ExplanationDetail | FeynmanDetail>().notNull(),
+		createdAt: createdAt(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('notes_item_idx').on(t.itemId, t.createdAt)],
 )

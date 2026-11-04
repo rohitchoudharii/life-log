@@ -187,7 +187,7 @@ export default function Test() {
 			<PracticeSession
 				title={item.title}
 				questions={stage.questions}
-				before={<RecallSummary recall={stage.recall} />}
+				before={<RecallSummary recall={stage.recall} itemId={id} />}
 				doneLabel={afterSession ? 'Take a 5-minute break' : 'Done'}
 				onDone={() => (afterSession ? setStage({ name: 'break' }) : leave(false))}
 			/>

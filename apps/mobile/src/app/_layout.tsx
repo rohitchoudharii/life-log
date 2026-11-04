@@ -35,6 +35,8 @@ function Navigator() {
 				<Stack.Screen name="read/[id]" options={{ headerTitle: () => null }} />
 				<Stack.Screen name="test/[id]" options={{ title: 'Recall test' }} />
 				<Stack.Screen name="llm-key" options={{ headerTitle: () => null }} />
+				<Stack.Screen name="explain/[id]" options={{ title: 'Explain this', presentation: 'modal' }} />
+				<Stack.Screen name="teach/[id]" options={{ headerTitle: () => null }} />
 			</Stack.Protected>
 			<Stack.Protected guard={!signedIn}>
 				<Stack.Screen name="sign-in" options={{ headerShown: false }} />

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractJson, judgeAnswer, planBatches, writeQuestions, type LlmProvider, type SectionInput } from './index'
+import { explainPassage, extractJson, judgeAnswer, planBatches, teachTurn, writeQuestions, type LlmProvider, type SectionInput } from './index'
 
 /** A provider that replies with the given texts in order and records what it was asked. */
 const scripted = (...replies: string[]) => {
@@ -143,5 +143,31 @@ describe('judgeAnswer', () => {
 	it('fails instead of guessing when the points are missing', async () => {
 		const { provider } = scripted('{"score": 4}')
 		await expect(judgeAnswer(provider, 'k', 'm', input)).rejects.toThrow()
+	})
+})
+
+describe('tutor', () => {
+	const section = 'Scores are divided by the square root of the key size. This keeps softmax from saturating.'
+	it('keeps a quote only when it really is in the section', async () => {
+		const reply = (quote: string) => JSON.stringify({ text: 't', quote })
+		const real = scripted(reply('this keeps  softmax from saturating.'), reply('Scaling makes training stable.'))
+		const input = { section, passage: 'p', level: 'new', kind: 'explain' } as const
+		expect((await explainPassage(real.provider, 'k', 'm', input)).quote).toBe('this keeps  softmax from saturating.')
+		expect((await explainPassage(real.provider, 'k', 'm', input)).quote).toBeNull()
+	})
+
+	it('makes the student sum up after three follow-ups, and fails rather than lose the gaps', async () => {
+		const messages = [
+			{ role: 'learner', text: 'a' },
+			{ role: 'student', text: 'q1' },
+			{ role: 'learner', text: 'b' },
+			{ role: 'student', text: 'q2' },
+			{ role: 'learner', text: 'c' },
+			{ role: 'student', text: 'q3' },
+			{ role: 'learner', text: 'd' },
+		] as const
+		const { provider, asked } = scripted('{"kind": "question", "text": "q4"}')
+		await expect(teachTurn(provider, 'k', 'm', { idea: 'i', source: section, messages: [...messages] })).rejects.toThrow(/sum up/)
+		expect(asked[0]).toMatch(/no follow-up questions left/)
 	})
 })

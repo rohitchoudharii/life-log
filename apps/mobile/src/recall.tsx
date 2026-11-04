@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
-import { TextInput } from 'react-native'
+import { useRouter } from 'expo-router'
+import { Pressable, TextInput } from 'react-native'
 import { api, type Recall } from './api'
 import { PointRow } from './practice'
 import { font, hairline, radius, space, useColors } from './theme'
@@ -74,7 +75,8 @@ export function BrainDump({ itemId, sectionIds, title, onDone }: { itemId: strin
 }
 
 /** How the brain dump went, shown at the top of the results: every key idea, marked. */
-export function RecallSummary({ recall: initial }: { recall: Recall }) {
+export function RecallSummary({ recall: initial, itemId }: { recall: Recall; itemId: string }) {
+	const router = useRouter()
 	const [recall, setRecall] = useState(initial)
 	const regrade = useMutation({ mutationFn: () => api.regradeRecall(recall.id), onSuccess: (r) => setRecall(r.recall) })
 	const graded = recall.ideas.filter((i) => i.status)
@@ -100,8 +102,16 @@ export function RecallSummary({ recall: initial }: { recall: Recall }) {
 			{graded.length ? (
 				<Group gap={space.xs}>
 					{recall.ideas.map((idea) => (
-						<PointRow key={idea.id} text={idea.text} status={idea.status ?? undefined} />
+						<Pressable
+							key={idea.id}
+							accessibilityRole="button"
+							accessibilityHint="Teach this idea back"
+							onPress={() => router.push({ pathname: '/teach/[id]', params: { id: itemId, idea: idea.id } })}
+						>
+							<PointRow text={idea.text} status={idea.status ?? undefined} />
+						</Pressable>
 					))}
+					<Text variant="muted">Tap an idea to teach it back.</Text>
 				</Group>
 			) : null}
 			<Group gap={2}>
