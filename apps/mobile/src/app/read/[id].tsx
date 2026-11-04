@@ -6,7 +6,7 @@ import { Platform, Pressable, ScrollView, View } from 'react-native'
 import { api, type Note, type Section, type StudySession } from '@/api'
 import { BlockView } from '@/blocks'
 import { BucketPicker } from '@/buckets'
-import { ExplanationView, Passage } from '@/notes'
+import { ExplanationView, Passage, sentenceWith } from '@/notes'
 import { cancelSessionEnd, scheduleSessionEnd } from '@/reminders'
 import { font, hairline, space, useColors } from '@/theme'
 import { Button, Choice, ChoiceRow, ErrorText, Group, Loading, Row, Text } from '@/ui'
@@ -73,6 +73,13 @@ export default function Reader() {
 	const refetchNotes = notes.refetch
 	useFocusEffect(useCallback(() => void (refetch(), refetchNotes()), [refetch, refetchNotes]))
 	const selection = useWebSelection(data.data?.sections)
+	const addWord = useMutation({
+		mutationFn: (sel: { text: string; sectionId: string }) => {
+			const s = data.data!.sections.find((x) => x.id === sel.sectionId)!
+			return api.addWord({ word: sel.text, sentence: sentenceWith(s.blocks.map(blockText).join(' '), sel.text), itemId: id })
+		},
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['words'] }),
+	})
 	const deleteNote = useMutation({ mutationFn: api.deleteNote, onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notes', id] }) })
 	const explanations = (notes.data?.notes ?? []).filter((n): n is Extract<Note, { kind: 'explanation' }> => n.kind === 'explanation')
 
@@ -256,14 +263,27 @@ export default function Reader() {
 				}}
 			>
 				{selection ? (
-					<Button
-						title="Explain selection"
-						onPress={() => router.push({ pathname: '/explain/[id]', params: { id, section: selection.sectionId, text: selection.text.slice(0, 4000) } })}
-					/>
+					<Row style={{ gap: space.sm }}>
+						<Button
+							title="Explain selection"
+							onPress={() => router.push({ pathname: '/explain/[id]', params: { id, section: selection.sectionId, text: selection.text.slice(0, 4000) } })}
+							style={{ flex: 3 }}
+						/>
+						{/* A word or short term can go straight into the vocabulary, with the sentence it is in. */}
+						{selection.text.split(' ').length <= 3 && (
+							<Button
+								title={addWord.isSuccess && addWord.variables?.text === selection.text ? 'Added' : 'Add word'}
+								kind="outline"
+								onPress={() => addWord.mutate(selection)}
+								loading={addWord.isPending}
+								style={{ flex: 2 }}
+							/>
+						)}
+					</Row>
 				) : (
 					footer
 				)}
-				<ErrorText error={finish.error ?? cancel.error} />
+				<ErrorText error={finish.error ?? cancel.error ?? addWord.error} />
 			</View>
 		</View>
 	)

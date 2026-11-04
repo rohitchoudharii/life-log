@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { explainPassage, extractJson, judgeAnswer, planBatches, teachTurn, writeQuestions, type LlmProvider, type SectionInput } from './index'
+import { explainPassage, extractJson, parseTerms, judgeAnswer, planBatches, teachTurn, writeQuestions, type LlmProvider, type SectionInput } from './index'
 
 /** A provider that replies with the given texts in order and records what it was asked. */
 const scripted = (...replies: string[]) => {
@@ -169,5 +169,16 @@ describe('tutor', () => {
 		const { provider, asked } = scripted('{"kind": "question", "text": "q4"}')
 		await expect(teachTurn(provider, 'k', 'm', { idea: 'i', source: section, messages: [...messages] })).rejects.toThrow(/sum up/)
 		expect(asked[0]).toMatch(/no follow-up questions left/)
+	})
+})
+
+describe('parseTerms', () => {
+	it('keeps only terms whose sentence is in the text and contains the word as written', () => {
+		const text = 'Scores are scaled.  Softmax then saturates on large scores.'
+		const t = (form: string, sentence: string) => ({ word: 'saturate', form, sentence, meaning: 'm' })
+		expect(parseTerms([t('saturates', 'Softmax then saturates on large scores.')], text)).toHaveLength(1)
+		// Invented sentence, word missing from its sentence, and a duplicate.
+		expect(parseTerms([t('saturates', 'Softmax saturates quickly.'), t('saturated', 'Softmax then saturates on large scores.')], text)).toEqual([])
+		expect(parseTerms([t('saturates', 'Softmax then saturates on large scores.'), t('saturates', 'Softmax then saturates on large scores.')], text)).toHaveLength(1)
 	})
 })

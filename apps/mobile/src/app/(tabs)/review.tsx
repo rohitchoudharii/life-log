@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useFocusEffect } from 'expo-router'
+import { useFocusEffect, useRouter } from 'expo-router'
 import { useCallback, useState } from 'react'
 import { api } from '@/api'
 import { PracticeSession } from '@/practice'
-import { Button, ErrorText, Group, Loading, Screen, Text } from '@/ui'
+import { Button, ErrorText, Group, Loading, Screen, Text, Tile } from '@/ui'
 
 export default function Review() {
 	const queryClient = useQueryClient()
+	const router = useRouter()
 	const [started, setStarted] = useState(false)
 	const due = useQuery({ queryKey: ['due'], queryFn: api.due, enabled: !started })
 	const { refetch } = due
@@ -41,6 +42,10 @@ export default function Review() {
 					? `${questions.length} idea${questions.length === 1 ? ' is' : 's are'} due. Topics are mixed on purpose: switching between subjects makes recall stronger.`
 					: 'Nothing is due right now. Read a section and test yourself on it to add its ideas.'}
 			</Text>
+			<Tile onPress={() => router.push('/words')}>
+				<Text>Vocabulary</Text>
+				<Text variant="muted">Terms from your reading, spaced and tested</Text>
+			</Tile>
 		</Screen>
 	)
 }

@@ -428,7 +428,68 @@ const mcq: QuestionView<'mcq'> = {
 }
 
 /** One view per question type. Adding a type in @peak/core means adding its view here. */
+type WordReveal = { word: string; sentence: string; meaning: string } & WrittenReveal
+
+/** The sentence a word was met in, set off like a quote. */
+function Sentence({ text }: { text: string }) {
+	const c = useColors()
+	return (
+		<View style={{ paddingLeft: space.md, borderLeftWidth: 2, borderColor: c.ring }}>
+			<Text selectable style={{ fontSize: 17, lineHeight: 27 }}>
+				{text}
+			</Text>
+		</View>
+	)
+}
+
+/** A vocabulary test: the sentence, a written answer, and the word with its meaning afterwards. */
+const wordView = <K extends 'word_cloze' | 'word_meaning' | 'word_use'>(label: string, placeholder: string, judged: boolean): QuestionView<K> => ({
+	label,
+	skip: { skipped: true },
+	Input({ question, response, onChange }) {
+		const p = (question as Question).prompt as unknown as { sentence: string; hint?: string }
+		const answer = (response as { answer?: string } | null)?.answer ?? ''
+		return (
+			<Group gap={space.md}>
+				<Sentence text={p.sentence} />
+				{p.hint ? <Text variant="muted">{p.hint}</Text> : null}
+				<Field
+					value={answer}
+					onChangeText={(text) => onChange(text.trim() ? { answer: text } : null)}
+					placeholder={placeholder}
+					accessibilityLabel="Your answer"
+					autoCapitalize="none"
+					multiline={judged}
+					lines={judged ? 3 : 1}
+				/>
+			</Group>
+		)
+	},
+	Review({ response, result }) {
+		const reveal = result.reveal as WordReveal
+		const skipped = 'skipped' in (response as object)
+		return (
+			<Group gap={space.md}>
+				<Mark ok={result.correct} label={skipped ? "You didn't know this one" : judged ? verdictLabel(reveal.score ?? 0) : result.correct ? 'Correct' : 'Not quite'} />
+				{!skipped && (
+					<Labeled label="Your answer">
+						<Text selectable>{(response as { answer: string }).answer.trim()}</Text>
+					</Labeled>
+				)}
+				{judged && reveal.feedback ? <Text>{reveal.feedback}</Text> : null}
+				<Labeled label={reveal.word}>
+					<Text selectable>{reveal.meaning}</Text>
+				</Labeled>
+				<Sentence text={reveal.sentence} />
+			</Group>
+		)
+	},
+})
+
 const views: { [K in QuestionType]: QuestionView<K> } = {
+	word_cloze: wordView<'word_cloze'>('Fill the word', 'The missing word', false),
+	word_meaning: wordView<'word_meaning'>('What it means', 'What the word means here', true),
+	word_use: wordView<'word_use'>('Use it', 'Your own sentence', true),
 	short_answer: shortAnswer,
 	mcq,
 	worked_problem: workedProblem,
@@ -455,7 +516,7 @@ function ResultTile({ entry, index, onRetry }: { entry: Entry; index: number; on
 				<Text variant="muted">{index + 1}</Text>
 			</Row>
 			<Text style={{ fontFamily: font.semibold }}>{question.prompt.prompt}</Text>
-			{question.prompt.code ? <CodeBlock code={question.prompt.code} wrap /> : null}
+			{'code' in question.prompt && question.prompt.code ? <CodeBlock code={question.prompt.code} wrap /> : null}
 			{graded.status === 'checking' && (
 				<Row style={{ justifyContent: 'flex-start' }}>
 					<ActivityIndicator color={c.fg} size="small" />
@@ -498,9 +559,12 @@ export function PracticeSession({
 	onDone,
 	doneLabel = 'Done',
 	before,
+	submit = api.answer,
 }: {
 	title: string
 	questions: Question[]
+	/** Where answers are sent; vocabulary has its own endpoint. */
+	submit?: (id: string, response: unknown, practice: boolean) => Promise<AnswerResult>
 	onDone(): void
 	doneLabel?: string
 	/** Shown on the results screen above the answers, such as how the brain dump went. */
@@ -521,14 +585,14 @@ export function PracticeSession({
 	const grade = (i: number, question: Question, response: unknown) => {
 		const set = (graded: Graded) => setEntries((es) => es && es.map((e, j) => (j === i ? { ...e, graded } : e)))
 		set({ status: 'checking' })
-		api
-			.answer(question.id, response, round.practice)
+		submit(question.id, response, round.practice)
 			.then((result) => set({ status: 'done', result }))
 			.catch((error) => set({ status: 'error', error }))
 			.finally(() => {
 				queryClient.invalidateQueries({ queryKey: ['today'] })
 				queryClient.invalidateQueries({ queryKey: ['due'] })
 				queryClient.invalidateQueries({ queryKey: ['items'] })
+				queryClient.invalidateQueries({ queryKey: ['words'] })
 			})
 	}
 
@@ -648,7 +712,7 @@ export function PracticeSession({
 				<Group gap={space.md}>
 					<Pill>{view.label}</Pill>
 					<Text variant="question">{current.prompt.prompt}</Text>
-					{current.prompt.code ? <CodeBlock code={current.prompt.code} wrap /> : null}
+					{'code' in current.prompt && current.prompt.code ? <CodeBlock code={current.prompt.code} wrap /> : null}
 				</Group>
 				<view.Input
 					key={current.id + index}

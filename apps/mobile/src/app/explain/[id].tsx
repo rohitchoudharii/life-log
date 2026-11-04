@@ -2,10 +2,11 @@ import { blockText } from '@peak/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
+import { TextInput } from 'react-native'
 import { api, type ExplainKind, type ExplainLevel } from '@/api'
-import { ExplanationView, Passage } from '@/notes'
-import { space } from '@/theme'
-import { Button, Choice, ChoiceRow, ErrorText, Group, Loading, Screen, Text } from '@/ui'
+import { ExplanationView, Passage, sentenceWith } from '@/notes'
+import { font, hairline, radius, space, useColors } from '@/theme'
+import { Button, Choice, ChoiceRow, ErrorText, Group, Loading, Row, Screen, Text } from '@/ui'
 
 const LEVELS: { value: ExplainLevel; label: string }[] = [
 	{ value: 'new', label: 'New to this' },
@@ -29,6 +30,15 @@ export default function Explain() {
 	const item = useQuery({ queryKey: ['item', id], queryFn: () => api.item(id) })
 	const [level, setLevel] = useState<ExplainLevel>('standard')
 	const [kind, setKind] = useState<ExplainKind>('explain')
+	const c = useColors()
+	const [word, setWord] = useState('')
+	const addWord = useMutation({
+		mutationFn: (passage: string) => api.addWord({ word: word.trim(), sentence: sentenceWith(passage, word), itemId: id }),
+		onSuccess: () => {
+			setWord('')
+			queryClient.invalidateQueries({ queryKey: ['words'] })
+		},
+	})
 	const explain = useMutation({
 		mutationFn: (passage: string) => api.explain(id, { sectionId: section, passage, level, kind }),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notes', id] }),
@@ -77,6 +87,23 @@ export default function Explain() {
 				</ChoiceRow>
 			</Group>
 			<ErrorText error={explain.error} />
+			<Group gap={space.xs}>
+				<Text variant="label">Add a word from this</Text>
+				<Row style={{ gap: space.sm }}>
+					<TextInput
+						value={word}
+						onChangeText={setWord}
+						placeholder="A word you want to learn"
+						placeholderTextColor={c.sub}
+						accessibilityLabel="Word to add"
+						autoCapitalize="none"
+						style={{ flex: 1, fontFamily: font.regular, fontSize: 16, color: c.fg, borderWidth: hairline, borderColor: c.ring, outlineColor: c.fg, borderRadius: radius, padding: space.md }}
+					/>
+					<Button title="Add" kind="outline" onPress={() => addWord.mutate(passage)} loading={addWord.isPending} disabled={!word.trim()} />
+				</Row>
+				{addWord.isSuccess && <Text variant="muted">Added {addWord.data.word.word} to your vocabulary.</Text>}
+				<ErrorText error={addWord.error} />
+			</Group>
 			{note?.kind === 'explanation' && (
 				<Group gap={space.sm}>
 					<Text variant="label">Saved with this reading</Text>

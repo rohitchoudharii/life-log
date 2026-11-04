@@ -120,6 +120,19 @@ export type Note =
 			detail: { idea: string; messages: TeachMessage[]; result: { gaps: string[]; strengths: string[]; summary: string } | null }
 	  })
 export type IdeaRef = { id: string; text: string; section: string }
+export type Word = {
+	id: string
+	itemId: string | null
+	itemTitle: string | null
+	word: string
+	form: string
+	sentence: string
+	meaning: string
+	/** Null until it is first reviewed. */
+	dueAt: string | null
+	mastered: boolean
+	level: number
+}
 export type Provider = 'anthropic' | 'openai'
 export type KeyInfo = { provider: Provider; model: string; last4: string }
 
@@ -168,6 +181,11 @@ export const api = {
 		request<{ session: StudySession }>('POST', `/items/${itemId}/sessions`, { plannedMinutes }),
 	finishSession: (id: string) => request<{ session: StudySession }>('POST', `/sessions/${id}/finish`),
 	cancelSession: (id: string) => request('DELETE', `/sessions/${id}`),
+	words: () => request<{ words: Word[] }>('GET', '/words'),
+	addWord: (input: { word: string; sentence?: string; itemId?: string }) => request<{ word: Word }>('POST', '/words', input),
+	deleteWord: (id: string) => request('DELETE', `/words/${id}`),
+	wordsDue: () => request<{ questions: Question[] }>('GET', '/words/due'),
+	answerWord: (id: string, response: unknown, practice = false) => request<AnswerResult>('POST', `/words/${id}/answer`, { response, practice }),
 	notes: (itemId: string) => request<{ notes: Note[] }>('GET', `/items/${itemId}/notes`),
 	explain: (itemId: string, input: { sectionId: string; passage: string; level: ExplainLevel; kind: ExplainKind }) =>
 		request<{ note: Note }>('POST', `/items/${itemId}/explain`, input),

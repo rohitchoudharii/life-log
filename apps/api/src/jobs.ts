@@ -103,6 +103,9 @@ export async function generateForItem(itemId: string) {
 				}
 			})
 			await store(out.questions)
+			const terms = [...out.terms.values()].flat()
+			// A word already in the vocabulary keeps its first sentence and its schedule.
+			if (terms.length) await db.insert(t.words).values(terms.map((w) => ({ userId: item.userId, itemId, ...w }))).onConflictDoNothing()
 		}
 
 		const [linked] = await db

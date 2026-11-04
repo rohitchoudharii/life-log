@@ -1,7 +1,7 @@
 import type { Block, ContentSourceType, IdeaSchedule, PointStatus, QuestionIntensity, QuestionLevel, QuestionStyle, QuestionType, Rating } from '@peak/core'
 import type { ExplainKind, ExplainLevel, ProviderId, TeachMessage } from '@peak/llm'
 import { sql } from 'drizzle-orm'
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
 
 const id = () => uuid('id').primaryKey().defaultRandom()
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
@@ -282,4 +282,30 @@ export const notes = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [index('notes_item_idx').on(t.itemId, t.createdAt)],
+)
+
+/**
+ * A word in the learner's vocabulary: picked out of a reading when its questions were written, or
+ * added by the learner. Words are spaced like ideas, and their test gets harder with their level.
+ */
+export const words = pgTable(
+	'words',
+	{
+		id: id(),
+		userId: userRef(),
+		/** Where it was met; null for words added by hand, or once the reading is deleted. */
+		itemId: uuid('item_id').references(() => contentItems.id, { onDelete: 'set null' }),
+		word: text('word').notNull(),
+		/** The word as it appears in `sentence`. */
+		form: text('form').notNull(),
+		sentence: text('sentence').notNull(),
+		/** What it means in `sentence`. */
+		meaning: text('meaning').notNull(),
+		/** Null until the learner first sees it in a review. */
+		schedule: jsonb('schedule').$type<IdeaSchedule>(),
+		dueAt: timestamp('due_at', { withTimezone: true }).notNull().defaultNow(),
+		mastered: boolean('mastered').notNull().default(false),
+		createdAt: createdAt(),
+	},
+	(t) => [uniqueIndex('words_user_word_idx').on(t.userId, sql`lower(${t.word})`), index('words_due_idx').on(t.userId, t.dueAt)],
 )

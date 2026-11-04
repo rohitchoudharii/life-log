@@ -172,6 +172,28 @@ describe('exact question types', () => {
 	})
 })
 
+describe('word tests', () => {
+	const w = { word: 'saturate', form: 'Saturating', sentence: 'Scaling keeps softmax from Saturating on large scores.', meaning: 'pushing almost all weight onto one option' }
+	const noJudge = async () => {
+		throw new Error('judge must not be called')
+	}
+
+	it('blanks the word where it appears and accepts it back in either form, with one typo in a long word', async () => {
+		expect(toPrompt('word_cloze', w).prompt).toEqual({ prompt: 'Which word fills the blank?', sentence: 'Scaling keeps softmax from _____ on large scores.', hint: 'Starts with "S", 10 letters' })
+		for (const answer of ['saturating', 'Saturate.', 'saturatng']) expect((await gradeResponse('word_cloze', w, { answer }, noJudge)).correct).toBe(true)
+		for (const answer of ['saturated it', 'collapse']) expect((await gradeResponse('word_cloze', w, { answer }, noJudge)).correct).toBe(false)
+	})
+
+	it('grades meaning and use with the judge, against the meaning in context', async () => {
+		const seen: string[][] = []
+		const judge = async (input: { mustHave: string[] }) => (seen.push(input.mustHave), { score: 4 as const, feedback: 'ok', points: input.mustHave.map(() => 'covered' as const) })
+		expect(await gradeResponse('word_meaning', w, { answer: 'all weight on one thing' }, judge)).toMatchObject({ correct: true, reveal: { meaning: w.meaning } })
+		await gradeResponse('word_use', w, { answer: 'The flood saturated the field.' }, judge)
+		expect(seen[0]).toEqual([w.meaning])
+		expect(seen[1]![0]).toMatch(/Uses "saturate".*pushing almost all weight/)
+	})
+})
+
 describe('scoreRubric', () => {
 	it('needs every point, precisely, for full marks and caps a stated misconception at 1', () => {
 		expect(scoreRubric(['covered', 'covered', 'covered'], false)).toBe(4)

@@ -18,7 +18,7 @@ import {
 import type { LlmProvider } from './providers'
 
 /** Bump when the prompt or the checks change, so stored questions record which rules made them. */
-export const GENERATE_QUESTIONS_PROMPT_VERSION = 'questions-v6'
+export const GENERATE_QUESTIONS_PROMPT_VERSION = 'questions-v7'
 /** Questions written during reviews, when an idea has run out of unasked ones. Tests leave them out. */
 export const REVIEW_PROMPT_VERSION = 'review-v2'
 
@@ -34,7 +34,9 @@ export type SectionInput = { title: string; level: number; text: string; wordCou
  * questions. `idea` indexes the key ideas of `section`: the idea the question tests, when known.
  */
 export type GeneratedQuestion = { section: number; alsoSections: number[]; idea: number | null; type: QuestionType; level: QuestionLevel; content: unknown }
-export type Generated = { ideas: Map<number, string[]>; questions: GeneratedQuestion[] }
+/** A hard or field-specific word, as it appears in the section, with the sentence and its meaning there. */
+export type Term = { word: string; form: string; sentence: string; meaning: string }
+export type Generated = { ideas: Map<number, string[]>; terms: Map<number, Term[]>; questions: GeneratedQuestion[] }
 /**
  * Questions that failed the checks: on the model's first try, in the quality check, and the ones
  * dropped after the rewrite.
@@ -58,6 +60,26 @@ const TOKENS_PER_QUESTION = 350
 /** The most reply one call is planned for; the request allows more, as headroom. */
 export const REPLY_BUDGET_TOKENS = 12_000
 const MAX_REPLY_TOKENS = 16_000
+
+const squash = (text: string) => text.replace(/\s+/g, ' ').trim()
+
+/**
+ * Keeps terms whose sentence really is in the section and really contains the word, so a test
+ * never quotes a sentence the learner did not read.
+ */
+export function parseTerms(raw: unknown, source: string): Term[] {
+	if (!Array.isArray(raw)) return []
+	const text = squash(source).toLowerCase()
+	const out: Term[] = []
+	for (const t of raw.slice(0, 3) as Record<string, unknown>[]) {
+		const [word, form, sentence, meaning] = [t?.word, t?.form, t?.sentence, t?.meaning].map((v) => (typeof v === 'string' ? squash(v) : ''))
+		if (!word || !form || !sentence || !meaning || form.length > 60) continue
+		if (!text.includes(sentence.toLowerCase()) || !sentence.toLowerCase().includes(form.toLowerCase())) continue
+		if (out.some((x) => x.word.toLowerCase() === word.toLowerCase())) continue
+		out.push({ word, form, sentence, meaning })
+	}
+	return out
+}
 
 /**
  * Groups sections into calls. Each top-level section and its subsections (a chapter) stays in one
@@ -384,7 +406,7 @@ export async function writeQuestions(
 	const blocks = batch.map((i) => sectionBlock(i + 1, sections[i]!, questionCountFor(sections[i]!.wordCount, prefs.intensity))).join('\n\n')
 	const linking = withText.length >= 3 ? Math.min(5, Math.round(withText.length / 3)) : 0
 	const context = `${blocks}`
-	let parsed: { sections?: { section?: unknown; ideas?: unknown; questions?: Raw[] }[]; links?: Raw[] }
+	let parsed: { sections?: { section?: unknown; ideas?: unknown; terms?: unknown; questions?: Raw[] }[]; links?: Raw[] }
 	try {
 		parsed = (await call(
 			provider,
@@ -392,12 +414,12 @@ export async function writeQuestions(
 			model,
 			`${context}
 
-For each section with text, list its key ideas (one sentence each, in reading order; these are what a learner should be able to recall without the text), then write the number of questions given in its "questions" attribute, spread across the ideas. ${MIX[prefs.style]}${
+For each section with text, list its key ideas (one sentence each, in reading order; these are what a learner should be able to recall without the text), and up to 3 terms worth learning: words a newcomer to the field might not know, or terms the text relies on. For each term give "form" exactly as it appears in the text, "word" its dictionary form, "sentence" the sentence it appears in, copied exactly, and "meaning" what it means in that sentence, in plain words. Leave out everyday words. Then write the number of questions given in its "questions" attribute, spread across the ideas. ${MIX[prefs.style]}${
 				linking ? `\nAlso write ${linking} linking questions, each connecting ideas from 2 or more of these sections. A linking question's "idea" is [section, idea number] of the main idea it tests.` : ''
 			}
 
 Reply in this JSON shape:
-{"sections": [{"section": 1, "ideas": ["…"], "questions": [{"idea": 1, …question}, …]}], "links": [{"sections": [1, 3], "idea": [3, 2], …question}]}
+{"sections": [{"section": 1, "ideas": ["…"], "terms": [{"word": "…", "form": "…", "sentence": "…", "meaning": "…"}], "questions": [{"idea": 1, …question}, …]}], "links": [{"sections": [1, 3], "idea": [3, 2], …question}]}
 Question shapes:
 ${SHAPES}`,
 		)) as typeof parsed
@@ -412,7 +434,7 @@ ${SHAPES}`,
 			writeQuestions(provider, apiKey, model, sections, batch.slice(0, half), prefs, onRejected),
 			writeQuestions(provider, apiKey, model, sections, batch.slice(half), prefs, onRejected),
 		])
-		return { ideas: new Map([...a.ideas, ...b.ideas]), questions: [...a.questions, ...b.questions] }
+		return { ideas: new Map([...a.ideas, ...b.ideas]), terms: new Map([...a.terms, ...b.terms]), questions: [...a.questions, ...b.questions] }
 	}
 
 	const inBatch = (n: unknown) => {
@@ -421,12 +443,14 @@ ${SHAPES}`,
 	}
 	const sourceFor = (section: number, also: number[]) => [section, ...also].map((i) => sections[i]!.text).join('\n\n')
 	const ideas = new Map<number, string[]>()
+	const terms = new Map<number, Term[]>()
 	const items: Item[] = []
 	for (const s of parsed.sections ?? []) {
 		const i = inBatch(s.section)
 		if (i === null) continue
 		const list = Array.isArray(s.ideas) ? s.ideas.filter((x): x is string => typeof x === 'string' && x.trim().length > 0) : []
 		ideas.set(i, list)
+		terms.set(i, parseTerms(s.terms, sections[i]!.text))
 		for (const raw of s.questions ?? []) items.push({ raw, section: i, alsoSections: [], idea: ideaIndex(raw.idea, list.length), source: sections[i]!.text })
 	}
 	for (const raw of parsed.links ?? []) {
@@ -444,7 +468,7 @@ ${SHAPES}`,
 	}
 	const dropped = await rewrite(provider, apiKey, model, context, rejected, prefs, accepted, sourceFor)
 	onRejected?.('dropped', describe(dropped))
-	return { ideas, questions: accepted.map(({ source: _, ...q }) => q) }
+	return { ideas, terms, questions: accepted.map(({ source: _, ...q }) => q) }
 }
 
 /**

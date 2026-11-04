@@ -159,7 +159,7 @@ type OrderSteps = { steps: string[]; shown?: number[] }
 const shownOrder = (c: OrderSteps) => c.shown ?? c.steps.map((_, i) => c.steps.length - 1 - i)
 
 /** Picks the order steps are shown in: shuffled, and never already right. */
-export function shuffleSteps<C extends OrderSteps>(c: C, random = Math.random): C {
+export function shuffleSteps<C extends OrderSteps>(c: C, random = Math.random): C & { shown: number[] } {
 	const order = c.steps.map((_, i) => i)
 	for (let i = order.length - 1; i > 0; i--) {
 		const j = Math.floor(random() * (i + 1))
@@ -168,6 +168,39 @@ export function shuffleSteps<C extends OrderSteps>(c: C, random = Math.random): 
 	if (order.every((x, i) => x === i)) order.push(order.shift()!)
 	return { ...c, shown: order }
 }
+
+/** A word met while reading: the form it appeared in, the sentence, and its meaning there. */
+const wordContent = z.object({ word: z.string().min(1), form: z.string().min(1), sentence: z.string().min(1), meaning: z.string().min(1) })
+type WordContent = z.infer<typeof wordContent>
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/** The sentence with the word's first appearance blanked out. */
+const blank = (c: WordContent) => c.sentence.replace(new RegExp(escapeRegExp(c.form), 'i'), '_____')
+const bare = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+
+function editDistance(a: string, b: string) {
+	const row = Array.from({ length: b.length + 1 }, (_, j) => j)
+	for (let i = 1; i <= a.length; i++) {
+		let prev = row[0]!
+		row[0] = i
+		for (let j = 1; j <= b.length; j++) {
+			const next = Math.min(row[j]! + 1, row[j - 1]! + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1))
+			prev = row[j]!
+			row[j] = next
+		}
+	}
+	return row[b.length]!
+}
+
+/** The missing word, ignoring case and punctuation, with one typo allowed in longer words. */
+export function isSameWord(answer: string, c: Pick<WordContent, 'word' | 'form'>) {
+	const a = bare(answer)
+	return [c.form, c.word].some((w) => {
+		const x = bare(w)
+		return a === x || (x.length >= 6 && editDistance(a, x) <= 1)
+	})
+}
+
+const wordReveal = (c: WordContent) => ({ word: c.word, sentence: c.sentence, meaning: c.meaning })
 
 export const questionTypes = {
 	short_answer: def({
@@ -290,9 +323,51 @@ export const questionTypes = {
 			return { rating: correct ? 'good' : pairs >= 0.8 ? 'hard' : 'again', correct, reveal: { steps: c.steps, explanation: c.explanation, pairs } }
 		},
 	}),
+	/** Vocabulary, easiest first: fill the word back into its sentence. */
+	word_cloze: def({
+		content: wordContent,
+		response: written,
+		toPrompt: (c) => ({ prompt: 'Which word fills the blank?', sentence: blank(c), hint: `Starts with "${c.form[0]}", ${c.form.length} letters` }),
+		async grade(c, r) {
+			const correct = !('skipped' in r) && isSameWord(r.answer, c)
+			return { rating: correct ? 'good' : 'again', correct, reveal: wordReveal(c) }
+		},
+	}),
+	/** Vocabulary: what the word means in the sentence it was met in. */
+	word_meaning: def({
+		content: wordContent,
+		response: written,
+		toPrompt: (c) => ({ prompt: `What does "${c.form}" mean here?`, sentence: c.sentence }),
+		grade: (c, r, judge) =>
+			gradeWritten({ prompt: `What does "${c.form}" mean in this sentence? ${c.sentence}`, reference: c.meaning, mustHave: [c.meaning], misconceptions: [] }, r, judge).then((g) => ({
+				...g,
+				reveal: { ...g.reveal, ...wordReveal(c) },
+			})),
+	}),
+	/** Vocabulary, hardest: use the word in a sentence of one's own. */
+	word_use: def({
+		content: wordContent,
+		response: written,
+		toPrompt: (c) => ({ prompt: `Use "${c.word}" in a sentence of your own, with the meaning it has here.`, sentence: c.sentence }),
+		grade: (c, r, judge) =>
+			gradeWritten(
+				{
+					prompt: `Use "${c.word}" in a new sentence, with the meaning it has in: ${c.sentence}`,
+					reference: `A sentence that uses "${c.word}" to mean: ${c.meaning}`,
+					mustHave: [`Uses "${c.word}" (or a form of it) correctly, with the meaning: ${c.meaning}`, 'Is a new sentence of the learner\'s own, not the one shown or a near copy of it'],
+					misconceptions: [],
+				},
+				r,
+				judge,
+			).then((g) => ({ ...g, reveal: { ...g.reveal, ...wordReveal(c) } })),
+	}),
 } satisfies Record<string, QuestionTypeDef<z.ZodType, z.ZodType, unknown>>
 
 export type QuestionType = keyof typeof questionTypes
+
+/** A word's test at each level of its schedule: recognise it, then say what it means, then use it. */
+export const WORD_TESTS = ['word_cloze', 'word_meaning', 'word_use'] as const satisfies QuestionType[]
+export const wordTestFor = (level: number) => WORD_TESTS[Math.min(Math.max(level, 0), WORD_TESTS.length - 1)]!
 export const QUESTION_TYPES = Object.keys(questionTypes) as QuestionType[]
 
 export type QuestionPrompt = {

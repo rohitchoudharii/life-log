@@ -32,3 +32,13 @@ export function ExplanationView({ note }: { note: Extract<Note, { kind: 'explana
 		</Group>
 	)
 }
+
+/** The sentence of `text` that uses `word`, or an inflection of it, for adding the word to the vocabulary. */
+export function sentenceWith(text: string, word: string): string | undefined {
+	const w = word.trim().toLowerCase()
+	const stem = w.length > 5 ? w.slice(0, w.length - 2) : w
+	return text
+		.replace(/\s+/g, ' ')
+		.split(/(?<=[.!?])\s+/)
+		.find((s) => s.toLowerCase().includes(stem))
+}

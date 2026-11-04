@@ -71,6 +71,13 @@
       "when": 1793820561774,
       "tag": "0009_breezy_rage",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793821278605,
+      "tag": "0010_serious_exodus",
+      "breakpoints": true
     }
   ]
 }
