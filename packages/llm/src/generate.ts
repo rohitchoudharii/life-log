@@ -17,6 +17,8 @@ import type { LlmProvider } from './providers'
 
 /** Bump when the prompt or the checks change, so stored questions record which rules made them. */
 export const GENERATE_QUESTIONS_PROMPT_VERSION = 'questions-v5'
+/** Questions written during reviews, when an idea has run out of unasked ones. Tests leave them out. */
+export const REVIEW_PROMPT_VERSION = 'review-v1'
 
 export type QuestionPrefs = { intensity: QuestionIntensity; style: QuestionStyle }
 export type SectionInput = { title: string; level: number; text: string; wordCount: number }
@@ -154,6 +156,7 @@ function check(
 	items: Item[],
 	prefs: QuestionPrefs,
 	accepted: Candidate[],
+	minAboveRecall = MIN_ABOVE_RECALL,
 ): Rejected[] {
 	const rejected: Rejected[] = []
 	for (const { raw, section, alsoSections, idea, source } of items) {
@@ -183,7 +186,7 @@ function check(
 	}
 	// Too many recall questions: send the latest ones back to be rewritten at a higher level.
 	const above = accepted.filter((q) => q.level !== 'recall').length
-	let excess = Math.ceil(accepted.length * MIN_ABOVE_RECALL) - above
+	let excess = Math.ceil(accepted.length * minAboveRecall) - above
 	for (let i = accepted.length - 1; i >= 0 && excess > 0; i--) {
 		const q = accepted[i]!
 		if (q.level !== 'recall') continue
@@ -364,4 +367,62 @@ ${SHAPES}`,
 	const dropped = await rewrite(provider, apiKey, model, `Key ideas of the text:\n\n${context}`, rejected, prefs, accepted, sourceFor)
 	onRejected?.('dropped', describe(dropped))
 	return accepted.map(({ source: _, ...q }) => q)
+}
+
+export type IdeaRequest = {
+	idea: string
+	/** The text the idea comes from: its section, plus the others for a linking idea. */
+	source: string
+	level: QuestionLevel
+	/** Prompts already asked on this idea, which the new question must not repeat. */
+	asked: string[]
+}
+
+/**
+ * Writes one new question per idea, at the level asked for, for ideas whose questions have all
+ * been used. Questions that fail the checks are left out (null), so the caller can reuse an old one.
+ */
+export async function writeForIdeas(
+	provider: LlmProvider,
+	apiKey: string,
+	model: string,
+	requests: IdeaRequest[],
+	style: QuestionStyle,
+): Promise<({ type: QuestionType; level: QuestionLevel; content: unknown } | null)[]> {
+	if (!requests.length) return []
+	const blocks = requests
+		.map(
+			(r, i) => `<idea id="${i + 1}" level="${r.level}">
+${r.idea}
+<source>
+${r.source}
+</source>${r.asked.length ? `\n<already-asked>\n${r.asked.map((p) => `- ${p}`).join('\n')}\n</already-asked>` : ''}
+</idea>`,
+		)
+		.join('\n\n')
+	const parsed = (await call(
+		provider,
+		apiKey,
+		model,
+		`${blocks}
+
+The learner has seen every question already asked on these ideas. For each idea, write one new question at its level that tests the same idea from a different angle, with new examples. It must not repeat or reword an already-asked question. ${MIX[style]}
+
+Reply in this JSON shape, one entry per idea id:
+{"questions": [{"id": 1, "type": "…", "level": "…", "content": {…}}]}
+Content shapes:
+${SHAPES}`,
+	)) as { questions?: (Raw & { id?: unknown })[] }
+	const out: ({ type: QuestionType; level: QuestionLevel; content: unknown } | null)[] = requests.map(() => null)
+	for (const raw of parsed.questions ?? []) {
+		const i = Number(raw.id) - 1
+		const r = requests[i]
+		if (!r || out[i]) continue
+		const accepted: Candidate[] = []
+		const rejected = check([{ raw, section: i, alsoSections: [], idea: null, source: r.source }], { intensity: 'standard', style }, accepted, 0)
+		const q = accepted[0]
+		if (rejected.length || !q || r.asked.some((p) => isDuplicatePrompt(p, (q.content as { prompt: string }).prompt))) continue
+		out[i] = { type: q.type, level: q.level, content: q.content }
+	}
+	return out
 }

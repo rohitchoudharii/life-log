@@ -1,7 +1,7 @@
-import type { Block, ContentSourceType, PointStatus, QuestionIntensity, QuestionLevel, QuestionStyle, QuestionType, Rating, ReviewState } from '@peak/core'
+import type { Block, ContentSourceType, IdeaSchedule, PointStatus, QuestionIntensity, QuestionLevel, QuestionStyle, QuestionType, Rating } from '@peak/core'
 import type { ProviderId } from '@peak/llm'
 import { sql } from 'drizzle-orm'
-import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 
 const id = () => uuid('id').primaryKey().defaultRandom()
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
@@ -173,19 +173,23 @@ export const recallAttempts = pgTable(
 	(t) => [index('recall_attempts_user_idx').on(t.userId, t.createdAt)],
 )
 
-/** One row per question the user has answered at least once: its review schedule. */
-export const reviews = pgTable(
-	'reviews',
+/** One row per idea the user has answered a question on: its review schedule. */
+export const ideaReviews = pgTable(
+	'idea_reviews',
 	{
-		questionId: uuid('question_id')
-			.notNull()
-			.references(() => questions.id, { onDelete: 'cascade' }),
+		ideaId: uuid('idea_id')
+			.primaryKey()
+			.references(() => ideas.id, { onDelete: 'cascade' }),
 		userId: userRef(),
-		state: jsonb('state').$type<ReviewState>().notNull(),
+		schedule: jsonb('schedule').$type<IdeaSchedule>().notNull(),
+		/** Copied from the schedule so learned ideas can be counted in SQL. */
+		mastered: boolean('mastered').notNull().default(false),
 		dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
 		lastReviewedAt: timestamp('last_reviewed_at', { withTimezone: true }).notNull(),
+		/** The question asked last, so the next review asks a different one. */
+		lastQuestionId: uuid('last_question_id').references(() => questions.id, { onDelete: 'set null' }),
 	},
-	(t) => [primaryKey({ columns: [t.questionId] }), index('reviews_due_idx').on(t.userId, t.dueAt)],
+	(t) => [index('idea_reviews_due_idx').on(t.userId, t.dueAt)],
 )
 
 export const reviewLog = pgTable(
@@ -199,6 +203,8 @@ export const reviewLog = pgTable(
 		rating: text('rating').$type<Rating>().notNull(),
 		correct: boolean('correct').notNull(),
 		response: jsonb('response'),
+		/** A retry-round answer: logged, but it does not move the idea's schedule. */
+		practice: boolean('practice').notNull().default(false),
 		/** The judge's feedback, kept for a future error journal. */
 		feedback: text('feedback'),
 		reviewedAt: timestamp('reviewed_at', { withTimezone: true }).notNull().default(sql`now()`),

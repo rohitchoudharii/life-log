@@ -28,16 +28,18 @@ export default function Review() {
 		)
 
 	return (
-		<Screen footer={questions.length ? <Button title={`Start ${questions.length} recalls`} onPress={() => setStarted(true)} /> : undefined}>
+		<Screen footer={questions.length ? <Button title={`Review ${questions.length} idea${questions.length === 1 ? '' : 's'}`} onPress={() => setStarted(true)} /> : undefined}>
 			<Group>
 				<Text variant="title">Review</Text>
-				<Text variant="muted">Cards come back after 1, 2, and 3 days, then at longer gaps as you get them right.</Text>
+				<Text variant="muted">
+					Each idea comes back after 1, 2, and 3 days, then at longer gaps, with a different question each time. Right answers make the next question harder. An idea is learned once you recall it on 3 separate days.
+				</Text>
 			</Group>
 			<ErrorText error={due.error} />
 			<Text>
 				{questions.length
-					? `${questions.length} card${questions.length === 1 ? ' is' : 's are'} ready. Mixed topics on purpose: switching between subjects makes recall stronger.`
-					: 'Nothing is due right now. Read a section and take its recall check to add cards.'}
+					? `${questions.length} idea${questions.length === 1 ? ' is' : 's are'} due. Topics are mixed on purpose: switching between subjects makes recall stronger.`
+					: 'Nothing is due right now. Read a section and test yourself on it to add its ideas.'}
 			</Text>
 		</Screen>
 	)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gradeResponse, isDuplicatePrompt, lintQuestion, orderForTest, parseMarkdown, scoreRubric, shuffleMcq, splitSections, stepsThenEase, subtreeEnd, toPrompt } from './index'
+import { gradeResponse, localDay, pickQuestion, reviewIdea, startIdea, type IdeaSchedule, isDuplicatePrompt, lintQuestion, orderForTest, parseMarkdown, scoreRubric, shuffleMcq, splitSections, stepsThenEase, subtreeEnd, toPrompt } from './index'
 
 const DAY = 86_400_000
 const t0 = new Date('2026-01-01T09:00:00Z')
@@ -190,5 +190,78 @@ describe('orderForTest', () => {
 			() => 0.5,
 		)
 		expect(order.map((x) => x.id)).toEqual(['sa-missed', 'sa-vague', 'sa-covered', 'sa-none', 'mcq-missed', 'mcq-covered'])
+	})
+})
+
+describe('reviewIdea', () => {
+	const tz = 'Asia/Kolkata'
+	type Step = { at: Date; correct: boolean }
+	const run = (steps: Step[], level: 'recall' | 'apply' = 'recall') => {
+		let cur = { schedule: startIdea(level, localDay(steps[0]!.at, tz)), dueAt: steps[0]!.at }
+		const out: { schedule: IdeaSchedule; dueAt: Date }[] = []
+		for (const { at, correct } of steps) {
+			cur = reviewIdea(cur, { correct, rating: correct ? 'good' : 'again' }, at, localDay(at, tz))
+			out.push(cur)
+		}
+		return out
+	}
+	const at = (iso: string) => new Date(iso)
+
+	it('moves the level up when right and down when wrong, within the five levels', () => {
+		const levels = run([
+			{ at: at('2026-01-01T09:00:00Z'), correct: true },
+			{ at: at('2026-01-02T09:00:00Z'), correct: true },
+			{ at: at('2026-01-04T09:00:00Z'), correct: false },
+			{ at: at('2026-01-04T10:00:00Z'), correct: false },
+			{ at: at('2026-01-04T11:00:00Z'), correct: false },
+		]).map((r) => r.schedule.level)
+		expect(levels).toEqual([1, 2, 1, 0, 0])
+		expect(run([{ at: t0, correct: true }], 'apply')[0]!.schedule.level).toBe(3)
+	})
+
+	it('ignores a right answer before the idea is due, but not a wrong one', () => {
+		const [first, sameTestRight, sameTestWrong] = run([
+			{ at: t0, correct: true },
+			{ at: new Date(t0.getTime() + 60_000), correct: true },
+			{ at: new Date(t0.getTime() + 120_000), correct: false },
+		])
+		expect(sameTestRight).toEqual(first)
+		expect(sameTestWrong!.schedule.level).toBe(0)
+		expect(sameTestWrong!.dueAt.getTime() - t0.getTime()).toBe(120_000 + 10 * 60_000)
+	})
+
+	it('is learned after 3 right days after the first, then comes back monthly; a miss restarts the count', () => {
+		const days = ['2026-01-01', '2026-01-02', '2026-01-04', '2026-01-07'].map((d) => ({ at: at(`${d}T09:00:00Z`), correct: true }))
+		const out = run(days)
+		expect(out.map((r) => r.schedule.mastered)).toEqual([false, false, false, true])
+		expect((out[3]!.dueAt.getTime() - days[3]!.at.getTime()) / DAY).toBe(30)
+		const lapsed = run([...days, { at: at('2026-02-06T09:00:00Z'), correct: false }]).at(-1)!
+		expect(lapsed.schedule).toMatchObject({ mastered: false, correctDays: [] })
+	})
+
+	it('counts days in the learner\'s timezone, so 30 minutes across local midnight are two days', () => {
+		// 18:20 and 18:50 UTC are 23:50 on 1 January and 00:20 on 2 January in India.
+		let cur = { schedule: startIdea('recall', '2025-12-31'), dueAt: at('2026-01-01T18:20:00Z') }
+		cur = reviewIdea(cur, { correct: true, rating: 'good' }, at('2026-01-01T18:20:00Z'), localDay(at('2026-01-01T18:20:00Z'), tz))
+		cur = reviewIdea({ ...cur, dueAt: at('2026-01-01T18:50:00Z') }, { correct: true, rating: 'good' }, at('2026-01-01T18:50:00Z'), localDay(at('2026-01-01T18:50:00Z'), tz))
+		expect(cur.schedule.correctDays).toEqual(['2026-01-01', '2026-01-02'])
+		expect(localDay(at('2026-01-01T18:50:00Z'), 'America/New_York')).toBe('2026-01-01')
+	})
+})
+
+describe('pickQuestion', () => {
+	const q = (id: string, level: 'recall' | 'explain' | 'apply' | 'analyze' | null, asked: string | null = null) => ({ id, level, lastAskedAt: asked ? new Date(asked) : null })
+
+	it('takes an unasked question at the level, else the nearest, preferring easier', () => {
+		expect(pickQuestion([q('a', 'recall'), q('b', 'apply'), q('c', 'explain')], 2, null)).toBe('b')
+		expect(pickQuestion([q('a', 'analyze'), q('b', 'explain')], 2, null)).toBe('b')
+		expect(pickQuestion([q('a', 'apply', '2026-01-01'), q('b', 'analyze')], 2, null)).toBe('b')
+	})
+
+	it('returns null when every question was asked, and with reuse never repeats the last one', () => {
+		const asked = [q('a', 'apply', '2026-01-03'), q('b', 'apply', '2026-01-01'), q('c', 'apply', '2026-01-02')]
+		expect(pickQuestion(asked, 2, 'b')).toBeNull()
+		expect(pickQuestion(asked, 2, 'b', true)).toBe('c')
+		expect(pickQuestion([q('a', 'apply', '2026-01-03')], 2, 'a', true)).toBe('a')
 	})
 })

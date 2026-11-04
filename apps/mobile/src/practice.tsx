@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import type { PointStatus, QuestionType } from '@peak/core'
-import { useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type ComponentType, type ReactNode } from 'react'
 import { ActivityIndicator, Pressable, TextInput } from 'react-native'
 import { api, type AnswerResult, type Question } from './api'
@@ -254,7 +254,11 @@ function ResultTile({ entry, index, onRetry }: { entry: Entry; index: number; on
 			{graded.status === 'done' && (
 				<>
 					<view.Review question={question} response={response} result={graded.result} />
-					<Text variant="muted">Next review: {nextReviewLabel(graded.result.dueAt)}</Text>
+					{graded.result.practice ? (
+						<Text variant="muted">Practice: when this idea comes back is unchanged.</Text>
+					) : graded.result.dueAt ? (
+						<Text variant="muted">Next review: {nextReviewLabel(graded.result.dueAt)}</Text>
+					) : null}
 				</>
 			)}
 		</Tile>
@@ -280,30 +284,47 @@ export function PracticeSession({
 	before?: ReactNode
 }) {
 	const queryClient = useQueryClient()
+	// The first round moves schedules; retry rounds after it are practice on the ideas just missed.
+	const [round, setRound] = useState({ questions, practice: false, number: 0 })
 	// Responses stay editable (Previous) until Finish; only then are they sent for grading.
 	const [responses, setResponses] = useState<unknown[]>(() => questions.map(() => null))
 	const [index, setIndex] = useState(0)
 	const [entries, setEntries] = useState<Entry[] | null>(null)
-	const current = questions[index]!
-	const last = index + 1 === questions.length
+	/** Every question asked in this sitting, so a retry asks something new. */
+	const [asked, setAsked] = useState<string[]>(() => questions.map((q) => q.id))
+	const current = round.questions[index]!
+	const last = index + 1 === round.questions.length
 
 	const grade = (i: number, question: Question, response: unknown) => {
 		const set = (graded: Graded) => setEntries((es) => es && es.map((e, j) => (j === i ? { ...e, graded } : e)))
 		set({ status: 'checking' })
 		api
-			.answer(question.id, response)
+			.answer(question.id, response, round.practice)
 			.then((result) => set({ status: 'done', result }))
 			.catch((error) => set({ status: 'error', error }))
 			.finally(() => {
 				queryClient.invalidateQueries({ queryKey: ['today'] })
 				queryClient.invalidateQueries({ queryKey: ['due'] })
+				queryClient.invalidateQueries({ queryKey: ['items'] })
 			})
 	}
 
 	const finish = (all: unknown[]) => {
-		setEntries(questions.map((question, i) => ({ question, response: all[i], graded: { status: 'checking' } })))
-		questions.forEach((q, i) => grade(i, q, all[i]))
+		setEntries(round.questions.map((question, i) => ({ question, response: all[i], graded: { status: 'checking' } })))
+		round.questions.forEach((q, i) => grade(i, q, all[i]))
 	}
+
+	const retry = useMutation({
+		mutationFn: (ideaIds: string[]) => api.retry(ideaIds, asked),
+		onSuccess: ({ questions: next }) => {
+			if (!next.length) return
+			setAsked((a) => [...a, ...next.map((q) => q.id)])
+			setRound((r) => ({ questions: next, practice: true, number: r.number + 1 }))
+			setResponses(next.map(() => null))
+			setIndex(0)
+			setEntries(null)
+		},
+	})
 
 	/** Records the response for the current question, then moves on when asked to. */
 	const answer = (response: unknown, advance: boolean) => {
@@ -319,10 +340,28 @@ export function PracticeSession({
 		const checking = entries.filter((e) => e.graded.status === 'checking').length
 		const failed = entries.filter((e) => e.graded.status === 'error').length
 		const recalled = entries.filter((e) => e.graded.status === 'done' && e.graded.result.correct).length
+		const missedIdeas = [
+			...new Set(entries.flatMap((e) => (e.graded.status === 'done' && !e.graded.result.correct && e.question.ideaId ? [e.question.ideaId] : []))),
+		]
+		const heading = round.practice ? `Retry round${round.number > 1 ? ` ${round.number}` : ''}` : title
 		return (
-			<Screen footer={<Button title={doneLabel} onPress={onDone} />}>
+			<Screen
+				footer={
+					<Group gap={space.sm}>
+						{!checking && missedIdeas.length > 0 && (
+							<Button
+								title={`Retry ${missedIdeas.length} missed idea${missedIdeas.length === 1 ? '' : 's'}`}
+								kind="outline"
+								loading={retry.isPending}
+								onPress={() => retry.mutate(missedIdeas)}
+							/>
+						)}
+						<Button title={doneLabel} onPress={onDone} />
+					</Group>
+				}
+			>
 				<Group>
-					<Text variant="muted">{title}</Text>
+					<Text variant="muted">{heading}</Text>
 					<Text variant="title">
 						{checking ? `Checking ${checking} answer${checking === 1 ? '' : 's'}…` : `You recalled ${recalled} of ${entries.length - failed}`}
 					</Text>
@@ -330,13 +369,19 @@ export function PracticeSession({
 						<Text variant="muted">
 							{failed
 								? `${failed} could not be checked. Try them again below.`
-								: recalled === entries.length - failed
-									? 'Every card is spaced further out now.'
-									: 'Missed cards come back in about 10 minutes, then again tomorrow. Missing is how recall gets stronger.'}
+								: round.practice
+									? recalled === entries.length
+										? 'Every missed idea came back. Practice answers do not change when ideas are due.'
+										: 'Practice answers do not change when ideas are due. Retry again until each one comes back.'
+									: recalled === entries.length - failed
+										? 'Every idea is spaced further out now.'
+										: 'Missed ideas come back in about 10 minutes, with an easier question. Retry them now with new questions: missing is how recall gets stronger.'}
 						</Text>
 					)}
 				</Group>
-				{before}
+				<ErrorText error={retry.error} />
+				{retry.data && !retry.data.questions.length ? <Text variant="muted">No other questions on these ideas yet. Connect your AI in Settings to get new ones.</Text> : null}
+				{!round.practice && before}
 				<Group gap={space.md}>
 					{entries.map((e, i) => (
 						<ResultTile key={i} entry={e} index={i} onRetry={() => grade(i, e.question, e.response)} />
@@ -368,13 +413,13 @@ export function PracticeSession({
 			<Group>
 				<Row>
 					<Text variant="muted" style={{ flex: 1 }} numberOfLines={1}>
-						{current.itemTitle ?? title}
+						{round.practice ? 'Retry round' : (current.itemTitle ?? title)}
 					</Text>
 					<Text variant="muted">
-						{index + 1} of {questions.length}
+						{index + 1} of {round.questions.length}
 					</Text>
 				</Row>
-				<Progress value={index / questions.length} />
+				<Progress value={index / round.questions.length} />
 			</Group>
 			<Group gap={space.xl}>
 				<Group gap={space.md}>

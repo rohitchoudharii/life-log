@@ -1,8 +1,9 @@
 import { orderForTest, parseMarkdown, QUESTION_INTENSITIES, QUESTION_STYLES, splitSections, toPrompt, type PointStatus } from '@peak/core'
-import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
+import { REVIEW_PROMPT_VERSION } from '@peak/llm'
 import { db, t } from '../db'
 import { parseBody, requireUser, type AppEnv } from '../http'
 import { enqueueGeneration, rewriteQuestions } from '../jobs'
@@ -20,14 +21,30 @@ export async function ownItem(userId: string, itemId: string) {
 }
 
 const sectionCount = db
-	.select({ itemId: t.sections.itemId, n: count().as('n') })
+	.select({ itemId: t.sections.itemId, n: count().as('section_n') })
 	.from(t.sections)
 	.groupBy(t.sections.itemId)
 	.as('sc')
 
+// Questions written during reviews belong to reviews only, so tests and counts leave them out.
+const notReviewWritten = ne(t.questions.promptVersion, REVIEW_PROMPT_VERSION)
+
+// Ideas per item, and how many are learned (recalled on 3 separate days).
+const ideaCount = db
+	.select({
+		itemId: t.ideas.itemId,
+		n: count().as('idea_n'),
+		learned: sql<number>`count(*) filter (where ${t.ideaReviews.mastered})`.as('learned'),
+	})
+	.from(t.ideas)
+	.leftJoin(t.ideaReviews, eq(t.ideaReviews.ideaId, t.ideas.id))
+	.groupBy(t.ideas.itemId)
+	.as('ic')
+
 const itemQuestionCount = db
-	.select({ itemId: t.questions.itemId, n: count().as('n') })
+	.select({ itemId: t.questions.itemId, n: count().as('question_n') })
 	.from(t.questions)
+	.where(notReviewWritten)
 	.groupBy(t.questions.itemId)
 	.as('iqc')
 
@@ -35,7 +52,7 @@ const itemQuestionCount = db
 const questionCount = db
 	.select({ sectionId: t.questions.sectionId, n: count().as('n') })
 	.from(t.questions)
-	.where(isNull(t.questions.alsoSectionIds))
+	.where(and(isNull(t.questions.alsoSectionIds), notReviewWritten))
 	.groupBy(t.questions.sectionId)
 	.as('qc')
 
@@ -51,12 +68,15 @@ export const library = new Hono<AppEnv>()
 				error: t.contentItems.error,
 				sectionCount: sql<number>`coalesce(${sectionCount.n}, 0)::int`,
 				questionCount: sql<number>`coalesce(${itemQuestionCount.n}, 0)::int`,
+				ideaCount: sql<number>`coalesce(${ideaCount.n}, 0)::int`,
+				ideasLearned: sql<number>`coalesce(${ideaCount.learned}, 0)::int`,
 				createdAt: t.contentItems.createdAt,
 				lastOpenedAt: t.contentItems.lastOpenedAt,
 			})
 			.from(t.contentItems)
 			.leftJoin(sectionCount, eq(sectionCount.itemId, t.contentItems.id))
 			.leftJoin(itemQuestionCount, eq(itemQuestionCount.itemId, t.contentItems.id))
+			.leftJoin(ideaCount, eq(ideaCount.itemId, t.contentItems.id))
 			.where(eq(t.contentItems.userId, c.var.user.id))
 			.orderBy(desc(t.contentItems.createdAt))
 		return c.json({ items })
@@ -132,6 +152,7 @@ export const library = new Hono<AppEnv>()
 			.where(
 				and(
 					eq(t.questions.itemId, item.id),
+					notReviewWritten,
 					inArray(t.questions.sectionId, sectionIds),
 					or(isNull(t.questions.alsoSectionIds), sql`${t.questions.alsoSectionIds} <@ array[${sql.join(sectionIds.map((id) => sql`${id}`), sql`, `)}]::uuid[]`),
 				),
@@ -148,7 +169,7 @@ export const library = new Hono<AppEnv>()
 		return c.json({
 			itemTitle: item.title,
 			itemStatus: item.status,
-			questions: ordered.map((q) => ({ id: q.id, ...toPrompt(q.type, q.content) })),
+			questions: ordered.map((q) => ({ id: q.id, ideaId: q.ideaId, ...toPrompt(q.type, q.content) })),
 		})
 	})
 	.post('/:id/rewrite-questions', async (c) => {

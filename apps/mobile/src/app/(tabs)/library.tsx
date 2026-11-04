@@ -38,6 +38,7 @@ export default function Library() {
 						<Row>
 							<Text variant="muted">
 								{item.sectionCount} section{item.sectionCount === 1 ? '' : 's'}, {item.questionCount} question{item.questionCount === 1 ? '' : 's'}
+								{item.ideaCount ? `, ${item.ideasLearned} of ${item.ideaCount} ideas learned` : ''}
 							</Text>
 							{statusLabel[item.status] ? <Text variant="muted">{statusLabel[item.status]}</Text> : null}
 						</Row>

@@ -25,7 +25,7 @@ export default function Today() {
 		<Screen
 			footer={
 				t.due > 0 ? (
-					<Button title={`Start ${t.due} recall${t.due === 1 ? '' : 's'}`} onPress={() => router.push('/review')} />
+					<Button title={`Review ${t.due} idea${t.due === 1 ? '' : 's'}`} onPress={() => router.push('/review')} />
 				) : undefined
 			}
 		>
@@ -35,7 +35,7 @@ export default function Today() {
 					{t.streak > 0 && <Pill filled>{t.streak}-day streak</Pill>}
 				</Row>
 				<Text variant="title">
-					{t.due > 0 ? `${t.due} recall${t.due === 1 ? '' : 's'} due today` : t.reviewedToday ? 'All caught up for today' : 'Nothing due yet'}
+					{t.due > 0 ? `${t.due} idea${t.due === 1 ? '' : 's'} due today` : t.reviewedToday ? 'All caught up for today' : 'Nothing due yet'}
 				</Text>
 			</Group>
 

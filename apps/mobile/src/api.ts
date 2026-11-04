@@ -58,6 +58,8 @@ export type ItemSummary = {
 	error: string | null
 	sectionCount: number
 	questionCount: number
+	ideaCount: number
+	ideasLearned: number
 	createdAt: string
 }
 export type Section = {
@@ -70,7 +72,7 @@ export type Section = {
 	wordCount: number
 	questionCount: number
 }
-export type Item = Omit<ItemSummary, 'sectionCount' | 'questionCount'> & { questionIntensity: QuestionIntensity; questionStyle: QuestionStyle }
+export type Item = Omit<ItemSummary, 'sectionCount' | 'questionCount' | 'ideaCount' | 'ideasLearned'> & { questionIntensity: QuestionIntensity; questionStyle: QuestionStyle }
 export type StudySession = {
 	id: string
 	itemId: string
@@ -78,10 +80,12 @@ export type StudySession = {
 	startedAt: string
 	endedAt: string | null
 }
-export type Question = QuestionPrompt & { id: string; itemTitle?: string }
+/** `ideaId` is the key idea the question tests; null for questions from before ideas. */
+export type Question = QuestionPrompt & { id: string; ideaId: string | null; itemTitle?: string }
 export type RecallIdea = { id: string; text: string; section: string; status: PointStatus | null }
 export type Recall = { id: string; text: string; feedback: string | null; gradeError: string | null; ideas: RecallIdea[] }
-export type AnswerResult = { correct: boolean; rating: Rating; reveal: Record<string, unknown>; dueAt: string }
+/** `dueAt` is when the idea comes back; null for retry-round answers and questions with no idea. */
+export type AnswerResult = { correct: boolean; rating: Rating; reveal: Record<string, unknown>; dueAt: string | null; practice: boolean }
 export type Today = {
 	due: number
 	reviewedToday: number
@@ -128,6 +132,7 @@ export const api = {
 	testQuestions: (itemId: string, sectionIds: string[], recallId?: string) =>
 		request<{ itemTitle: string; itemStatus: ItemStatus; questions: Question[] }>('POST', `/items/${itemId}/test`, { sectionIds, recallId }),
 
-	answer: (questionId: string, response: unknown) => request<AnswerResult>('POST', '/answers', { questionId, response }),
+	answer: (questionId: string, response: unknown, practice = false) => request<AnswerResult>('POST', '/answers', { questionId, response, practice }),
 	due: () => request<{ questions: Question[] }>('GET', '/reviews/due'),
+	retry: (ideaIds: string[], exclude: string[]) => request<{ questions: Question[] }>('POST', '/reviews/retry', { ideaIds, exclude }),
 }
