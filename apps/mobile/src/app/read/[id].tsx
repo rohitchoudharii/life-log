@@ -111,15 +111,17 @@ export default function Reader() {
 			<Button title="Stop and test me" onPress={() => finish.mutate()} loading={finish.isPending} />
 		</Group>
 	) : (
-		<Group gap={space.md}>
-			<Text style={{ fontFamily: font.medium }}>Start a focus session</Text>
+		// Kept to two rows so a small phone still shows most of the page.
+		<Group gap={space.sm}>
 			<ChoiceRow>
 				{DURATIONS.map((m) => (
 					<Choice key={m} label={`${m} min`} selected={minutes === m} onPress={() => setMinutes(m)} />
 				))}
 			</ChoiceRow>
-			<Button title={`Start ${minutes}-minute session`} onPress={() => start.mutate()} loading={start.isPending} />
-			<Button title="Test me now" kind="outline" onPress={() => router.push({ pathname: '/test/[id]', params: { id } })} />
+			<Row style={{ gap: space.sm }}>
+				<Button title="Start focus" onPress={() => start.mutate()} loading={start.isPending} style={{ flex: 3 }} />
+				<Button title="Test me" kind="outline" onPress={() => router.push({ pathname: '/test/[id]', params: { id } })} style={{ flex: 2 }} />
+			</Row>
 			<ErrorText error={start.error} />
 		</Group>
 	)

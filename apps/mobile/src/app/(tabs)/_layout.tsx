@@ -17,6 +17,8 @@ export default function TabsLayout() {
 		<Tabs
 			screenOptions={{
 				headerShown: false,
+				// Otherwise Android lifts the tab bar above the keyboard, over the text box.
+				tabBarHideOnKeyboard: true,
 				tabBarActiveTintColor: c.fg,
 				tabBarInactiveTintColor: c.sub,
 				tabBarLabelStyle: { fontFamily: font.medium, fontSize: 11, lineHeight: 14, flexShrink: 0 },

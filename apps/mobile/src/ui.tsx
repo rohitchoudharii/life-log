@@ -12,6 +12,7 @@ import {
 	type TextInputProps,
 	type TextStyle,
 	type ViewStyle,
+	KeyboardAvoidingView,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { font, hairline, radius, space, useColors } from './theme'
@@ -49,13 +50,16 @@ export function Text({
 	)
 }
 
-/** A scrolling page with the theme's screen margins and the safe area applied. */
+/**
+ * A scrolling page with the theme's screen margins and the safe area applied. The keyboard
+ * shrinks the page, so text boxes and the footer's buttons stay above it.
+ */
 export function Screen({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
 	const c = useColors()
 	const insets = useSafeAreaInsets()
 	const web = Platform.OS === 'web'
 	return (
-		<View style={{ flex: 1, backgroundColor: c.bg }}>
+		<KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: c.bg }}>
 			<ScrollView
 				contentContainerStyle={{
 					paddingTop: (web ? 0 : insets.top) + space.screenTop,
@@ -68,7 +72,7 @@ export function Screen({ children, footer }: { children: ReactNode; footer?: Rea
 					flexGrow: 1,
 				}}
 				keyboardShouldPersistTaps="handled"
-				automaticallyAdjustKeyboardInsets
+				keyboardDismissMode="interactive"
 			>
 				{children}
 			</ScrollView>
@@ -88,7 +92,7 @@ export function Screen({ children, footer }: { children: ReactNode; footer?: Rea
 					{footer}
 				</View>
 			) : null}
-		</View>
+		</KeyboardAvoidingView>
 	)
 }
 
