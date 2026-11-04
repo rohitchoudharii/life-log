@@ -1,0 +1,12 @@
+{
+  "name": "peak",
+  "private": true,
+  "packageManager": "pnpm@12.16.1",
+  "scripts": {
+    "db:up": "docker compose up -d db",
+    "dev:api": "pnpm --filter @peak/api dev",
+    "dev:app": "pnpm --filter @peak/mobile start",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  }
+}
