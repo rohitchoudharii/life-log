@@ -148,6 +148,7 @@ export default function Reader() {
 				}}
 			>
 				<Text variant="title">{item.title}</Text>
+				{item.questionsOnDemand && <Text variant="muted">A long reading: questions are written chapter by chapter, when you pick chapters to be tested on.</Text>}
 				{item.status === 'needs_key' && <Text variant="muted">Connect your AI in Settings so it can write questions for this.</Text>}
 				{item.status === 'failed' && <Text variant="muted">Could not write questions: {item.error}</Text>}
 				{sections.map((s, i) => (

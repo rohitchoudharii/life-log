@@ -9,6 +9,8 @@ import { parseBody, requireUser, type AppEnv } from '../http'
 import { mediaStore, saveImage } from '../media'
 import { decodeHtml, ExtractError, extractArticle } from '../web/extract'
 import { FetchError, safeFetch } from '../web/fetch'
+import { readPdf } from '../books/pdf'
+import { isPdf, MAX_BOOK_BYTES } from './books'
 import { createItem, ItemPrefs, ownItem } from './library'
 
 const MB = 1024 * 1024
@@ -51,6 +53,13 @@ async function attachImages(userId: string, blocks: Block[], pageUrl: string) {
 	return { blocks: out.filter((b) => b !== null), missing: [...new Set(missing)] }
 }
 
+/** arXiv papers have an HTML version that keeps math as text; a link to the abstract or PDF uses it when there is one. */
+async function arxivHtml(url: string) {
+	const m = /^https?:\/\/(?:www\.)?arxiv\.org\/(?:abs|pdf)\/([\w.\/-]+?\d(?:v\d+)?)(?:\.pdf)?\/?$/i.exec(url)
+	if (!m) return null
+	return safeFetch(`https://arxiv.org/html/${m[1]}`, { accept: 'text/html', maxBytes: 5 * MB }).catch(() => null)
+}
+
 function failure(err: unknown): never {
 	if (err instanceof FetchError || err instanceof ExtractError) throw new HTTPException(422, { message: err.message })
 	throw err
@@ -60,11 +69,17 @@ export const web = new Hono<AppEnv>()
 	.use(requireUser)
 	// Paste a link: the server fetches the page and keeps its article.
 	.post('/items/url', async (c) => {
-		const { url, ...prefs } = await parseBody(c, ItemPrefs.extend({ url: z.string().trim().min(1, 'Paste a link').max(2000) }))
-		const page = await safeFetch(/^https?:\/\//i.test(url) ? url : `https://${url}`, { accept: 'text/html,application/xhtml+xml', maxBytes: 5 * MB }).catch(failure)
+		const { url: input, ...prefs } = await parseBody(c, ItemPrefs.extend({ url: z.string().trim().min(1, 'Paste a link').max(2000) }))
+		const url = /^https?:\/\//i.test(input) ? input : `https://${input}`
+		const page = (await arxivHtml(url)) ?? (await safeFetch(url, { accept: 'text/html,application/xhtml+xml,application/pdf;q=0.9', maxBytes: MAX_BOOK_BYTES, timeoutMs: 60_000 }).catch(failure))
 		const type = page.contentType.split(';')[0]!.trim().toLowerCase()
-		if (type === 'application/pdf') throw new HTTPException(422, { message: 'PDF links are not supported yet.' })
-		if (type && type !== 'text/html' && type !== 'application/xhtml+xml') throw new HTTPException(422, { message: "That link isn't a web page" })
+		if (type === 'application/pdf' || isPdf(page.body)) {
+			const pdf = await readPdf(new Uint8Array(page.body), decodeURIComponent(new URL(page.url).pathname.split('/').pop() || 'PDF')).catch(failure)
+			const item = await createItem(c.var.user.id, { ...pdf, source: 'pdf_url', sourceUrl: page.url, ...prefs })
+			return c.json({ item }, 201)
+		}
+		if (type && type !== 'text/html' && type !== 'application/xhtml+xml') throw new HTTPException(422, { message: "That link isn't a web page or a PDF" })
+		if (page.body.length > 5 * MB) throw new HTTPException(422, { message: 'That page is too large' })
 		let article
 		try {
 			article = extractArticle(decodeHtml(page.body, page.contentType), page.url)

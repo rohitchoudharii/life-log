@@ -79,6 +79,11 @@ export const contentItems = pgTable(
 		questionIntensity: text('question_intensity').$type<QuestionIntensity>().notNull().default('standard'),
 		questionStyle: text('question_style').$type<QuestionStyle>().notNull().default('mixed'),
 		lastOpenedAt: timestamp('last_opened_at', { withTimezone: true }),
+		/**
+		 * Long readings (books) get questions chapter by chapter, when the user picks a chapter to be
+		 * tested on, instead of all at once.
+		 */
+		questionsOnDemand: boolean('questions_on_demand').notNull().default(false),
 		/** The bucket this reading is in, and its place there; both null when it is in none. */
 		collectionId: uuid('collection_id').references(() => collections.id, { onDelete: 'set null' }),
 		collectionPosition: integer('collection_position'),
@@ -100,6 +105,8 @@ export const sections = pgTable(
 		title: text('title').notNull(),
 		blocks: jsonb('blocks').$type<Block[]>().notNull(),
 		wordCount: integer('word_count').notNull(),
+		/** For readings with questions on demand: the user asked for this section's questions. */
+		questionsWanted: boolean('questions_wanted').notNull().default(false),
 	},
 	(t) => [index('sections_item_idx').on(t.itemId, t.position)],
 )

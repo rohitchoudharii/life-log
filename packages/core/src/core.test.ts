@@ -79,6 +79,8 @@ describe('parseMarkdown and splitSections', () => {
 		const sections = splitSections(parseMarkdown(Array(6).fill(para).join('\n\n')), 'Long')
 		expect(sections.map((s) => s.wordCount)).toEqual([400, 400, 400])
 		expect(sections.map((s) => s.title)).toEqual(['Long', 'Long (part 2)', 'Long (part 3)'])
+		// The later parts are subsections of the first, so picking it picks the whole text.
+		expect(sections.map((s) => s.level)).toEqual([1, 2, 2])
 	})
 })
 

@@ -89,11 +89,34 @@ export function planBatches(sections: Pick<SectionInput, 'level' | 'wordCount'>[
 	return batches.filter((b) => b.some((i) => sections[i]!.wordCount > 0))
 }
 
+/**
+ * Models sometimes put a raw line break or tab inside a JSON string, usually in code. JSON forbids
+ * that, so control characters inside strings are escaped; elsewhere they are whitespace and stay.
+ */
+function escapeControlCharacters(json: string): string {
+	let out = ''
+	let inString = false
+	let escaped = false
+	for (const ch of json) {
+		if (inString && !escaped && ch < ' ') out += ch === '\n' ? '\\n' : ch === '\t' ? '\\t' : ch === '\r' ? '\\r' : ''
+		else out += ch
+		if (escaped) escaped = false
+		else if (inString && ch === '\\') escaped = true
+		else if (ch === '"') inString = !inString
+	}
+	return out
+}
+
 export function extractJson(text: string): unknown {
 	const start = text.indexOf('{')
 	const end = text.lastIndexOf('}')
 	if (start < 0 || end < start) throw new Error('The model did not return JSON')
-	return JSON.parse(text.slice(start, end + 1))
+	const json = text.slice(start, end + 1)
+	try {
+		return JSON.parse(json)
+	} catch {
+		return JSON.parse(escapeControlCharacters(json))
+	}
 }
 
 const RULES = `You write retrieval-practice questions that force the learner to think hard, following research on the testing effect (Roediger, Karpicke, Bjork, Agarwal) and deliberate practice (Peak, Ericsson and Pool). The learner answers from memory, right after reading, without the text.
@@ -264,6 +287,7 @@ export async function writeQuestions(
 	batch: number[],
 	prefs: QuestionPrefs,
 	onRejected?: OnRejected,
+	attempt = 1,
 ): Promise<Generated> {
 	const withText = batch.filter((i) => sections[i]!.wordCount > 0)
 	const blocks = batch.map((i) => sectionBlock(i + 1, sections[i]!, questionCountFor(sections[i]!.wordCount, prefs.intensity))).join('\n\n')
@@ -287,7 +311,11 @@ Question shapes:
 ${SHAPES}`,
 		)) as typeof parsed
 	} catch (err) {
-		if (batch.length < 2) throw err
+		// An unreadable reply for one section is asked for once more; a bigger batch is split.
+		if (batch.length < 2) {
+			if (attempt < 2) return writeQuestions(provider, apiKey, model, sections, batch, prefs, onRejected, attempt + 1)
+			throw err
+		}
 		const half = Math.ceil(batch.length / 2)
 		const [a, b] = await Promise.all([
 			writeQuestions(provider, apiKey, model, sections, batch.slice(0, half), prefs, onRejected),

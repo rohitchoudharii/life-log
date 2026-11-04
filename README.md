@@ -59,6 +59,14 @@ Install the extension:
 
 If Peak runs somewhere other than `localhost:8787`, change the address under **Settings** in the popup.
 
+## Books and PDFs
+
+**Add → Book or PDF** takes an EPUB or a PDF of up to 50 MB. A PDF link works in **Link**, and an arXiv link uses the paper's HTML version when it has one, which keeps the math as text.
+
+- **EPUB:** chapters come from the table of contents, including books that put many chapters in one file. Chapter pages go through the same conversion as web pages, and the book's own images are re-encoded and stored. Books with DRM are refused.
+- **PDF:** headings come from font size and numbering ("3.1 Attention"). Two-column pages are read column by column, headers and page numbers repeated on every page are dropped, and each page start is marked so you can find a passage in the original. Scanned PDFs without text are refused for now.
+- **Long readings** (over 8,000 words) get questions chapter by chapter: pick chapters in the test picker and tap **Write questions**. Shorter readings get all their questions right away.
+
 How captured pages are kept safe:
 
 - **No HTML is stored or shown.** Readability finds the article, and only its text, headings, lists, code, quotes and images become Peak's own blocks.

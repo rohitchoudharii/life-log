@@ -12,6 +12,7 @@ import { me } from './routes/me'
 import { recall } from './routes/recall'
 import { sessions } from './routes/sessions'
 import { study } from './routes/study'
+import { books } from './routes/books'
 import { mediaRoute, web } from './routes/web'
 
 const app = new Hono()
@@ -27,6 +28,7 @@ const app = new Hono()
 	.route('/', recall)
 	.route('/', study)
 	.route('/', web)
+	.route('/', books)
 	.onError((err, c) => {
 		if (err instanceof HTTPException) return c.json({ error: err.message }, err.status)
 		console.error(err)

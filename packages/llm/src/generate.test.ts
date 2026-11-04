@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { judgeAnswer, planBatches, writeQuestions, type LlmProvider, type SectionInput } from './index'
+import { extractJson, judgeAnswer, planBatches, writeQuestions, type LlmProvider, type SectionInput } from './index'
 
 /** A provider that replies with the given texts in order and records what it was asked. */
 const scripted = (...replies: string[]) => {
@@ -74,12 +74,26 @@ describe('writeQuestions', () => {
 		expect(out.ideas.get(1)).toEqual(['Heads work in parallel subspaces.'])
 	})
 
+	it('asks once more when the reply for a single section is unreadable', async () => {
+		const { provider, asked } = scripted('{"sections": [{"section": 1, "questions": [', JSON.stringify({ sections: [{ section: 1, ideas: ['i'], questions: [good] }] }))
+		const out = await writeQuestions(provider, 'k', 'm', sections, [0], prefs)
+		expect(asked).toHaveLength(2)
+		expect(out.questions).toHaveLength(1)
+	})
+
 	it('splits the batch in half when the reply is cut off', async () => {
 		const one = (n: number, q: object) => JSON.stringify({ sections: [{ section: n, ideas: ['i'], questions: [q] }] })
 		const { provider, asked } = scripted('{"sections": [{"section": 1, "questions": [', one(1, good), one(2, goodHeads))
 		const out = await writeQuestions(provider, 'k', 'm', sections, [0, 1], prefs)
 		expect(asked).toHaveLength(3)
 		expect(out.questions.map((q) => q.section)).toEqual([0, 1])
+	})
+})
+
+describe('extractJson', () => {
+	it('reads replies with raw line breaks and tabs inside strings, as models write code', () => {
+		const reply = 'Here you go:\n{"prompt": "What does this print?\nfor (let i = 0; i < 2; i++)\n\tconsole.log(i)", "ok": true,\n"note": "a \\"quoted\\" word"}'
+		expect(extractJson(reply)).toEqual({ prompt: 'What does this print?\nfor (let i = 0; i < 2; i++)\n\tconsole.log(i)', ok: true, note: 'a "quoted" word' })
 	})
 })
 

@@ -20,6 +20,8 @@ export const Block = z.discriminatedUnion('type', [
 		height: z.number().int().positive().optional(),
 		src: z.string().optional(),
 	}),
+	/** Where a page of the source (a PDF) starts, so the reader can point back to it. */
+	z.object({ type: z.literal('page'), number: z.number().int().positive() }),
 ])
 export type Block = z.infer<typeof Block>
 
@@ -43,6 +45,7 @@ export function blockText(block: Block): string {
 		case 'list':
 			return block.items.join('\n')
 		case 'image':
+		case 'page':
 			return ''
 		default:
 			return block.text
@@ -141,7 +144,8 @@ export function splitSections(blocks: Block[], fallbackTitle: string): SectionDr
 		const words = countWords(blockText(block))
 		if (section.wordCount > 0 && section.wordCount + words > TARGET_SECTION_WORDS * 1.3) {
 			part += 1
-			start(`${section.title.replace(/ \(part \d+\)$/, '')} (part ${part})`, section.level, false)
+			// Later parts nest under the first, so picking a chapter picks all of it.
+			start(`${section.title.replace(/ \(part \d+\)$/, '')} (part ${part})`, part === 2 ? Math.min(section.level + 1, MAX_SECTION_LEVEL) : section.level, false)
 		}
 		current!.blocks.push(block)
 		current!.wordCount += words

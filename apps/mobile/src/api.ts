@@ -36,10 +36,12 @@ export const setSession = (t: string | null, onExpired?: () => void) => {
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
 	let res: Response
 	try {
+		// A form (file upload) sets its own content type with the multipart boundary.
+		const form = body instanceof FormData
 		res = await fetch(BASE + path, {
 			method,
-			headers: { 'content-type': 'application/json', ...(token && { authorization: `Bearer ${token}` }) },
-			body: body === undefined ? undefined : JSON.stringify(body),
+			headers: { ...(!form && { 'content-type': 'application/json' }), ...(token && { authorization: `Bearer ${token}` }) },
+			body: body === undefined ? undefined : form ? body : JSON.stringify(body),
 		})
 	} catch {
 		throw new ApiError(`Can't reach the server at ${BASE}`, 0)
@@ -77,8 +79,15 @@ export type Section = {
 	blocks: Block[]
 	wordCount: number
 	questionCount: number
+	/** For readings with questions on demand: their questions were asked for. */
+	questionsWanted: boolean
 }
-export type Item = Omit<ItemSummary, 'sectionCount' | 'questionCount' | 'ideaCount' | 'ideasLearned' | 'collectionPosition'> & { questionIntensity: QuestionIntensity; questionStyle: QuestionStyle }
+export type Item = Omit<ItemSummary, 'sectionCount' | 'questionCount' | 'ideaCount' | 'ideasLearned' | 'collectionPosition'> & {
+	questionIntensity: QuestionIntensity
+	questionStyle: QuestionStyle
+	/** A long reading whose questions are written chapter by chapter, when picked. */
+	questionsOnDemand: boolean
+}
 export type StudySession = {
 	id: string
 	itemId: string
@@ -125,6 +134,16 @@ export const api = {
 	items: () => request<{ items: ItemSummary[]; collections: Collection[] }>('GET', '/items'),
 	addItem: (input: { title: string; text: string } & ItemPrefs) => request<{ item: ItemSummary }>('POST', '/items', input),
 	addUrl: (input: { url: string } & ItemPrefs) => request<{ item: ItemSummary }>('POST', '/items/url', input),
+	/** Uploads an EPUB or PDF. `file` is a File on the web and a { uri, name, type } on phones. */
+	uploadItem: async (file: Blob | { uri: string; name: string; type: string }, prefs: ItemPrefs) => {
+		const form = new FormData()
+		form.append('file', file as Blob)
+		form.append('questionIntensity', prefs.questionIntensity)
+		form.append('questionStyle', prefs.questionStyle)
+		if (prefs.collectionId) form.append('collectionId', prefs.collectionId)
+		return request<{ item: ItemSummary }>('POST', '/items/upload', form)
+	},
+	prepare: (itemId: string, sectionIds: string[]) => request<{ sections: number }>('POST', `/items/${itemId}/prepare`, { sectionIds }),
 	addCollection: (name: string) => request<{ collection: Collection }>('POST', '/collections', { name }),
 	renameCollection: (id: string, name: string) => request<{ collection: Collection }>('PATCH', `/collections/${id}`, { name }),
 	deleteCollection: (id: string) => request('DELETE', `/collections/${id}`),

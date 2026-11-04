@@ -26,6 +26,8 @@ const MAX_IMAGES = 40
 /** Pages may embed small images inline; anything else must be a web address the server fetches. */
 const DATA_IMAGE = /^data:image\/(png|jpeg|gif|webp);base64,[a-z0-9+/=\s]+$/i
 
+const WEB = ['http:', 'https:'] as const
+
 const tag = (n: DomNode) => n.nodeName.toUpperCase()
 const attr = (n: DomNode, name: string) => n.getAttribute?.(name) ?? null
 const squash = (s: string | null) => (s ?? '').replace(/\s+/g, ' ').trim()
@@ -43,8 +45,11 @@ function has(n: DomNode, test: (el: DomNode) => boolean): boolean {
 	return children(n).some((c) => c.nodeType === ELEMENT && !SKIP.has(tag(c)) && (test(c) || has(c, test)))
 }
 
-/** The address an image loads from: http(s) resolved against the page, or a small inline data image. */
-export function imageSource(n: DomNode, baseUrl: string): string | null {
+/**
+ * The address an image loads from: resolved against the page, or a small inline data image.
+ * `schemes` are the URL schemes allowed, http and https for web pages.
+ */
+export function imageSource(n: DomNode, baseUrl: string, schemes: readonly string[] = WEB): string | null {
 	const srcset = attr(n, 'srcset') ?? attr(n, 'data-srcset')
 	const fromSet = srcset
 		?.split(',')
@@ -61,7 +66,7 @@ export function imageSource(n: DomNode, baseUrl: string): string | null {
 	if (value.startsWith('data:')) return DATA_IMAGE.test(value) ? value : null
 	try {
 		const url = new URL(value, baseUrl)
-		return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null
+		return schemes.includes(url.protocol) ? url.href : null
 	} catch {
 		return null
 	}
@@ -78,9 +83,10 @@ function mathText(n: DomNode): string | null {
 /**
  * Turns article HTML (as Readability returns it) into our blocks. Only text survives: no markup,
  * attributes, links, or styles, so nothing from the page can run or load when it is shown.
- * Images become image blocks with their source address, for the server to download.
+ * Images become image blocks with their source address, for the server to download. A book's
+ * own images use its archive's scheme, given in `imageSchemes`.
  */
-export function htmlToBlocks(root: DomNode, baseUrl: string): Block[] {
+export function htmlToBlocks(root: DomNode, baseUrl: string, { imageSchemes = WEB }: { imageSchemes?: readonly string[] } = {}): Block[] {
 	const out: Block[] = []
 	let inline: string[] = []
 	let images = 0
@@ -90,7 +96,7 @@ export function htmlToBlocks(root: DomNode, baseUrl: string): Block[] {
 		inline = []
 	}
 	const image = (n: DomNode) => {
-		const src = imageSource(n, baseUrl)
+		const src = imageSource(n, baseUrl, imageSchemes)
 		if (!src || images >= MAX_IMAGES) return
 		images++
 		const size = (name: string) => {

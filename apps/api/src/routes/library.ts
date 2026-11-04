@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { REVIEW_PROMPT_VERSION } from '@peak/llm'
 import { db, t } from '../db'
 import { parseBody, requireUser, type AppEnv } from '../http'
-import { enqueueGeneration, rewriteQuestions } from '../jobs'
+import { enqueueGeneration, ON_DEMAND_WORDS, rewriteQuestions } from '../jobs'
 
 const MAX_PASTE_CHARS = 200_000
 
@@ -73,6 +73,7 @@ export async function createItem(
 ) {
 	const sections = splitSections(input.blocks, input.title)
 	if (!sections.some((s) => s.wordCount > 0)) throw new HTTPException(400, { message: 'No readable text found' })
+	const questionsOnDemand = sections.reduce((n, s) => n + s.wordCount, 0) > ON_DEMAND_WORDS
 	const item = await db.transaction(async (tx) => {
 		let collectionPosition: number | null = null
 		if (input.collectionId) {
@@ -99,12 +100,15 @@ export async function createItem(
 				questionStyle: input.questionStyle ?? 'mixed',
 				collectionId: input.collectionId ?? null,
 				collectionPosition,
+				questionsOnDemand,
+				// A book waits for chapters to be picked; there is nothing to write yet.
+				status: questionsOnDemand ? 'ready' : 'processing',
 			})
 			.returning()
 		await tx.insert(t.sections).values(sections.map((s, position) => ({ itemId: item!.id, position, ...s })))
 		return item!
 	})
-	await enqueueGeneration(item.id)
+	if (!questionsOnDemand) await enqueueGeneration(item.id)
 	return item
 }
 
@@ -163,6 +167,7 @@ export const library = new Hono<AppEnv>()
 				title: t.sections.title,
 				blocks: t.sections.blocks,
 				wordCount: t.sections.wordCount,
+				questionsWanted: t.sections.questionsWanted,
 				questionCount: sql<number>`coalesce(${questionCount.n}, 0)::int`,
 			})
 			.from(t.sections)

@@ -6,20 +6,36 @@ import { decryptSecret } from './crypto'
 import { db, t } from './db'
 import { env } from './env'
 
-const QUEUE = 'generate-questions'
+/**
+ * One job per item writes whatever its sections need. The stately policy allows one running and
+ * one waiting job per item, so chapters picked while a job runs are written by the next one.
+ */
+const QUEUE = 'write-questions'
+const OLD_QUEUE = 'generate-questions'
 const boss = new PgBoss(env.DATABASE_URL)
 
 export async function startJobs() {
 	boss.on('error', (err) => console.error('[jobs]', err))
 	await boss.start()
-	await boss.createQueue(QUEUE, { retryLimit: 2, retryDelay: 30, retryBackoff: true })
-	await boss.work<{ itemId: string }>(QUEUE, async ([job]) => {
+	// Workers send heartbeats, so a job whose process died (a restart, a deploy) is retried within
+	// half a minute instead of blocking its item until it expires.
+	const options = { retryLimit: 2, retryDelay: 30, retryBackoff: true, expireInSeconds: 60 * 60, heartbeatSeconds: 30 }
+	if (await boss.getQueue(QUEUE)) await boss.updateQueue(QUEUE, options)
+	else await boss.createQueue(QUEUE, { policy: 'stately', ...options })
+	// Different items are written side by side; one item's jobs never overlap (stately, per item).
+	await boss.work<{ itemId: string }>(QUEUE, { localConcurrency: 3 }, async ([job]) => {
 		if (job) await generateForItem(job.data.itemId)
 	})
+	// Items left mid-way by a restart or by the old queue (whose 15-minute limit cut long items short).
+	if (await boss.getQueue(OLD_QUEUE)) await boss.deleteQueue(OLD_QUEUE)
+	const stuck = await db.select({ id: t.contentItems.id }).from(t.contentItems).where(eq(t.contentItems.status, 'processing'))
+	await Promise.all(stuck.map((i) => enqueueGeneration(i.id)))
 }
 
-export const enqueueGeneration = (itemId: string) =>
-	boss.send(QUEUE, { itemId }, { singletonKey: itemId })
+export const enqueueGeneration = (itemId: string) => boss.send(QUEUE, { itemId }, { singletonKey: itemId })
+
+/** Readings longer than this get questions chapter by chapter, when a chapter is picked. */
+export const ON_DEMAND_WORDS = 8000
 
 /**
  * Pre-generates questions for an item so tests never wait on the model. Sections are sent in
@@ -69,7 +85,7 @@ export async function generateForItem(itemId: string) {
 	}
 
 	try {
-		const pending = all.flatMap((s, i) => (done.has(s.id) || s.wordCount === 0 ? [] : [i]))
+		const pending = all.flatMap((s, i) => (done.has(s.id) || s.wordCount === 0 || (item.questionsOnDemand && !s.questionsWanted) ? [] : [i]))
 		// Batches are planned over the pending sections only, in reading order.
 		const batches = planBatches(pending.map((i) => inputs[i]!), prefs.intensity).map((b) => b.map((k) => pending[k]!))
 		for (const batch of batches) {
@@ -93,7 +109,9 @@ export async function generateForItem(itemId: string) {
 			.from(t.questions)
 			.where(and(eq(t.questions.itemId, itemId), isNotNull(t.questions.alsoSectionIds)))
 			.limit(1)
-		if (!linked && planBatches(inputs, prefs.intensity).length > 1)
+		// Books are written a chapter at a time, so links across the whole book are not; links within
+		// a chapter come with its questions.
+		if (!linked && !item.questionsOnDemand && planBatches(inputs, prefs.intensity).length > 1)
 			await store(await linkSections(provider, apiKey, key.model, all.map((s, i) => ({ title: s.title, ideas: ideas[i]!.map((x) => x.text) })), prefs))
 
 		await db.update(t.contentItems).set({ status: 'ready' }).where(eq(t.contentItems.id, itemId))

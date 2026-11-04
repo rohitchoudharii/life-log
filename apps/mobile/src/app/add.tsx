@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import * as DocumentPicker from 'expo-document-picker'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
 import type { QuestionIntensity, QuestionStyle } from '@peak/core'
@@ -22,8 +23,9 @@ const STYLES: { value: QuestionStyle; label: string }[] = [
 export default function Add() {
 	const router = useRouter()
 	const queryClient = useQueryClient()
-	const [mode, setMode] = useState<'link' | 'text'>('link')
+	const [mode, setMode] = useState<'link' | 'file' | 'text'>('link')
 	const [url, setUrl] = useState('')
+	const [file, setFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null)
 	const [title, setTitle] = useState('')
 	const [text, setText] = useState('')
 	const [questionIntensity, setIntensity] = useState<QuestionIntensity>('thorough')
@@ -32,7 +34,10 @@ export default function Add() {
 	const add = useMutation({
 		mutationFn: () => {
 			const prefs = { questionIntensity, questionStyle, collectionId }
-			return mode === 'link' ? api.addUrl({ url: url.trim(), ...prefs }) : api.addItem({ title, text, ...prefs })
+			if (mode === 'link') return api.addUrl({ url: url.trim(), ...prefs })
+			if (mode === 'file' && file)
+				return api.uploadItem(file.file ?? { uri: file.uri, name: file.name, type: file.mimeType ?? 'application/octet-stream' }, prefs)
+			return api.addItem({ title, text, ...prefs })
 		},
 		onSuccess: ({ item }) => {
 			queryClient.invalidateQueries({ queryKey: ['items'] })
@@ -45,19 +50,34 @@ export default function Add() {
 		<Screen
 			footer={
 				<Button
-					title={add.isPending && mode === 'link' ? 'Fetching the page…' : 'Add and start reading'}
+					title={add.isPending && mode === 'link' ? 'Fetching the page…' : add.isPending && mode === 'file' ? 'Reading the file…' : 'Add and start reading'}
 					onPress={() => add.mutate()}
 					loading={add.isPending}
-					disabled={mode === 'link' ? !url.trim() : !title.trim() || words < 10}
+					disabled={mode === 'link' ? !url.trim() : mode === 'file' ? !file : !title.trim() || words < 10}
 				/>
 			}
 		>
 			<ChoiceRow>
-				<Choice label="Paste a link" selected={mode === 'link'} onPress={() => setMode('link')} />
-				<Choice label="Paste text" selected={mode === 'text'} onPress={() => setMode('text')} />
+				<Choice label="Link" selected={mode === 'link'} onPress={() => setMode('link')} />
+				<Choice label="Book or PDF" selected={mode === 'file'} onPress={() => setMode('file')} />
+				<Choice label="Text" selected={mode === 'text'} onPress={() => setMode('text')} />
 			</ChoiceRow>
 			<Group gap={space.lg}>
-				{mode === 'link' ? (
+				{mode === 'file' ? (
+					<Group gap={space.sm}>
+						<Button
+							title={file ? file.name : 'Choose an EPUB or PDF'}
+							kind="outline"
+							onPress={async () => {
+								const picked = await DocumentPicker.getDocumentAsync({ type: ['application/epub+zip', 'application/pdf'], copyToCacheDirectory: true })
+								if (!picked.canceled) setFile(picked.assets[0] ?? null)
+							}}
+						/>
+						<Text variant="muted">
+							Up to 50 MB, without DRM. Chapters become sections. For long books, questions are written chapter by chapter when you pick chapters to be tested on. Scanned PDFs without text can&apos;t be read yet.
+						</Text>
+					</Group>
+				) : mode === 'link' ? (
 					<Group gap={space.xs}>
 						<Field
 							label="Link"
@@ -70,7 +90,7 @@ export default function Add() {
 							inputMode="url"
 						/>
 						<Text variant="muted">
-							Peak fetches the page and keeps only the article: its text, headings, and images. For pages you need to be signed in to see, use the Chrome extension.
+							Peak fetches the page and keeps only the article: its text, headings, and images. PDF links work too. For pages you need to be signed in to see, use the Chrome extension.
 						</Text>
 					</Group>
 				) : (

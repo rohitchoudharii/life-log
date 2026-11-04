@@ -31,6 +31,13 @@ export function BlockView({ block }: { block: Block }) {
 					))}
 				</Group>
 			)
+		case 'page':
+			// Where a PDF page starts, so you can find the passage in the original.
+			return (
+				<Text variant="muted" style={{ fontSize: 12, textAlign: 'right' }}>
+					Page {block.number}
+				</Text>
+			)
 		case 'image':
 			// Only our own copy is shown, from our server; the page's address is never loaded.
 			if (!block.mediaId) return null

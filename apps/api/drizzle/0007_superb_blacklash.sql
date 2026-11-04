@@ -1,0 +1,2 @@
+ALTER TABLE "content_items" ADD COLUMN "questions_on_demand" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "sections" ADD COLUMN "questions_wanted" boolean DEFAULT false NOT NULL;
