@@ -1,4 +1,4 @@
-import { parseMarkdown, QUESTION_INTENSITIES, QUESTION_STYLES, splitSections, toPrompt } from '@peak/core'
+import { orderForTest, parseMarkdown, QUESTION_INTENSITIES, QUESTION_STYLES, splitSections, toPrompt, type PointStatus } from '@peak/core'
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
@@ -122,9 +122,12 @@ export const library = new Hono<AppEnv>()
 	// all their sections are picked.
 	.post('/:id/test', async (c) => {
 		const item = await ownItem(c.var.user.id, c.req.param('id'))
-		const { sectionIds } = await parseBody(c, z.object({ sectionIds: z.array(z.uuid()).min(1, 'Pick at least one section').max(2000) }))
+		const { sectionIds, recallId } = await parseBody(
+			c,
+			z.object({ sectionIds: z.array(z.uuid()).min(1, 'Pick at least one section').max(2000), recallId: z.uuid().optional() }),
+		)
 		const rows = await db
-			.select({ id: t.questions.id, type: t.questions.type, content: t.questions.content })
+			.select({ id: t.questions.id, type: t.questions.type, content: t.questions.content, ideaId: t.questions.ideaId })
 			.from(t.questions)
 			.where(
 				and(
@@ -133,9 +136,15 @@ export const library = new Hono<AppEnv>()
 					or(isNull(t.questions.alsoSectionIds), sql`${t.questions.alsoSectionIds} <@ array[${sql.join(sectionIds.map((id) => sql`${id}`), sql`, `)}]::uuid[]`),
 				),
 			)
-		// Written answers first, because seeing options hints at later answers; topics mixed within each.
-		const shuffled = rows.map((q) => ({ q, r: Math.random() })).sort((a, b) => a.r - b.r).map(({ q }) => q)
-		const ordered = [...shuffled.filter((q) => q.type !== 'mcq'), ...shuffled.filter((q) => q.type === 'mcq')]
+		// What the brain dump missed is asked first.
+		const [attempt] = recallId
+			? await db
+					.select({ results: t.recallAttempts.results })
+					.from(t.recallAttempts)
+					.where(and(eq(t.recallAttempts.id, recallId), eq(t.recallAttempts.userId, c.var.user.id)))
+			: []
+		const status = new Map<string, PointStatus>((attempt?.results ?? []).map((r) => [r.ideaId, r.status]))
+		const ordered = orderForTest(rows, status)
 		return c.json({
 			itemTitle: item.title,
 			itemStatus: item.status,

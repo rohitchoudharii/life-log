@@ -42,6 +42,11 @@ export async function generateForItem(itemId: string) {
 		(await db.selectDistinct({ id: t.questions.sectionId }).from(t.questions).where(eq(t.questions.itemId, itemId))).map((r) => r.id),
 	)
 	const inputs = all.map((s) => ({ title: s.title, level: s.level, wordCount: s.wordCount, text: sectionText(s) }))
+	// Each section's key ideas, in order, with their row ids, so questions can point at them.
+	const ideas: { id: string; text: string }[][] = all.map(() => [])
+	for (const row of await db.select().from(t.ideas).where(eq(t.ideas.itemId, itemId)).orderBy(asc(t.ideas.position))) {
+		ideas[all.findIndex((s) => s.id === row.sectionId)]?.push({ id: row.id, text: row.text })
+	}
 	const prefs = { intensity: item.questionIntensity, style: item.questionStyle }
 	const apiKey = decryptSecret(key.encryptedKey)
 	const provider = providers[key.provider]
@@ -54,6 +59,7 @@ export async function generateForItem(itemId: string) {
 				itemId,
 				sectionId: all[q.section]!.id,
 				alsoSectionIds: q.alsoSections.length ? q.alsoSections.map((i) => all[i]!.id) : null,
+				ideaId: q.idea === null ? null : (ideas[q.section]?.[q.idea]?.id ?? null),
 				type: q.type,
 				level: q.level,
 				content: q.content,
@@ -69,9 +75,16 @@ export async function generateForItem(itemId: string) {
 		for (const batch of batches) {
 			const out = await writeQuestions(provider, apiKey, key.model, inputs, batch, prefs)
 			await db.transaction(async (tx) => {
-				for (const [i, ideas] of out.ideas) await tx.update(t.sections).set({ keyIdeas: ideas }).where(eq(t.sections.id, all[i]!.id))
+				for (const [i, list] of out.ideas) {
+					await tx.delete(t.ideas).where(eq(t.ideas.sectionId, all[i]!.id))
+					ideas[i] = list.length
+						? await tx
+								.insert(t.ideas)
+								.values(list.map((text, position) => ({ itemId, sectionId: all[i]!.id, position, text })))
+								.returning({ id: t.ideas.id, text: t.ideas.text })
+						: []
+				}
 			})
-			for (const [i, ideas] of out.ideas) all[i] = { ...all[i]!, keyIdeas: ideas }
 			await store(out.questions)
 		}
 
@@ -81,7 +94,7 @@ export async function generateForItem(itemId: string) {
 			.where(and(eq(t.questions.itemId, itemId), isNotNull(t.questions.alsoSectionIds)))
 			.limit(1)
 		if (!linked && planBatches(inputs, prefs.intensity).length > 1)
-			await store(await linkSections(provider, apiKey, key.model, all.map((s) => ({ title: s.title, ideas: s.keyIdeas })), prefs))
+			await store(await linkSections(provider, apiKey, key.model, all.map((s, i) => ({ title: s.title, ideas: ideas[i]!.map((x) => x.text) })), prefs))
 
 		await db.update(t.contentItems).set({ status: 'ready' }).where(eq(t.contentItems.id, itemId))
 	} catch (err) {
@@ -95,7 +108,7 @@ export async function generateForItem(itemId: string) {
 export async function rewriteQuestions(itemId: string) {
 	await db.transaction(async (tx) => {
 		await tx.delete(t.questions).where(eq(t.questions.itemId, itemId))
-		await tx.update(t.sections).set({ keyIdeas: [] }).where(eq(t.sections.itemId, itemId))
+		await tx.delete(t.ideas).where(eq(t.ideas.itemId, itemId))
 		await tx.update(t.contentItems).set({ status: 'processing', error: null }).where(eq(t.contentItems.id, itemId))
 	})
 	await enqueueGeneration(itemId)

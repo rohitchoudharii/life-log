@@ -16,12 +16,15 @@ import {
 import type { LlmProvider } from './providers'
 
 /** Bump when the prompt or the checks change, so stored questions record which rules made them. */
-export const GENERATE_QUESTIONS_PROMPT_VERSION = 'questions-v4'
+export const GENERATE_QUESTIONS_PROMPT_VERSION = 'questions-v5'
 
 export type QuestionPrefs = { intensity: QuestionIntensity; style: QuestionStyle }
 export type SectionInput = { title: string; level: number; text: string; wordCount: number }
-/** `section` and `alsoSections` index into the item's sections; `alsoSections` is set for linking questions. */
-export type GeneratedQuestion = { section: number; alsoSections: number[]; type: QuestionType; level: QuestionLevel; content: unknown }
+/**
+ * `section` and `alsoSections` index into the item's sections; `alsoSections` is set for linking
+ * questions. `idea` indexes the key ideas of `section`: the idea the question tests, when known.
+ */
+export type GeneratedQuestion = { section: number; alsoSections: number[]; idea: number | null; type: QuestionType; level: QuestionLevel; content: unknown }
 export type Generated = { ideas: Map<number, string[]>; questions: GeneratedQuestion[] }
 /** Questions that failed the checks: first on the model's first try, then the ones dropped after the rewrite. */
 export type OnRejected = (stage: 'first' | 'dropped', rejected: { prompt: string; reasons: string[] }[]) => void
@@ -112,6 +115,8 @@ Hard rules:
 
 Write plain text: no Markdown, no backticks, no bold. Put code on its own lines, exactly as it would be typed.
 
+Every question names the key idea it tests in "idea": the idea's number in its section's list.
+
 Every question has two separate fields: "type" is the format, exactly "short_answer" or "mcq"; "level" is the kind of thinking, one of recall, explain, apply, analyze, transfer.
 
 Reply with JSON only, no prose and no code fence.`
@@ -130,21 +135,28 @@ const SHAPES = `{"type": "short_answer", "level": "apply", "content": {"prompt":
 const sectionBlock = (n: number, s: SectionInput, count: number) =>
 	`<section number="${n}" title=${JSON.stringify(s.title)} questions="${count}">\n${s.text}\n</section>`
 
-type Raw = { section?: unknown; sections?: unknown; type?: unknown; level?: unknown; content?: unknown }
+type Raw = { section?: unknown; sections?: unknown; idea?: unknown; type?: unknown; level?: unknown; content?: unknown }
 type Candidate = GeneratedQuestion & { source: string }
-type Rejected = { raw: unknown; section: number; alsoSections: number[]; reasons: string[] }
+type Rejected = { raw: unknown; section: number; alsoSections: number[]; idea: number | null; reasons: string[] }
+type Item = { raw: Raw; section: number; alsoSections: number[]; idea: number | null; source: string }
+
+/** The model numbers ideas from 1; anything that is not one of the section's ideas becomes null. */
+const ideaIndex = (n: unknown, count: number) => {
+	const i = Number(n) - 1
+	return Number.isInteger(i) && i >= 0 && i < count ? i : null
+}
 
 /**
  * Checks model output against the rules in code. Accepted questions are returned with their
  * multiple-choice options shuffled; the rest come back with the reasons they failed.
  */
 function check(
-	items: { raw: Raw; section: number; alsoSections: number[]; source: string }[],
+	items: Item[],
 	prefs: QuestionPrefs,
 	accepted: Candidate[],
 ): Rejected[] {
 	const rejected: Rejected[] = []
-	for (const { raw, section, alsoSections, source } of items) {
+	for (const { raw, section, alsoSections, idea, source } of items) {
 		const reasons: string[] = []
 		const type = String(raw.type)
 		const level = String(raw.level) as QuestionLevel
@@ -157,11 +169,12 @@ function check(
 			const dupe = accepted.some((q) => q.section === section && isDuplicatePrompt((q.content as { prompt: string }).prompt, content.prompt))
 			if (dupe) reasons.push('repeats another question on this section')
 		}
-		if (reasons.length) rejected.push({ raw, section, alsoSections, reasons })
+		if (reasons.length) rejected.push({ raw, section, alsoSections, idea, reasons })
 		else
 			accepted.push({
 				section,
 				alsoSections,
+				idea,
 				type: type as QuestionType,
 				level,
 				content: type === 'mcq' ? shuffleMcq(content as McqContent) : content,
@@ -175,7 +188,7 @@ function check(
 		const q = accepted[i]!
 		if (q.level !== 'recall') continue
 		accepted.splice(i, 1)
-		rejected.push({ raw: { type: q.type, level: q.level, content: q.content }, section: q.section, alsoSections: q.alsoSections, reasons: ['too many recall questions: rewrite it at apply level or higher'] })
+		rejected.push({ raw: { type: q.type, level: q.level, content: q.content }, section: q.section, alsoSections: q.alsoSections, idea: q.idea, reasons: ['too many recall questions: rewrite it at apply level or higher'] })
 		excess--
 	}
 	return rejected
@@ -215,12 +228,24 @@ ${SHAPES}`,
 	)) as { questions?: (Raw & { id?: unknown })[] }
 	const items = (parsed.questions ?? []).flatMap((raw) => {
 		const r = rejected[Number(raw.id) - 1]
-		return r ? [{ raw, section: r.section, alsoSections: r.alsoSections, source: sourceFor(r.section, r.alsoSections) }] : []
+		return r ? [{ raw, section: r.section, alsoSections: r.alsoSections, idea: r.idea, source: sourceFor(r.section, r.alsoSections) }] : []
 	})
 	// Whatever still fails after one rewrite is dropped, so a bad question never reaches the learner.
 	const answered = new Set(items.map((x) => x.raw))
 	const unanswered = rejected.filter((_, k) => !(parsed.questions ?? []).some((q) => Number(q.id) === k + 1 && answered.has(q)))
 	return [...check(items, prefs, accepted), ...unanswered]
+}
+
+/**
+ * A linking question belongs to the section of the main idea it tests (its last section when the
+ * model did not say) and is asked only when all its sections are picked.
+ */
+function linkItem(raw: Raw, refs: number[], ideaCount: (section: number) => number, sourceFor: (section: number, also: number[]) => string): Item {
+	const main = Array.isArray(raw.idea) ? Number(raw.idea[0]) - 1 : NaN
+	const owner = refs.includes(main) ? main : refs.at(-1)!
+	const also = refs.filter((i) => i !== owner)
+	const idea = owner === main ? ideaIndex((raw.idea as unknown[])[1], ideaCount(owner)) : null
+	return { raw, section: owner, alsoSections: also, idea, source: sourceFor(owner, also) }
 }
 
 /**
@@ -249,12 +274,12 @@ export async function writeQuestions(
 			model,
 			`${context}
 
-For each section with text, list its key ideas (one sentence each, in reading order), then write the number of questions given in its "questions" attribute. ${MIX[prefs.style]}${
-				linking ? `\nAlso write ${linking} linking questions, each connecting ideas from 2 or more of these sections.` : ''
+For each section with text, list its key ideas (one sentence each, in reading order; these are what a learner should be able to recall without the text), then write the number of questions given in its "questions" attribute, spread across the ideas. ${MIX[prefs.style]}${
+				linking ? `\nAlso write ${linking} linking questions, each connecting ideas from 2 or more of these sections. A linking question's "idea" is [section, idea number] of the main idea it tests.` : ''
 			}
 
 Reply in this JSON shape:
-{"sections": [{"section": 1, "ideas": ["…"], "questions": [question, …]}], "links": [{"sections": [1, 3], …question}]}
+{"sections": [{"section": 1, "ideas": ["…"], "questions": [{"idea": 1, …question}, …]}], "links": [{"sections": [1, 3], "idea": [3, 2], …question}]}
 Question shapes:
 ${SHAPES}`,
 		)) as typeof parsed
@@ -274,19 +299,18 @@ ${SHAPES}`,
 	}
 	const sourceFor = (section: number, also: number[]) => [section, ...also].map((i) => sections[i]!.text).join('\n\n')
 	const ideas = new Map<number, string[]>()
-	const items: Parameters<typeof check>[0] = []
+	const items: Item[] = []
 	for (const s of parsed.sections ?? []) {
 		const i = inBatch(s.section)
 		if (i === null) continue
-		if (Array.isArray(s.ideas)) ideas.set(i, s.ideas.filter((x): x is string => typeof x === 'string' && x.trim().length > 0))
-		for (const raw of s.questions ?? []) items.push({ raw, section: i, alsoSections: [], source: sections[i]!.text })
+		const list = Array.isArray(s.ideas) ? s.ideas.filter((x): x is string => typeof x === 'string' && x.trim().length > 0) : []
+		ideas.set(i, list)
+		for (const raw of s.questions ?? []) items.push({ raw, section: i, alsoSections: [], idea: ideaIndex(raw.idea, list.length), source: sections[i]!.text })
 	}
 	for (const raw of parsed.links ?? []) {
 		const refs = [...new Set((Array.isArray(raw.sections) ? raw.sections : []).map(inBatch).filter((i): i is number => i !== null))].sort((x, y) => x - y)
 		if (refs.length < 2) continue
-		// A linking question belongs to its last section and is asked only when all of them are picked.
-		const owner = refs.at(-1)!
-		items.push({ raw, section: owner, alsoSections: refs.slice(0, -1), source: sourceFor(owner, refs.slice(0, -1)) })
+		items.push(linkItem(raw, refs, (i) => ideas.get(i)?.length ?? 0, sourceFor))
 	}
 	const accepted: Candidate[] = []
 	const rejected = check(items, prefs, accepted)
@@ -321,18 +345,18 @@ export async function linkSections(
 
 ${context}
 
-Write ${count} linking questions. Each must connect ideas from 2 or more sections that are far apart, so the learner has to combine them; prefer analyze and transfer. ${MIX[prefs.style]}
+Write ${count} linking questions. Each must connect ideas from 2 or more sections that are far apart, so the learner has to combine them; prefer analyze and transfer. ${MIX[prefs.style]} A linking question's "idea" is [section, idea number] of the main idea it tests.
 
 Reply in this JSON shape:
-{"links": [{"sections": [2, 7], …question}]}
+{"links": [{"sections": [2, 7], "idea": [7, 1], …question}]}
 Question shapes:
 ${SHAPES}`,
 	)) as { links?: Raw[] }
-	const items: Parameters<typeof check>[0] = []
+	const items: Item[] = []
 	for (const raw of parsed.links ?? []) {
 		const refs = [...new Set((Array.isArray(raw.sections) ? raw.sections : []).map((n) => Number(n) - 1).filter((i) => sections[i]?.ideas.length))].sort((x, y) => x - y)
 		if (refs.length < 2) continue
-		items.push({ raw, section: refs.at(-1)!, alsoSections: refs.slice(0, -1), source: sourceFor(refs.at(-1)!, refs.slice(0, -1)) })
+		items.push(linkItem(raw, refs, (i) => sections[i]?.ideas.length ?? 0, sourceFor))
 	}
 	const accepted: Candidate[] = []
 	const rejected = check(items, prefs, accepted)

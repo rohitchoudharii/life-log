@@ -29,6 +29,13 @@
       "when": 1793810700213,
       "tag": "0003_safe_exodus",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793814371188,
+      "tag": "0004_easy_roughhouse",
+      "breakpoints": true
     }
   ]
 }

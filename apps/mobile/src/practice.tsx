@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import type { PointStatus, QuestionType } from '@peak/core'
 import { useQueryClient } from '@tanstack/react-query'
-import { useState, type ComponentType } from 'react'
+import { useState, type ComponentType, type ReactNode } from 'react'
 import { ActivityIndicator, Pressable, TextInput } from 'react-native'
 import { api, type AnswerResult, type Question } from './api'
 import { font, hairline, radius, space, useColors } from './theme'
@@ -47,7 +47,7 @@ const verdictLabel = (score: number) =>
 const POINT_ICON = { covered: 'checkmark', vague: 'remove', missing: 'close' } as const
 const POINT_LABEL = { covered: 'You made this point', vague: 'Vague', missing: 'Missing' } as const
 
-function PointRow({ text, status }: { text: string; status?: PointStatus }) {
+export function PointRow({ text, status }: { text: string; status?: PointStatus }) {
 	const c = useColors()
 	return (
 		<Row style={{ justifyContent: 'flex-start', alignItems: 'flex-start', gap: space.sm }}>
@@ -87,6 +87,7 @@ const shortAnswer: QuestionView<'short_answer'> = {
 						color: c.fg,
 						borderWidth: hairline,
 						borderColor: c.ring,
+						outlineColor: c.fg,
 						borderRadius: radius,
 						padding: space.md,
 					}}
@@ -269,11 +270,14 @@ export function PracticeSession({
 	questions,
 	onDone,
 	doneLabel = 'Done',
+	before,
 }: {
 	title: string
 	questions: Question[]
 	onDone(): void
 	doneLabel?: string
+	/** Shown on the results screen above the answers, such as how the brain dump went. */
+	before?: ReactNode
 }) {
 	const queryClient = useQueryClient()
 	// Responses stay editable (Previous) until Finish; only then are they sent for grading.
@@ -332,6 +336,7 @@ export function PracticeSession({
 						</Text>
 					)}
 				</Group>
+				{before}
 				<Group gap={space.md}>
 					{entries.map((e, i) => (
 						<ResultTile key={i} entry={e} index={i} onRetry={() => grade(i, e.question, e.response)} />

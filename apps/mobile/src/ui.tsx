@@ -184,6 +184,7 @@ export function Field(props: TextInputProps & { label: string }) {
 						color: c.fg,
 						borderWidth: hairline,
 						borderColor: c.ring,
+						outlineColor: c.fg,
 						borderRadius: radius,
 						paddingHorizontal: space.md,
 						paddingVertical: space.md,

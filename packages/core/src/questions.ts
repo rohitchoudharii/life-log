@@ -180,3 +180,24 @@ export function shuffleMcq(c: McqContent, random = Math.random): McqContent {
 		answerIndex: order.indexOf(c.answerIndex),
 	}
 }
+
+/**
+ * Orders a test. Written questions come before multiple choice, because seeing options hints at
+ * later answers. Within each, questions on ideas the brain dump missed come first, then vague
+ * ones, then the rest; order within a group is shuffled so topics mix.
+ */
+export function orderForTest<Q extends { type: QuestionType; ideaId: string | null }>(
+	questions: Q[],
+	recall: ReadonlyMap<string, PointStatus>,
+	random = Math.random,
+): Q[] {
+	const rank = (q: Q) => {
+		const status = q.ideaId ? recall.get(q.ideaId) : undefined
+		const idea = status === 'missing' ? 0 : status === 'vague' ? 1 : 2
+		return (q.type === 'mcq' ? 3 : 0) + idea
+	}
+	return questions
+		.map((q) => ({ q, rank: rank(q), r: random() }))
+		.sort((a, b) => a.rank - b.rank || a.r - b.r)
+		.map(({ q }) => q)
+}

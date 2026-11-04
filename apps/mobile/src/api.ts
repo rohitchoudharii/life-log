@@ -1,4 +1,4 @@
-import type { Block, QuestionIntensity, QuestionPrompt, QuestionStyle, Rating } from '@peak/core'
+import type { Block, PointStatus, QuestionIntensity, QuestionPrompt, QuestionStyle, Rating } from '@peak/core'
 import Constants from 'expo-constants'
 import * as SecureStore from 'expo-secure-store'
 import { Platform } from 'react-native'
@@ -79,6 +79,8 @@ export type StudySession = {
 	endedAt: string | null
 }
 export type Question = QuestionPrompt & { id: string; itemTitle?: string }
+export type RecallIdea = { id: string; text: string; section: string; status: PointStatus | null }
+export type Recall = { id: string; text: string; feedback: string | null; gradeError: string | null; ideas: RecallIdea[] }
 export type AnswerResult = { correct: boolean; rating: Rating; reveal: Record<string, unknown>; dueAt: string }
 export type Today = {
 	due: number
@@ -121,8 +123,10 @@ export const api = {
 		request<{ session: StudySession }>('POST', `/items/${itemId}/sessions`, { plannedMinutes }),
 	finishSession: (id: string) => request<{ session: StudySession }>('POST', `/sessions/${id}/finish`),
 	cancelSession: (id: string) => request('DELETE', `/sessions/${id}`),
-	testQuestions: (itemId: string, sectionIds: string[]) =>
-		request<{ itemTitle: string; itemStatus: ItemStatus; questions: Question[] }>('POST', `/items/${itemId}/test`, { sectionIds }),
+	recall: (itemId: string, sectionIds: string[], text: string) => request<{ recall: Recall }>('POST', `/items/${itemId}/recall`, { sectionIds, text }),
+	regradeRecall: (id: string) => request<{ recall: Recall }>('POST', `/recall/${id}/grade`),
+	testQuestions: (itemId: string, sectionIds: string[], recallId?: string) =>
+		request<{ itemTitle: string; itemStatus: ItemStatus; questions: Question[] }>('POST', `/items/${itemId}/test`, { sectionIds, recallId }),
 
 	answer: (questionId: string, response: unknown) => request<AnswerResult>('POST', '/answers', { questionId, response }),
 	due: () => request<{ questions: Question[] }>('GET', '/reviews/due'),

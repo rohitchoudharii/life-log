@@ -4,8 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useMemo, useState, type ReactNode } from 'react'
 import { Pressable, View } from 'react-native'
-import { api, type Question, type Section } from '@/api'
+import { api, type Question, type Recall, type Section } from '@/api'
 import { PracticeSession } from '@/practice'
+import { BrainDump, RecallSummary } from '@/recall'
 import { font, hairline, space, useColors } from '@/theme'
 import { Button, Checkbox, ErrorText, Group, Loading, Row, Screen, Text, Tile } from '@/ui'
 import { formatClock, useNow } from '@/useNow'
@@ -138,10 +139,13 @@ export default function Test() {
 	})
 	const key = useQuery({ queryKey: ['key'], queryFn: api.key })
 	const [selected, setSelected] = useState<Set<string>>(new Set())
-	const [stage, setStage] = useState<{ name: 'pick' } | { name: 'test'; questions: Question[] } | { name: 'break' }>({ name: 'pick' })
+	const [stage, setStage] = useState<
+		{ name: 'pick' } | { name: 'recall' } | { name: 'test'; recall: Recall; questions: Question[] } | { name: 'break' }
+	>({ name: 'pick' })
+	// The brain dump decides the order: what it missed is asked first.
 	const start = useMutation({
-		mutationFn: () => api.testQuestions(id, [...selected]),
-		onSuccess: ({ questions }) => setStage({ name: 'test', questions }),
+		mutationFn: (recall: Recall) => api.testQuestions(id, [...selected], recall.id).then((r) => ({ recall, questions: r.questions })),
+		onSuccess: ({ recall, questions }) => setStage({ name: 'test', recall, questions }),
 	})
 
 	const leave = (home: boolean) => {
@@ -160,6 +164,14 @@ export default function Test() {
 	const { item, sections } = data.data
 
 	if (stage.name === 'break') return <BreakScreen onNext={() => leave(false)} onDone={() => leave(true)} />
+	if (stage.name === 'recall')
+		return start.isPending || start.error ? (
+			<Screen footer={start.error ? <Button title="Back" onPress={() => setStage({ name: 'pick' })} /> : undefined}>
+				{start.error ? <ErrorText error={start.error} /> : <Loading />}
+			</Screen>
+		) : (
+			<BrainDump itemId={id} sectionIds={[...selected]} title={item.title} onDone={(recall) => start.mutate(recall)} />
+		)
 	if (stage.name === 'test') {
 		if (!stage.questions.length)
 			return (
@@ -171,6 +183,7 @@ export default function Test() {
 			<PracticeSession
 				title={item.title}
 				questions={stage.questions}
+				before={<RecallSummary recall={stage.recall} />}
 				doneLabel={afterSession ? 'Take a 5-minute break' : 'Done'}
 				onDone={() => (afterSession ? setStage({ name: 'break' }) : leave(false))}
 			/>
@@ -185,18 +198,16 @@ export default function Test() {
 				<Group gap={space.sm}>
 					<Button
 						title={count ? `Test me on ${count} question${count === 1 ? '' : 's'}` : 'Pick what to be tested on'}
-						onPress={() => start.mutate()}
+						onPress={() => setStage({ name: 'recall' })}
 						disabled={!count}
-						loading={start.isPending}
 					/>
-					<ErrorText error={start.error} />
 				</Group>
 			}
 		>
 			<Group>
 				<Text variant="muted">{item.title}</Text>
 				<Text variant="title">What should the test cover?</Text>
-				<Text variant="muted">Pick the sections you studied. You see every answer at the end.</Text>
+				<Text variant="muted">Pick the sections you studied. You start by writing down everything you remember, then answer questions. You see every answer at the end.</Text>
 			</Group>
 			{item.status === 'processing' && <Text variant="muted">Your AI is still writing questions. Counts update when it finishes.</Text>}
 			{item.status === 'needs_key' && <Text variant="muted">Connect your AI in Settings so it can write questions for this.</Text>}

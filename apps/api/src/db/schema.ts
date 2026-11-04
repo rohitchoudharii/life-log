@@ -1,4 +1,4 @@
-import type { Block, ContentSourceType, QuestionIntensity, QuestionLevel, QuestionStyle, QuestionType, Rating, ReviewState } from '@peak/core'
+import type { Block, ContentSourceType, PointStatus, QuestionIntensity, QuestionLevel, QuestionStyle, QuestionType, Rating, ReviewState } from '@peak/core'
 import type { ProviderId } from '@peak/llm'
 import { sql } from 'drizzle-orm'
 import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core'
@@ -85,10 +85,28 @@ export const sections = pgTable(
 		title: text('title').notNull(),
 		blocks: jsonb('blocks').$type<Block[]>().notNull(),
 		wordCount: integer('word_count').notNull(),
-		/** The section's key ideas, written with its questions; linking questions are written from these. */
-		keyIdeas: jsonb('key_ideas').$type<string[]>().notNull().default([]),
 	},
 	(t) => [index('sections_item_idx').on(t.itemId, t.position)],
+)
+
+/**
+ * A section's key ideas: what the learner should recall without the text. The brain dump is
+ * graded against them, and questions point at the idea they test.
+ */
+export const ideas = pgTable(
+	'ideas',
+	{
+		id: id(),
+		itemId: uuid('item_id')
+			.notNull()
+			.references(() => contentItems.id, { onDelete: 'cascade' }),
+		sectionId: uuid('section_id')
+			.notNull()
+			.references(() => sections.id, { onDelete: 'cascade' }),
+		position: integer('position').notNull(),
+		text: text('text').notNull(),
+	},
+	(t) => [index('ideas_section_idx').on(t.sectionId, t.position)],
 )
 
 export const questions = pgTable(
@@ -105,6 +123,8 @@ export const questions = pgTable(
 		type: text('type').$type<QuestionType>().notNull(),
 		/** Null for questions written before levels existed. */
 		level: text('level').$type<QuestionLevel>(),
+		/** The key idea this question tests; null for questions written before ideas existed. */
+		ideaId: uuid('idea_id').references(() => ideas.id, { onDelete: 'set null' }),
 		/**
 		 * Set for linking questions: the other sections they draw on. The question belongs to its last
 		 * section and is asked only when every one of these is picked too.
@@ -132,6 +152,25 @@ export const studySessions = pgTable(
 		endedAt: timestamp('ended_at', { withTimezone: true }),
 	},
 	(t) => [index('study_sessions_user_idx').on(t.userId, t.startedAt)],
+)
+
+/** A brain dump at the start of a test: what the user wrote and which key ideas it covered. */
+export const recallAttempts = pgTable(
+	'recall_attempts',
+	{
+		id: id(),
+		userId: userRef(),
+		itemId: uuid('item_id')
+			.notNull()
+			.references(() => contentItems.id, { onDelete: 'cascade' }),
+		sectionIds: uuid('section_ids').array().notNull(),
+		text: text('text').notNull(),
+		/** One entry per key idea of the picked sections; null until graded. */
+		results: jsonb('results').$type<{ ideaId: string; status: PointStatus }[]>(),
+		feedback: text('feedback'),
+		createdAt: createdAt(),
+	},
+	(t) => [index('recall_attempts_user_idx').on(t.userId, t.createdAt)],
 )
 
 /** One row per question the user has answered at least once: its review schedule. */

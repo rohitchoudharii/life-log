@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gradeResponse, isDuplicatePrompt, lintQuestion, parseMarkdown, scoreRubric, shuffleMcq, splitSections, stepsThenEase, subtreeEnd, toPrompt } from './index'
+import { gradeResponse, isDuplicatePrompt, lintQuestion, orderForTest, parseMarkdown, scoreRubric, shuffleMcq, splitSections, stepsThenEase, subtreeEnd, toPrompt } from './index'
 
 const DAY = 86_400_000
 const t0 = new Date('2026-01-01T09:00:00Z')
@@ -173,5 +173,22 @@ describe('shuffleMcq', () => {
 		expect(out.options[out.answerIndex]).toBe('right')
 		expect(out.answerIndex).not.toBe(0)
 		out.options.forEach((o, i) => expect(out.whyWrong[i]).toBe(o === 'right' ? '' : `r${o.slice(1)}`))
+	})
+})
+
+describe('orderForTest', () => {
+	it('puts written before multiple choice, and missed ideas before vague and remembered ones', () => {
+		const q = (id: string, type: 'short_answer' | 'mcq', ideaId: string | null) => ({ id, type, ideaId })
+		const recall = new Map([
+			['a', 'covered'],
+			['b', 'missing'],
+			['c', 'vague'],
+		] as const)
+		const order = orderForTest(
+			[q('mcq-missed', 'mcq', 'b'), q('sa-covered', 'short_answer', 'a'), q('sa-none', 'short_answer', null), q('sa-vague', 'short_answer', 'c'), q('sa-missed', 'short_answer', 'b'), q('mcq-covered', 'mcq', 'a')],
+			recall,
+			() => 0.5,
+		)
+		expect(order.map((x) => x.id)).toEqual(['sa-missed', 'sa-vague', 'sa-covered', 'sa-none', 'mcq-missed', 'mcq-covered'])
 	})
 })
