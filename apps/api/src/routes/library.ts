@@ -1,4 +1,4 @@
-import { orderForTest, parseMarkdown, QUESTION_INTENSITIES, QUESTION_STYLES, splitSections, toPrompt, type PointStatus } from '@peak/core'
+import { orderForTest, parseMarkdown, QUESTION_INTENSITIES, QUESTION_STYLES, splitSections, toPrompt, type Block, type ContentSourceType, type PointStatus } from '@peak/core'
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
@@ -56,6 +56,58 @@ const questionCount = db
 	.groupBy(t.questions.sectionId)
 	.as('qc')
 
+export const ItemPrefs = z.object({
+	questionIntensity: z.enum(QUESTION_INTENSITIES).default('standard'),
+	questionStyle: z.enum(QUESTION_STYLES).default('mixed'),
+	/** A bucket to add the reading to, at the end. */
+	collectionId: z.uuid().nullish(),
+})
+
+/**
+ * Adds a reading from any source: splits its blocks into sections, puts it at the end of its
+ * bucket, and starts writing its questions.
+ */
+export async function createItem(
+	userId: string,
+	input: { title: string; source: ContentSourceType; sourceUrl?: string; blocks: Block[] } & Partial<z.infer<typeof ItemPrefs>>,
+) {
+	const sections = splitSections(input.blocks, input.title)
+	if (!sections.some((s) => s.wordCount > 0)) throw new HTTPException(400, { message: 'No readable text found' })
+	const item = await db.transaction(async (tx) => {
+		let collectionPosition: number | null = null
+		if (input.collectionId) {
+			const [owned] = await tx
+				.select({ id: t.collections.id })
+				.from(t.collections)
+				.where(and(eq(t.collections.id, input.collectionId), eq(t.collections.userId, userId)))
+				.for('update')
+			if (!owned) throw new HTTPException(404, { message: 'That bucket was not found' })
+			const [last] = await tx
+				.select({ n: sql<number | null>`max(${t.contentItems.collectionPosition})` })
+				.from(t.contentItems)
+				.where(eq(t.contentItems.collectionId, owned.id))
+			collectionPosition = (last?.n ?? -1) + 1
+		}
+		const [item] = await tx
+			.insert(t.contentItems)
+			.values({
+				userId,
+				source: input.source,
+				sourceUrl: input.sourceUrl,
+				title: input.title,
+				questionIntensity: input.questionIntensity ?? 'standard',
+				questionStyle: input.questionStyle ?? 'mixed',
+				collectionId: input.collectionId ?? null,
+				collectionPosition,
+			})
+			.returning()
+		await tx.insert(t.sections).values(sections.map((s, position) => ({ itemId: item!.id, position, ...s })))
+		return item!
+	})
+	await enqueueGeneration(item.id)
+	return item
+}
+
 export const library = new Hono<AppEnv>()
 	.use(requireUser)
 	.get('/', async (c) => {
@@ -72,6 +124,9 @@ export const library = new Hono<AppEnv>()
 				ideasLearned: sql<number>`coalesce(${ideaCount.learned}, 0)::int`,
 				createdAt: t.contentItems.createdAt,
 				lastOpenedAt: t.contentItems.lastOpenedAt,
+				sourceUrl: t.contentItems.sourceUrl,
+				collectionId: t.contentItems.collectionId,
+				collectionPosition: t.contentItems.collectionPosition,
 			})
 			.from(t.contentItems)
 			.leftJoin(sectionCount, eq(sectionCount.itemId, t.contentItems.id))
@@ -79,27 +134,22 @@ export const library = new Hono<AppEnv>()
 			.leftJoin(ideaCount, eq(ideaCount.itemId, t.contentItems.id))
 			.where(eq(t.contentItems.userId, c.var.user.id))
 			.orderBy(desc(t.contentItems.createdAt))
-		return c.json({ items })
+		const collections = await db
+			.select({ id: t.collections.id, name: t.collections.name })
+			.from(t.collections)
+			.where(eq(t.collections.userId, c.var.user.id))
+			.orderBy(asc(t.collections.createdAt))
+		return c.json({ items, collections })
 	})
 	.post('/', async (c) => {
-		const { title, text, questionIntensity, questionStyle } = await parseBody(
+		const { title, text, ...prefs } = await parseBody(
 			c,
-			z.object({
+			ItemPrefs.extend({
 				title: z.string().trim().min(1, 'Add a title').max(200),
 				text: z.string().trim().min(50, 'Paste at least a paragraph').max(MAX_PASTE_CHARS, 'That is too long for one item. Split it into parts.'),
-				questionIntensity: z.enum(QUESTION_INTENSITIES).default('standard'),
-				questionStyle: z.enum(QUESTION_STYLES).default('mixed'),
 			}),
 		)
-		const sections = splitSections(parseMarkdown(text), title)
-		if (!sections.length) throw new HTTPException(400, { message: 'No readable text found' })
-		const item = await db.transaction(async (tx) => {
-			const [item] = await tx.insert(t.contentItems).values({ userId: c.var.user.id, source: 'paste', title, questionIntensity, questionStyle })
-				.returning()
-			await tx.insert(t.sections).values(sections.map((s, position) => ({ itemId: item!.id, position, ...s })))
-			return item!
-		})
-		await enqueueGeneration(item.id)
+		const item = await createItem(c.var.user.id, { title, source: 'paste', blocks: parseMarkdown(text), ...prefs })
 		return c.json({ item }, 201)
 	})
 	.get('/:id', async (c) => {

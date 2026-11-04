@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable, ScrollView, View } from 'react-native'
 import { api, type StudySession } from '@/api'
 import { BlockView } from '@/blocks'
+import { BucketPicker } from '@/buckets'
 import { cancelSessionEnd, scheduleSessionEnd } from '@/reminders'
 import { font, hairline, space, useColors } from '@/theme'
 import { Button, Choice, ChoiceRow, ErrorText, Group, Loading, Row, Text } from '@/ui'
@@ -70,6 +71,13 @@ export default function Reader() {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['item', id] })
 			queryClient.invalidateQueries({ queryKey: ['items'] })
+		},
+	})
+	const move = useMutation({
+		mutationFn: (collectionId: string | null) => api.moveItem(id, collectionId),
+		onSettled: () => {
+			queryClient.invalidateQueries({ queryKey: ['items'] })
+			queryClient.invalidateQueries({ queryKey: ['item', id] })
 		},
 	})
 	const remove = useMutation({
@@ -142,17 +150,22 @@ export default function Reader() {
 				<Text variant="title">{item.title}</Text>
 				{item.status === 'needs_key' && <Text variant="muted">Connect your AI in Settings so it can write questions for this.</Text>}
 				{item.status === 'failed' && <Text variant="muted">Could not write questions: {item.error}</Text>}
-				{sections.map((s) => (
+				{sections.map((s, i) => (
 					<View key={s.id} style={{ gap: space.lg }}>
-						<Text variant="heading" style={headingStyle(s.level)}>
-							{s.title}
-						</Text>
+						{/* Text before the first heading is named after the reading; its title is already shown. */}
+						{!(i === 0 && s.title === item.title) && (
+							<Text variant="heading" style={headingStyle(s.level)}>
+								{s.title}
+							</Text>
+						)}
 						{s.blocks.map((b, j) => (
 							<BlockView key={j} block={b} />
 						))}
 					</View>
 				))}
 				<Group gap={space.sm}>
+					<BucketPicker value={item.collectionId} onChange={(id) => move.mutate(id)} />
+					<ErrorText error={move.error} />
 					{item.status !== 'processing' && item.status !== 'needs_key' && (
 						<Button title="Rewrite questions with the new rules" kind="outline" onPress={() => rewrite.mutate()} loading={rewrite.isPending} />
 					)}

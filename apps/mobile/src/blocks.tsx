@@ -1,5 +1,6 @@
 import type { Block } from '@peak/core'
-import { Platform, ScrollView, Text as RNText, View } from 'react-native'
+import { Image, Platform, ScrollView, Text as RNText, View } from 'react-native'
+import { BASE } from './api'
 import { hairline, radius, space, useColors } from './theme'
 import { Group, Text } from './ui'
 
@@ -29,6 +30,17 @@ export function BlockView({ block }: { block: Block }) {
 						</View>
 					))}
 				</Group>
+			)
+		case 'image':
+			// Only our own copy is shown, from our server; the page's address is never loaded.
+			if (!block.mediaId) return null
+			return (
+				<Image
+					source={{ uri: `${BASE}/media/${block.mediaId}` }}
+					accessibilityLabel={block.alt || 'Image from the page'}
+					resizeMode="contain"
+					style={{ width: '100%', aspectRatio: block.width && block.height ? block.width / block.height : 16 / 9, borderRadius: radius }}
+				/>
 			)
 		case 'code':
 			return (

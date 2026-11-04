@@ -53,6 +53,18 @@ export const llmKeys = pgTable('llm_keys', {
 
 export type ItemStatus = 'processing' | 'ready' | 'needs_key' | 'failed'
 
+/** A bucket of readings kept in order, such as the pages captured from one website. */
+export const collections = pgTable(
+	'collections',
+	{
+		id: id(),
+		userId: userRef(),
+		name: text('name').notNull(),
+		createdAt: createdAt(),
+	},
+	(t) => [index('collections_user_idx').on(t.userId, t.createdAt)],
+)
+
 export const contentItems = pgTable(
 	'content_items',
 	{
@@ -67,9 +79,12 @@ export const contentItems = pgTable(
 		questionIntensity: text('question_intensity').$type<QuestionIntensity>().notNull().default('standard'),
 		questionStyle: text('question_style').$type<QuestionStyle>().notNull().default('mixed'),
 		lastOpenedAt: timestamp('last_opened_at', { withTimezone: true }),
+		/** The bucket this reading is in, and its place there; both null when it is in none. */
+		collectionId: uuid('collection_id').references(() => collections.id, { onDelete: 'set null' }),
+		collectionPosition: integer('collection_position'),
 		createdAt: createdAt(),
 	},
-	(t) => [index('items_user_idx').on(t.userId, t.createdAt)],
+	(t) => [index('items_user_idx').on(t.userId, t.createdAt), index('items_collection_idx').on(t.collectionId, t.collectionPosition)],
 )
 
 export const sections = pgTable(
@@ -210,4 +225,19 @@ export const reviewLog = pgTable(
 		reviewedAt: timestamp('reviewed_at', { withTimezone: true }).notNull().default(sql`now()`),
 	},
 	(t) => [index('review_log_user_idx').on(t.userId, t.reviewedAt)],
+)
+
+/** An image we downloaded and re-encoded; its bytes live in the MediaStore under its id. */
+export const media = pgTable(
+	'media',
+	{
+		id: id(),
+		userId: userRef(),
+		contentType: text('content_type').notNull(),
+		bytes: integer('bytes').notNull(),
+		width: integer('width').notNull(),
+		height: integer('height').notNull(),
+		createdAt: createdAt(),
+	},
+	(t) => [index('media_user_idx').on(t.userId)],
 )

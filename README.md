@@ -47,6 +47,25 @@ Then check each of these:
 - [ ] **Daily reminder:** set a time a few minutes ahead in Settings, and the reminder arrives. Turn notifications off for Expo Go, and the app still works with no reminder.
 - [ ] **Dark mode:** switch the phone to dark mode (or Appearance in Settings), and every screen inverts.
 
+## Web pages
+
+**Add → Paste a link** fetches a page on the server and keeps only its article. For pages you need to be signed in to see, use the Chrome extension, which sends the page as your browser shows it.
+
+Install the extension:
+
+1. Open `chrome://extensions` and turn on **Developer mode**.
+2. Click **Load unpacked** and pick `apps/extension`.
+3. Pin **Peak capture**. Click it on any page, sign in with your email code, pick a bucket, and capture.
+
+If Peak runs somewhere other than `localhost:8787`, change the address under **Settings** in the popup.
+
+How captured pages are kept safe:
+
+- **No HTML is stored or shown.** Readability finds the article, and only its text, headings, lists, code, quotes and images become Peak's own blocks.
+- **Images are our own copies.** The server downloads each one, checks that it is a raster image, and re-encodes it as WebP, which drops metadata and anything hidden in the file. Peak serves it from `/media/:id` with `nosniff`. SVG is refused. When a site blocks the server, the extension sends the image bytes, and the same checks apply.
+- **Server fetches go only to public addresses.** Private, local and cloud-metadata addresses are refused, and every redirect is checked again. Pages are limited to 5 MB and 15 seconds.
+- **The web app has a strict Content Security Policy** in `apps/mobile/public/index.html`. Set the real API address there when Peak is hosted.
+
 ## Checks
 
 ```bash

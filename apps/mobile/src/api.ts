@@ -5,7 +5,7 @@ import { Platform } from 'react-native'
 
 // In development a phone reaches the API on the same machine that serves the app bundle.
 const devHost = Constants.expoConfig?.hostUri?.split(':')[0]
-const BASE =
+export const BASE =
 	process.env.EXPO_PUBLIC_API_URL ??
 	(Platform.OS !== 'web' && devHost ? `http://${devHost}:8787` : 'http://localhost:8787')
 const TOKEN_KEY = 'peak.session'
@@ -61,7 +61,13 @@ export type ItemSummary = {
 	ideaCount: number
 	ideasLearned: number
 	createdAt: string
+	sourceUrl: string | null
+	/** The bucket it is in and its place there, or null for none. */
+	collectionId: string | null
+	collectionPosition: number | null
 }
+export type Collection = { id: string; name: string }
+type ItemPrefs = { questionIntensity: QuestionIntensity; questionStyle: QuestionStyle; collectionId?: string | null }
 export type Section = {
 	id: string
 	position: number
@@ -72,7 +78,7 @@ export type Section = {
 	wordCount: number
 	questionCount: number
 }
-export type Item = Omit<ItemSummary, 'sectionCount' | 'questionCount' | 'ideaCount' | 'ideasLearned'> & { questionIntensity: QuestionIntensity; questionStyle: QuestionStyle }
+export type Item = Omit<ItemSummary, 'sectionCount' | 'questionCount' | 'ideaCount' | 'ideasLearned' | 'collectionPosition'> & { questionIntensity: QuestionIntensity; questionStyle: QuestionStyle }
 export type StudySession = {
 	id: string
 	itemId: string
@@ -116,9 +122,14 @@ export const api = {
 		request<{ key: KeyInfo }>('PUT', '/llm-key', { provider, apiKey, model }),
 	deleteKey: () => request('DELETE', '/llm-key'),
 
-	items: () => request<{ items: ItemSummary[] }>('GET', '/items'),
-	addItem: (input: { title: string; text: string; questionIntensity: QuestionIntensity; questionStyle: QuestionStyle }) =>
-		request<{ item: ItemSummary }>('POST', '/items', input),
+	items: () => request<{ items: ItemSummary[]; collections: Collection[] }>('GET', '/items'),
+	addItem: (input: { title: string; text: string } & ItemPrefs) => request<{ item: ItemSummary }>('POST', '/items', input),
+	addUrl: (input: { url: string } & ItemPrefs) => request<{ item: ItemSummary }>('POST', '/items/url', input),
+	addCollection: (name: string) => request<{ collection: Collection }>('POST', '/collections', { name }),
+	renameCollection: (id: string, name: string) => request<{ collection: Collection }>('PATCH', `/collections/${id}`, { name }),
+	deleteCollection: (id: string) => request('DELETE', `/collections/${id}`),
+	orderCollection: (id: string, itemIds: string[]) => request('PUT', `/collections/${id}/order`, { itemIds }),
+	moveItem: (id: string, collectionId: string | null) => request('PUT', `/items/${id}/collection`, { collectionId }),
 	item: (id: string) =>
 		request<{ item: Item; sections: Section[]; links: { sectionIds: string[] }[]; activeSession: StudySession | null }>('GET', `/items/${id}`),
 	rewriteQuestions: (id: string) => request<{ ok: true }>('POST', `/items/${id}/rewrite-questions`),

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Peak capture</title>
+		<link rel="stylesheet" href="popup.css" />
+	</head>
+	<body>
+		<header>
+			<h1>Peak</h1>
+			<button id="sign-out" class="link" hidden>Sign out</button>
+		</header>
+
+		<!-- Signed out: the same email code as the app. -->
+		<form id="email-form" hidden>
+			<p class="muted">Sign in with the email you use in Peak. We send you a 6-digit code.</p>
+			<label>Email <input id="email" type="email" autocomplete="email" required /></label>
+			<button type="submit">Send code</button>
+		</form>
+		<form id="code-form" hidden>
+			<p class="muted" id="code-sent"></p>
+			<label>Code <input id="code" inputmode="numeric" autocomplete="one-time-code" pattern="\d{6}" maxlength="6" required /></label>
+			<button type="submit">Sign in</button>
+			<button type="button" id="back" class="link">Use another email</button>
+		</form>
+
+		<!-- Signed in: capture the current tab. -->
+		<form id="capture-form" hidden>
+			<div class="page">
+				<p id="page-title"></p>
+				<p id="page-host" class="muted"></p>
+			</div>
+			<label>
+				Bucket
+				<select id="bucket"></select>
+			</label>
+			<label id="new-bucket-label" hidden>New bucket <input id="new-bucket" placeholder="Website 1" maxlength="100" /></label>
+			<label>
+				How hard should the tests be?
+				<select id="intensity">
+					<option value="quick">Quick: key ideas only</option>
+					<option value="standard">Standard: every main idea</option>
+					<option value="thorough" selected>Thorough: as many as possible</option>
+				</select>
+			</label>
+			<button type="submit" id="capture">Capture this page</button>
+		</form>
+
+		<section id="done" hidden>
+			<p id="done-text"></p>
+			<a id="open" target="_blank" rel="noreferrer">Open in Peak</a>
+			<button id="again" class="link">Capture another page</button>
+		</section>
+
+		<p id="status" class="muted" role="status"></p>
+		<p id="error" class="error" role="alert"></p>
+
+		<details>
+			<summary>Settings</summary>
+			<label>Peak server <input id="api-url" placeholder="http://localhost:8787" /></label>
+			<label>Peak app <input id="app-url" placeholder="http://localhost:8081" /></label>
+			<button id="save-settings" class="secondary">Save</button>
+		</details>
+		<script src="popup.js"></script>
+	</body>
+</html>

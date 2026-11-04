@@ -11,6 +11,8 @@ const Env = z.object({
 	PORT: z.coerce.number().default(8787),
 	/** Comma-separated origins allowed to call the API from a browser. */
 	CORS_ORIGINS: z.string().default('http://localhost:8081'),
+	/** Where downloaded images are kept. */
+	MEDIA_DIR: z.string().default('.media'),
 })
 
 export const env = Env.parse(process.env)

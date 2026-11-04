@@ -7,6 +7,19 @@ export const Block = z.discriminatedUnion('type', [
 	z.object({ type: z.literal('list'), ordered: z.boolean(), items: z.array(z.string()) }),
 	z.object({ type: z.literal('code'), language: z.string().optional(), text: z.string() }),
 	z.object({ type: z.literal('quote'), text: z.string() }),
+	/**
+	 * An image we downloaded, re-encoded, and serve ourselves at /media/:mediaId. `src` is where it
+	 * came from, kept only to attach bytes the browser extension sends later; it is never rendered.
+	 * `mediaId` is null until the image is saved.
+	 */
+	z.object({
+		type: z.literal('image'),
+		mediaId: z.uuid().nullable(),
+		alt: z.string(),
+		width: z.number().int().positive().optional(),
+		height: z.number().int().positive().optional(),
+		src: z.string().optional(),
+	}),
 ])
 export type Block = z.infer<typeof Block>
 
@@ -17,8 +30,9 @@ export type SectionDraft = { title: string; level: number; blocks: Block[]; word
 export const MAX_SECTION_LEVEL = 3
 
 // Each content source turns its input into the same ordered sections.
-// Phase 1 has `paste`; `web_capture`, `epub`, and `pdf_*` plug in here later.
-export type ContentSourceType = 'paste' | 'web_capture' | 'epub' | 'pdf_upload' | 'pdf_url'
+// `paste`, `url` (fetched by the server) and `web_capture` (sent by the browser extension) exist;
+// `epub` and `pdf_*` plug in here later.
+export type ContentSourceType = 'paste' | 'url' | 'web_capture' | 'epub' | 'pdf_upload' | 'pdf_url'
 
 const TARGET_SECTION_WORDS = 450
 
@@ -28,6 +42,8 @@ export function blockText(block: Block): string {
 	switch (block.type) {
 		case 'list':
 			return block.items.join('\n')
+		case 'image':
+			return ''
 		default:
 			return block.text
 	}
@@ -145,5 +161,5 @@ export function subtreeEnd(levels: readonly number[], index: number): number {
 }
 
 export function sectionText(section: { title: string; blocks: Block[] }): string {
-	return [section.title, ...section.blocks.map(blockText)].join('\n\n')
+	return [section.title, ...section.blocks.map(blockText)].filter(Boolean).join('\n\n')
 }
