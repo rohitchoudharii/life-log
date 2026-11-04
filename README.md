@@ -83,4 +83,6 @@ pnpm test
 
 ## Adding a question type
 
-Add an entry to `questionTypes` in `packages/core/src/questions.ts` (content schema, response schema, what the client sees before answering, and the grader), then a renderer in `views` in `apps/mobile/src/practice.tsx`.
+Add an entry to `questionTypes` in `packages/core/src/questions.ts` (content schema, response schema, what the client sees before answering, and the grader), then a renderer in `views` in `apps/mobile/src/practice.tsx`. To have the AI write it, add its lint rules to `lintQuestion` in `packages/core/src/quality.ts`, and its shape and guidance to `SHAPES` and `RULES` in `packages/llm/src/generate.ts` (and to `WRITTEN` or `CHOICE`). Run the eval script on the fixtures before shipping a prompt change.
+
+Types today: explain it (`short_answer`), multiple choice, work it out (`worked_problem`), predict the output, find the error, and order the steps. Numbers, outputs, choices and orders are graded in code; written answers by the checklist judge.

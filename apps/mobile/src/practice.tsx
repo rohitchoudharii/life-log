@@ -2,8 +2,9 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import type { PointStatus, QuestionType } from '@peak/core'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type ComponentType, type ReactNode } from 'react'
-import { ActivityIndicator, Pressable, TextInput } from 'react-native'
+import { ActivityIndicator, Platform, Pressable, TextInput, View, type TextInputProps } from 'react-native'
 import { api, type AnswerResult, type Question } from './api'
+import { CodeBlock, mono } from './blocks'
 import { font, hairline, radius, space, useColors } from './theme'
 import { Button, ErrorText, Group, Pill, Progress, Row, Screen, Text, Tile } from './ui'
 
@@ -63,72 +64,286 @@ export function PointRow({ text, status }: { text: string; status?: PointStatus 
 	)
 }
 
-const shortAnswer: QuestionView<'short_answer'> = {
-	label: 'Explain it',
+/** A text box that grows with what is typed, from `lines` lines up, so nothing scrolls out of sight. */
+function Field({ mono: monospace, lines = 1, style, ...props }: TextInputProps & { mono?: boolean; lines?: number }) {
+	const c = useColors()
+	const lineHeight = monospace ? 22 : 24
+	const typed = String(props.value ?? '').split('\n').length
+	return (
+		<TextInput
+			placeholderTextColor={c.sub}
+			textAlignVertical="top"
+			autoCapitalize={monospace ? 'none' : undefined}
+			autoCorrect={monospace ? false : undefined}
+			spellCheck={monospace ? false : undefined}
+			{...props}
+			style={[
+				{
+					minHeight: Math.max(lines, props.multiline ? typed + 1 : 1) * lineHeight + space.md * 2 + hairline * 2,
+					fontFamily: monospace ? mono : font.regular,
+					fontSize: monospace ? 14 : 16,
+					lineHeight,
+					color: c.fg,
+					borderWidth: hairline,
+					borderColor: c.ring,
+					outlineColor: c.fg,
+					borderRadius: radius,
+					padding: space.md,
+				},
+				style,
+			]}
+		/>
+	)
+}
+
+type WrittenReveal = { reference?: string; score?: number; feedback?: string; mustHave?: string[]; points?: PointStatus[]; misconception?: string | null }
+
+function Labeled({ label, children }: { label: string; children: ReactNode }) {
+	return (
+		<Group gap={2}>
+			<Text variant="label">{label}</Text>
+			{children}
+		</Group>
+	)
+}
+
+/** Feedback and the must-have points, as the judge marked them. */
+function Checklist({ reveal, skipped, heading }: { reveal: WrittenReveal; skipped: boolean; heading: string }) {
+	const points = reveal.mustHave ?? []
+	return (
+		<>
+			{reveal.misconception ? <Text>Misconception: {reveal.misconception}</Text> : null}
+			{reveal.feedback ? <Text>{reveal.feedback}</Text> : null}
+			{points.length ? (
+				<Group gap={space.xs}>
+					<Text variant="label">{heading}</Text>
+					{points.map((p, i) => (
+						<PointRow key={i} text={p} status={skipped ? 'missing' : reveal.points?.[i]} />
+					))}
+				</Group>
+			) : null}
+		</>
+	)
+}
+
+/** A question answered in writing and graded against must-have points: explain it, or find the error. */
+const writtenView = <K extends 'short_answer' | 'find_error'>(label: string, hint: string): QuestionView<K> => ({
+	label,
 	skip: { skipped: true },
 	Input({ response, onChange }) {
-		const c = useColors()
 		const answer = (response as { answer?: string } | null)?.answer ?? ''
 		return (
 			<Group gap={space.sm}>
-				<Text variant="muted">Answer from memory, in your own words. You see how you did at the end.</Text>
-				<TextInput
-					value={answer}
-					onChangeText={(text) => onChange(text.trim() ? { answer: text } : null)}
-					placeholder="Type your answer"
-					placeholderTextColor={c.sub}
+				<Text variant="muted">{hint}</Text>
+				<Field value={answer} onChangeText={(text) => onChange(text.trim() ? { answer: text } : null)} placeholder="Type your answer" multiline lines={5} />
+			</Group>
+		)
+	},
+	Review({ response, result }) {
+		const reveal = result.reveal as WrittenReveal
+		const skipped = 'skipped' in (response as object)
+		return (
+			<Group gap={space.md}>
+				<Mark ok={result.correct} label={skipped ? "You didn't know this one" : verdictLabel(reveal.score ?? 0)} />
+				{!skipped && (
+					<Labeled label="Your answer">
+						<Text selectable>{(response as { answer: string }).answer.trim()}</Text>
+					</Labeled>
+				)}
+				<Checklist reveal={reveal} skipped={skipped} heading="A full answer makes these points" />
+				<Labeled label="Model answer">
+					<Text selectable>{reveal.reference}</Text>
+				</Labeled>
+			</Group>
+		)
+	},
+})
+
+const shortAnswer = writtenView<'short_answer'>('Explain it', 'Answer from memory, in your own words. You see how you did at the end.')
+const findError = writtenView<'find_error'>('Find the error', 'Say what is wrong and why. You see how you did at the end.')
+
+const workedProblem: QuestionView<'worked_problem'> = {
+	label: 'Work it out',
+	skip: { skipped: true },
+	Input({ question, response, onChange }) {
+		const r = (response as { value?: string; working?: string } | null) ?? {}
+		const [working, setWorking] = useState(r.working ?? '')
+		const [value, setValue] = useState(r.value ?? '')
+		const send = (v: string, w: string) => onChange(v.trim() ? { value: v, ...(w.trim() ? { working: w } : {}) } : null)
+		const unit = question.prompt.unit
+		return (
+			<Group gap={space.md}>
+				<Text variant="muted">Work it out without the text. The number is checked exactly; your working, if you write it, shows where you went wrong.</Text>
+				<Group gap={space.xs}>
+					<Text variant="label">Working (optional)</Text>
+					<Field
+						value={working}
+						onChangeText={(w) => (setWorking(w), send(value, w))}
+						placeholder="Your steps"
+						multiline
+						lines={3}
+					/>
+				</Group>
+				<Group gap={space.xs}>
+					<Text variant="label">Answer</Text>
+					<Row style={{ gap: space.sm }}>
+						<Field
+							value={value}
+							onChangeText={(v) => (setValue(v), send(v, working))}
+							placeholder="A number"
+							accessibilityLabel="Answer"
+							keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'}
+							style={{ flex: 1 }}
+						/>
+						{unit ? <Text>{unit}</Text> : null}
+					</Row>
+				</Group>
+			</Group>
+		)
+	},
+	Review({ response, result }) {
+		const reveal = result.reveal as { answer: number; unit?: string; solution: string; steps?: string[]; given?: number | null } & WrittenReveal
+		const skipped = 'skipped' in (response as object)
+		const r = response as { value?: string; working?: string }
+		const unit = reveal.unit ? ` ${reveal.unit}` : ''
+		return (
+			<Group gap={space.md}>
+				<Mark ok={result.correct} label={skipped ? "You didn't know this one" : result.correct ? 'Correct' : 'Not quite'} />
+				{!skipped && (
+					<Labeled label="Your answer">
+						<Text selectable>
+							{r.value?.trim()}
+							{reveal.given === null ? ' (not read as a number)' : ''}
+						</Text>
+					</Labeled>
+				)}
+				<Labeled label="Right answer">
+					<Text selectable>
+						{reveal.answer}
+						{unit}
+					</Text>
+				</Labeled>
+				{r.working ? <Checklist reveal={{ ...reveal, mustHave: reveal.steps }} skipped={false} heading="Key steps" /> : null}
+				<Labeled label="Solution">
+					<Text selectable>{reveal.solution}</Text>
+				</Labeled>
+			</Group>
+		)
+	},
+}
+
+const predictOutput: QuestionView<'predict_output'> = {
+	label: 'Predict the output',
+	skip: { skipped: true },
+	Input({ response, onChange }) {
+		const output = (response as { output?: string } | null)?.output ?? ''
+		return (
+			<Group gap={space.sm}>
+				<Text variant="muted">Run it in your head and write exactly what it prints, one line per printed line.</Text>
+				<Field
+					mono
+					value={output}
+					onChangeText={(text) => onChange(text.trim() ? { output: text } : null)}
+					placeholder="Output"
+					accessibilityLabel="Output"
 					multiline
-					textAlignVertical="top"
-					style={{
-						minHeight: 140,
-						fontFamily: font.regular,
-						fontSize: 16,
-						lineHeight: 24,
-						color: c.fg,
-						borderWidth: hairline,
-						borderColor: c.ring,
-						outlineColor: c.fg,
-						borderRadius: radius,
-						padding: space.md,
-					}}
+					lines={3}
 				/>
 			</Group>
 		)
 	},
 	Review({ response, result }) {
-		const reveal = result.reveal as {
-			reference?: string
-			score?: number
-			feedback?: string
-			mustHave?: string[]
-			points?: PointStatus[]
-			misconception?: string | null
-		}
+		const reveal = result.reveal as { output: string; explanation?: string }
 		const skipped = 'skipped' in (response as object)
-		const points = reveal.mustHave ?? []
 		return (
 			<Group gap={space.md}>
-				<Mark ok={result.correct} label={skipped ? "You didn't know this one" : verdictLabel(reveal.score ?? 0)} />
+				<Mark ok={result.correct} label={skipped ? "You didn't know this one" : result.correct ? 'Correct' : 'Not quite'} />
 				{!skipped && (
-					<Group gap={2}>
-						<Text variant="label">Your answer</Text>
-						<Text selectable>{(response as { answer: string }).answer.trim()}</Text>
-					</Group>
+					<Labeled label="You said it prints">
+						<CodeBlock code={(response as { output: string }).output.replace(/\n+$/, '')} wrap />
+					</Labeled>
 				)}
-				{reveal.misconception ? <Text>Misconception: {reveal.misconception}</Text> : null}
-				{reveal.feedback ? <Text>{reveal.feedback}</Text> : null}
-				{points.length ? (
+				<Labeled label="It prints">
+					<CodeBlock code={reveal.output} wrap />
+				</Labeled>
+				{reveal.explanation ? <Text>{reveal.explanation}</Text> : null}
+			</Group>
+		)
+	},
+}
+
+function StepRow({ n, text, onUp, onDown, mark }: { n: number; text: string; onUp?: () => void; onDown?: () => void; mark?: boolean }) {
+	const c = useColors()
+	const arrow = (icon: 'chevron-up' | 'chevron-down', onPress: (() => void) | undefined, a11y: string) => (
+		<Pressable
+			accessibilityRole="button"
+			accessibilityLabel={a11y}
+			disabled={!onPress}
+			onPress={onPress}
+			hitSlop={4}
+			style={({ pressed }) => ({ width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: radius, opacity: onPress ? 1 : 0.25, backgroundColor: pressed ? c.track : 'transparent' })}
+		>
+			<Ionicons name={icon} size={18} color={c.fg} />
+		</Pressable>
+	)
+	const editable = onUp !== undefined || onDown !== undefined
+	return (
+		<View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, minHeight: 48, paddingLeft: space.lg, paddingRight: editable ? space.xs : space.lg, paddingVertical: space.xs, borderRadius: radius, borderWidth: hairline, borderColor: c.ring }}>
+			<Text style={{ fontFamily: font.medium, minWidth: 18, fontVariant: ['tabular-nums'] }}>{n}</Text>
+			<Text style={{ flex: 1 }}>{text}</Text>
+			{mark !== undefined && <Ionicons name={mark ? 'checkmark' : 'close'} size={16} color={mark ? c.fg : c.sub} accessibilityLabel={mark ? 'In the right place' : 'Out of place'} />}
+			{editable && (
+				<>
+					{arrow('chevron-up', onUp, `Move "${text}" up`)}
+					{arrow('chevron-down', onDown, `Move "${text}" down`)}
+				</>
+			)}
+		</View>
+	)
+}
+
+const orderSteps: QuestionView<'order_steps'> = {
+	label: 'Order the steps',
+	Input({ question, response, onChange }) {
+		const steps = question.prompt.steps
+		const [order, setOrder] = useState<number[]>((response as { order?: number[] } | null)?.order ?? steps.map((_, i) => i))
+		const move = (from: number, to: number) => {
+			const next = [...order]
+			;[next[from], next[to]] = [next[to]!, next[from]!]
+			setOrder(next)
+			onChange({ order: next })
+		}
+		return (
+			<Group gap={space.sm}>
+				<Text variant="muted">Move each step into place, first at the top.</Text>
+				{order.map((k, i) => (
+					<StepRow key={k} n={i + 1} text={steps[k]!} onUp={i > 0 ? () => move(i, i - 1) : undefined} onDown={i < order.length - 1 ? () => move(i, i + 1) : undefined} />
+				))}
+				{response === null && <Button title="This order is right" kind="outline" onPress={() => onChange({ order })} />}
+			</Group>
+		)
+	},
+	Review({ question, response, result }) {
+		const reveal = result.reveal as { steps: string[]; explanation?: string; pairs?: number }
+		const mine = (response as { order: number[] }).order.map((k) => question.prompt.steps[k]!)
+		return (
+			<Group gap={space.md}>
+				<Mark ok={result.correct} label={result.correct ? 'Correct' : result.rating === 'hard' ? 'Close: a step or two out of place' : 'Not quite'} />
+				{!result.correct && (
 					<Group gap={space.xs}>
-						<Text variant="label">A full answer makes these points</Text>
-						{points.map((p, i) => (
-							<PointRow key={i} text={p} status={skipped ? 'missing' : reveal.points?.[i]} />
+						<Text variant="label">Your order</Text>
+						{mine.map((text, i) => (
+							<StepRow key={i} n={i + 1} text={text} mark={reveal.steps[i] === text} />
 						))}
 					</Group>
-				) : null}
-				<Group gap={2}>
-					<Text variant="label">Model answer</Text>
-					<Text selectable>{reveal.reference}</Text>
+				)}
+				<Group gap={space.xs}>
+					<Text variant="label">Right order</Text>
+					{reveal.steps.map((text, i) => (
+						<StepRow key={i} n={i + 1} text={text} />
+					))}
 				</Group>
+				{reveal.explanation ? <Text>{reveal.explanation}</Text> : null}
 			</Group>
 		)
 	},
@@ -213,7 +428,14 @@ const mcq: QuestionView<'mcq'> = {
 }
 
 /** One view per question type. Adding a type in @peak/core means adding its view here. */
-const views: { [K in QuestionType]: QuestionView<K> } = { short_answer: shortAnswer, mcq }
+const views: { [K in QuestionType]: QuestionView<K> } = {
+	short_answer: shortAnswer,
+	mcq,
+	worked_problem: workedProblem,
+	predict_output: predictOutput,
+	find_error: findError,
+	order_steps: orderSteps,
+}
 const viewFor = (q: Question) => views[q.type] as unknown as QuestionView<QuestionType> & {
 	Input: ComponentType<InputProps<Question>>
 	Review: ComponentType<ReviewProps<Question>>
@@ -233,6 +455,7 @@ function ResultTile({ entry, index, onRetry }: { entry: Entry; index: number; on
 				<Text variant="muted">{index + 1}</Text>
 			</Row>
 			<Text style={{ fontFamily: font.semibold }}>{question.prompt.prompt}</Text>
+			{question.prompt.code ? <CodeBlock code={question.prompt.code} wrap /> : null}
 			{graded.status === 'checking' && (
 				<Row style={{ justifyContent: 'flex-start' }}>
 					<ActivityIndicator color={c.fg} size="small" />
@@ -425,6 +648,7 @@ export function PracticeSession({
 				<Group gap={space.md}>
 					<Pill>{view.label}</Pill>
 					<Text variant="question">{current.prompt.prompt}</Text>
+					{current.prompt.code ? <CodeBlock code={current.prompt.code} wrap /> : null}
 				</Group>
 				<view.Input
 					key={current.id + index}

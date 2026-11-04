@@ -2,12 +2,12 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
-import { Pressable, Switch, View } from 'react-native'
+import { Pressable, View } from 'react-native'
 import { api, type Me } from '@/api'
 import { remindersSupported, scheduleDailyReminder } from '@/reminders'
 import { useSession } from '@/session'
 import { hairline, radius, setAppearance, space, useAppearance, useColors, type Appearance } from '@/theme'
-import { Button, Choice, ChoiceRow, ErrorText, Group, Loading, Row, Screen, Text, Tile } from '@/ui'
+import { Button, Choice, ChoiceRow, ErrorText, Group, Loading, Row, Screen, Text, Tile, Toggle } from '@/ui'
 
 function Stepper({ label, value, onMinus, onPlus }: { label: string; value: string; onMinus(): void; onPlus(): void }) {
 	const c = useColors()
@@ -55,7 +55,6 @@ const shiftTime = (time: string, minutes: number) => {
 
 export default function Settings() {
 	const router = useRouter()
-	const c = useColors()
 	const { signOut } = useSession()
 	const queryClient = useQueryClient()
 	const me = useQuery({ queryKey: ['me'], queryFn: api.me })
@@ -95,6 +94,17 @@ export default function Settings() {
 					<Text>{k ? `${k.provider === 'anthropic' ? 'Anthropic' : 'OpenAI'} connected` : 'No AI connected'}</Text>
 					<Text variant="muted">{k ? `${k.model}, key ending ${k.last4}` : 'Add your own key to generate questions'}</Text>
 				</Tile>
+				{m && (
+					<Tile>
+						<Row>
+							<Group gap={2} style={{ flex: 1 }}>
+								<Text>Check new questions</Text>
+								<Text variant="muted">A second AI pass checks each question and its answer before you see it. Costs one extra AI call per batch of sections.</Text>
+							</Group>
+							<Toggle accessibilityLabel="Check new questions" value={m.qualityCheck} onValueChange={(on) => update.mutate({ qualityCheck: on })} />
+						</Row>
+					</Tile>
+				)}
 			</Group>
 
 			<Group gap={10}>
@@ -117,12 +127,11 @@ export default function Settings() {
 									{remindersSupported ? 'One nudge a day at the same time' : 'Reminders work in the phone app'}
 								</Text>
 							</Group>
-							<Switch
+							<Toggle
+								accessibilityLabel="Daily reminder"
 								value={Boolean(m.reminderTime)}
 								disabled={!remindersSupported}
 								onValueChange={(on) => update.mutate({ reminderTime: on ? '20:00' : null })}
-								trackColor={{ true: c.fg, false: c.track }}
-								thumbColor={c.bg}
 							/>
 						</Row>
 						{m.reminderTime && (

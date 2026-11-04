@@ -17,7 +17,7 @@ const INTENSITIES: { value: QuestionIntensity; label: string; detail: string }[]
 const STYLES: { value: QuestionStyle; label: string }[] = [
 	{ value: 'mixed', label: 'Mixed' },
 	{ value: 'written', label: 'Written' },
-	{ value: 'choice', label: 'Multiple choice' },
+	{ value: 'choice', label: 'Choice' },
 ]
 
 export default function Add() {
@@ -128,8 +128,10 @@ export default function Add() {
 					</ChoiceRow>
 					<Text variant="muted">
 						{questionStyle === 'choice'
-							? 'Multiple choice is graded instantly, without your AI.'
-							: 'Written answers are graded by your AI. They take more effort and stick better.'}
+							? 'Multiple choice and putting steps in order, graded instantly without your AI.'
+							: questionStyle === 'written'
+								? 'Explain it, work out a number, predict what code prints, find the error. Numbers and outputs are checked exactly; explanations by your AI. Harder, and they stick better.'
+								: 'Peak picks the type that fits each idea: code gets predict the output and find the error, math gets worked problems, processes get steps to order.'}
 					</Text>
 				</Group>
 				<ErrorText error={add.error} />

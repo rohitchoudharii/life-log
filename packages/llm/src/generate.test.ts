@@ -74,6 +74,39 @@ describe('writeQuestions', () => {
 		expect(out.ideas.get(1)).toEqual(['Heads work in parallel subspaces.'])
 	})
 
+	it('with the quality check on, rewrites a question whose answer key disagrees with the check working it out', async () => {
+		const problem = (answer: number) => ({
+			type: 'worked_problem',
+			level: 'apply',
+			idea: 1,
+			content: { prompt: 'Keys have 64 dimensions. By what factor are the scores divided?', answer, tolerance: 0, unit: '', solution: 's', steps: ['take the square root', 'of 64'] },
+		})
+		const first = JSON.stringify({ sections: [{ section: 1, ideas: ['Scaling keeps softmax from saturating.'], questions: [problem(16), good] }] })
+		// The check works it out as 8 and rejects nothing itself; code compares the numbers.
+		const check = JSON.stringify({ checks: [{ id: 1, answer: 8, verdict: 'keep' }, { id: 2, verdict: 'keep' }] })
+		const fixes = JSON.stringify({ questions: [{ id: 1, ...problem(8) }] })
+		const recheck = JSON.stringify({ checks: [{ id: 1, answer: 8, verdict: 'keep' }] })
+		const { provider, asked } = scripted(first, check, fixes, recheck)
+		const out = await writeQuestions(provider, 'k', 'm', sections, [0], { ...prefs, qualityCheck: true })
+
+		expect(asked[2]).toMatch(/answer key says 16, but working it out gives 8/)
+		expect(out.questions.map((q) => [q.type, (q.content as { answer?: number }).answer])).toEqual([
+			['short_answer', undefined],
+			['worked_problem', 8],
+		])
+	})
+
+	it('shuffles the steps of an order question before storing them', async () => {
+		const steps = ['Compute query-key scores', 'Scale the scores', 'Apply softmax', 'Weight the values']
+		const order = { type: 'order_steps', level: 'explain', idea: 1, content: { prompt: 'Put one attention step in order.', steps, explanation: 'e' } }
+		const { provider } = scripted(JSON.stringify({ sections: [{ section: 1, ideas: ['i'], questions: [order] }] }))
+		const [q] = (await writeQuestions(provider, 'k', 'm', sections, [0], prefs)).questions
+		const content = q!.content as { steps: string[]; shown: number[] }
+		expect(content.steps).toEqual(steps)
+		expect([...content.shown].sort()).toEqual([0, 1, 2, 3])
+		expect(content.shown).not.toEqual([0, 1, 2, 3])
+	})
+
 	it('asks once more when the reply for a single section is unreadable', async () => {
 		const { provider, asked } = scripted('{"sections": [{"section": 1, "questions": [', JSON.stringify({ sections: [{ section: 1, ideas: ['i'], questions: [good] }] }))
 		const out = await writeQuestions(provider, 'k', 'm', sections, [0], prefs)

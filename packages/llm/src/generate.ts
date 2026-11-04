@@ -2,9 +2,11 @@ import {
 	isDuplicatePrompt,
 	lintQuestion,
 	MIN_ABOVE_RECALL,
+	normalizeOutput,
 	parseQuestionContent,
 	QUESTION_LEVELS,
 	shuffleMcq,
+	shuffleSteps,
 	subtreeEnd,
 	type LintInput,
 	type McqContent,
@@ -16,11 +18,16 @@ import {
 import type { LlmProvider } from './providers'
 
 /** Bump when the prompt or the checks change, so stored questions record which rules made them. */
-export const GENERATE_QUESTIONS_PROMPT_VERSION = 'questions-v5'
+export const GENERATE_QUESTIONS_PROMPT_VERSION = 'questions-v6'
 /** Questions written during reviews, when an idea has run out of unasked ones. Tests leave them out. */
-export const REVIEW_PROMPT_VERSION = 'review-v1'
+export const REVIEW_PROMPT_VERSION = 'review-v2'
 
-export type QuestionPrefs = { intensity: QuestionIntensity; style: QuestionStyle }
+export type QuestionPrefs = {
+	intensity: QuestionIntensity
+	style: QuestionStyle
+	/** A second call checks every question that passed the rules in code, including its answer key. */
+	qualityCheck?: boolean
+}
 export type SectionInput = { title: string; level: number; text: string; wordCount: number }
 /**
  * `section` and `alsoSections` index into the item's sections; `alsoSections` is set for linking
@@ -28,8 +35,11 @@ export type SectionInput = { title: string; level: number; text: string; wordCou
  */
 export type GeneratedQuestion = { section: number; alsoSections: number[]; idea: number | null; type: QuestionType; level: QuestionLevel; content: unknown }
 export type Generated = { ideas: Map<number, string[]>; questions: GeneratedQuestion[] }
-/** Questions that failed the checks: first on the model's first try, then the ones dropped after the rewrite. */
-export type OnRejected = (stage: 'first' | 'dropped', rejected: { prompt: string; reasons: string[] }[]) => void
+/**
+ * Questions that failed the checks: on the model's first try, in the quality check, and the ones
+ * dropped after the rewrite.
+ */
+export type OnRejected = (stage: 'first' | 'checked' | 'dropped', rejected: { prompt: string; reasons: string[] }[]) => void
 const describe = (r: Rejected[]) =>
 	r.map((x) => ({ prompt: String((x.raw as { content?: { prompt?: unknown } })?.content?.prompt ?? '(no prompt)'), reasons: x.reasons }))
 
@@ -135,27 +145,46 @@ Hard rules:
 4. Use new examples: different numbers, inputs, or code than the text uses, so the answer cannot be copied from memory of the page.
 5. Answerable from what the text teaches, not from trivia (no dates, names, or numbers that do not matter to understanding). Never invent facts.
 6. No two questions test the same point at the same level.
-7. short_answer: "mustHave" lists 2 to 4 points a complete answer must make (1 is allowed only for recall), each a short claim, not a keyword. "reference" is a model answer of 1 to 3 sentences built from them. "misconceptions" lists wrong beliefs a half-understanding learner might state.
-8. mcq: exactly 4 options of similar length and style. Each wrong option is a real misconception that someone who half-understood would pick. No "all/none of the above". "whyWrong" has one entry per option: why that option is wrong, and "" for the right one. "explanation" says why the right one is right.
+7. Pick each question's type from what the section teaches (the type guide below). Code in the text (marked <code>) calls for predict_output or find_error; formulas, quantities, or algorithms with numbers call for worked_problem; a process whose order matters calls for order_steps. Use short_answer for why and how, and where no other type fits.
+8. Code goes in "code", exactly as typed, never in "prompt"; never use backticks. Write new code, not the text's own example.
+
+Type guide:
+- short_answer: "mustHave" lists 2 to 4 points a complete answer must make (1 is allowed only for recall), each a short claim, not a keyword. "reference" is a model answer of 1 to 3 sentences built from them. "misconceptions" lists wrong beliefs a half-understanding learner might state.
+- mcq: exactly 4 options of similar length and style. Each wrong option is a real misconception that someone who half-understood would pick. No "all/none of the above". "whyWrong" has one entry per option: why that option is wrong, and "" for the right one. "explanation" says why the right one is right.
+- worked_problem: a problem with new numbers whose answer is one number. "answer" is that number; "unit" its unit, or ""; "tolerance" how far off still counts (0 for exact whole numbers, enough for rounding otherwise). "solution" works it out step by step; "steps" lists the 2 to 4 key steps a correct working takes. Work it out yourself before you write "answer".
+- predict_output: new code of at most 15 lines in "code" that exercises the idea; "output" is exactly what it prints, at most 8 short lines. Trace the code line by line before you write "output"; never put the output in a comment. "explanation" says why it prints that.
+- find_error: flawed code in "code", or a flawed claim in quotes in the prompt, with one mistake a half-understanding learner would make. The learner says what is wrong and why. "mustHave" names what is wrong and why it is wrong (or the fix); "reference" and "misconceptions" as for short_answer.
+- order_steps: 4 to 7 steps of a process in the right order (they are shuffled before the learner sees them), each a short phrase with no numbering and no "first", "then", or "finally". "explanation" says why the order matters.
 
 Write plain text: no Markdown, no backticks, no bold. Put code on its own lines, exactly as it would be typed.
 
 Every question names the key idea it tests in "idea": the idea's number in its section's list.
 
-Every question has two separate fields: "type" is the format, exactly "short_answer" or "mcq"; "level" is the kind of thinking, one of recall, explain, apply, analyze, transfer.
+Every question has two separate fields: "type" is the format, exactly one of short_answer, mcq, worked_problem, predict_output, find_error, order_steps; "level" is the kind of thinking, one of recall, explain, apply, analyze, transfer.
 
 Reply with JSON only, no prose and no code fence.`
 
+const WRITTEN: QuestionType[] = ['short_answer', 'worked_problem', 'predict_output', 'find_error']
+const CHOICE: QuestionType[] = ['mcq', 'order_steps']
+
 const MIX: Record<QuestionStyle, string> = {
-	mixed: 'Mostly "short_answer"; about a quarter "mcq", used only where wrong options can be genuinely tempting.',
-	written: 'Only "short_answer".',
-	choice: 'Only "mcq".',
+	mixed: 'Pick each type from the content, using the type guide. Mostly written types; about a quarter "mcq" or "order_steps", used only where wrong options are genuinely tempting or the order genuinely matters.',
+	written: `Only these types, picked from the content: ${WRITTEN.join(', ')}.`,
+	choice: `Only these types, picked from the content: ${CHOICE.join(', ')}.`,
 }
 
-const ALLOWED: Record<QuestionStyle, QuestionType[]> = { mixed: ['short_answer', 'mcq'], written: ['short_answer'], choice: ['mcq'] }
+const ALLOWED: Record<QuestionStyle, QuestionType[]> = { mixed: [...WRITTEN, ...CHOICE], written: WRITTEN, choice: CHOICE }
 
-const SHAPES = `{"type": "short_answer", "level": "apply", "content": {"prompt": "…", "reference": "…", "mustHave": ["…", "…"], "niceToHave": ["…"], "misconceptions": ["…"]}}
-{"type": "mcq", "level": "analyze", "content": {"prompt": "…", "options": ["…", "…", "…", "…"], "answerIndex": 0, "explanation": "…", "whyWrong": ["", "…", "…", "…"]}}`
+const SHAPES = `{"type": "short_answer", "level": "apply", "content": {"prompt": "…", "code": "optional", "reference": "…", "mustHave": ["…", "…"], "niceToHave": ["…"], "misconceptions": ["…"]}}
+{"type": "mcq", "level": "analyze", "content": {"prompt": "…", "code": "optional", "options": ["…", "…", "…", "…"], "answerIndex": 0, "explanation": "…", "whyWrong": ["", "…", "…", "…"]}}
+{"type": "worked_problem", "level": "apply", "content": {"prompt": "…", "answer": 0.25, "unit": "…", "tolerance": 0.005, "solution": "…", "steps": ["…", "…"], "misconceptions": ["…"]}}
+{"type": "predict_output", "level": "apply", "content": {"prompt": "…", "code": "…", "output": "…", "explanation": "…"}}
+{"type": "find_error", "level": "analyze", "content": {"prompt": "…", "code": "…", "reference": "…", "mustHave": ["…", "…"], "misconceptions": ["…"]}}
+{"type": "order_steps", "level": "explain", "content": {"prompt": "…", "steps": ["…", "…", "…", "…"], "explanation": "…"}}`
+
+/** Shuffles what the learner picks from, so the model's order (right answer first, steps in order) is no tell. */
+const shuffled = (type: QuestionType, content: unknown) =>
+	type === 'mcq' ? shuffleMcq(content as McqContent) : type === 'order_steps' ? shuffleSteps(content as { steps: string[] }) : content
 
 const sectionBlock = (n: number, s: SectionInput, count: number) =>
 	`<section number="${n}" title=${JSON.stringify(s.title)} questions="${count}">\n${s.text}\n</section>`
@@ -203,7 +232,7 @@ function check(
 				idea,
 				type: type as QuestionType,
 				level,
-				content: type === 'mcq' ? shuffleMcq(content as McqContent) : content,
+				content: shuffled(type as QuestionType, content),
 				source,
 			})
 	}
@@ -222,6 +251,65 @@ function check(
 
 async function call(provider: LlmProvider, apiKey: string, model: string, user: string) {
 	return extractJson(await provider.complete(apiKey, { model, system: RULES, user, json: true, maxTokens: MAX_REPLY_TOKENS }))
+}
+
+const CHECK_RULES = `You check retrieval-practice questions before a learner sees them. Each question comes with its answer key. Be a skeptical examiner: a wrong answer key or an unanswerable question teaches the learner something false.
+
+Reject a question when any of these hold:
+- The answer key is wrong or incomplete: a wrong right option, a second option that is also right, a must-have point that is false, a wrong number, or a wrong output.
+- It cannot be answered from what the text teaches (with reasoning), or it needs trivia the text gives no reason to remember.
+- It is ambiguous: a careful learner who understood the text could give a different answer and be right.
+- It can be answered without thinking: by restating one sentence of the text, or because the prompt or options give it away.
+- Its "mustHave" points are not what the question asks for.
+
+Work out exact answers yourself, before you read the key:
+- worked_problem: solve it and give your number in "answer".
+- predict_output: trace the code line by line and give exactly what it prints in "output".
+
+Reply with JSON only: {"checks": [{"id": 1, "answer": number (worked_problem only), "output": "…" (predict_output only), "verdict": "keep" | "reject", "problems": ["…"]}]}. "problems" says, for a rejected question, what to fix, in one short sentence each.`
+
+type Check = { id?: unknown; answer?: unknown; output?: unknown; verdict?: unknown; problems?: unknown }
+
+/**
+ * Has the model check the questions in `accepted` from `from` on, and moves the ones it rejects
+ * out, with its reasons. Exact answer keys are compared with the model's own working in code.
+ * If the check itself fails, the questions are kept: they already passed the rules in code.
+ */
+async function qualityCheck(provider: LlmProvider, apiKey: string, model: string, context: string, accepted: Candidate[], from = 0): Promise<Rejected[]> {
+	const list = accepted.slice(from)
+	if (!list.length) return []
+	let parsed: { checks?: Check[] }
+	try {
+		parsed = extractJson(
+			await provider.complete(apiKey, {
+				model,
+				system: CHECK_RULES,
+				user: `${context}\n\nQuestions:\n${JSON.stringify(list.map((q, k) => ({ id: k + 1, type: q.type, level: q.level, content: q.content })), null, 1)}`,
+				json: true,
+				maxTokens: MAX_REPLY_TOKENS,
+			}),
+		) as typeof parsed
+	} catch {
+		return []
+	}
+	const rejected: Rejected[] = []
+	const out = new Set<Candidate>()
+	for (const check of parsed.checks ?? []) {
+		const q = list[Number(check.id) - 1]
+		if (!q || out.has(q)) continue
+		const reasons = check.verdict === 'reject' && Array.isArray(check.problems) ? check.problems.filter((p): p is string => typeof p === 'string' && p.trim().length > 0) : []
+		if (check.verdict === 'reject' && !reasons.length) reasons.push('the quality check rejected it')
+		const c = q.content as { answer?: number; tolerance?: number; output?: string }
+		if (q.type === 'worked_problem' && typeof check.answer === 'number' && Math.abs(check.answer - c.answer!) > Math.max(c.tolerance ?? 0, Math.abs(c.answer!) * 1e-6))
+			reasons.push(`the answer key says ${c.answer}, but working it out gives ${check.answer}: check the numbers`)
+		if (q.type === 'predict_output' && typeof check.output === 'string' && normalizeOutput(check.output) !== normalizeOutput(c.output!))
+			reasons.push(`the "output" key may be wrong: tracing the code gives ${JSON.stringify(check.output)}`)
+		if (!reasons.length) continue
+		out.add(q)
+		rejected.push({ raw: { type: q.type, level: q.level, content: q.content }, section: q.section, alsoSections: q.alsoSections, idea: q.idea, reasons })
+	}
+	for (let i = accepted.length - 1; i >= from; i--) if (out.has(accepted[i]!)) accepted.splice(i, 1)
+	return rejected
 }
 
 /** Sends the questions that failed the checks back once, with the reasons, and keeps replacements that pass. */
@@ -259,7 +347,10 @@ ${SHAPES}`,
 	// Whatever still fails after one rewrite is dropped, so a bad question never reaches the learner.
 	const answered = new Set(items.map((x) => x.raw))
 	const unanswered = rejected.filter((_, k) => !(parsed.questions ?? []).some((q) => Number(q.id) === k + 1 && answered.has(q)))
-	return [...check(items, prefs, accepted), ...unanswered]
+	const before = accepted.length
+	const failed = check(items, prefs, accepted)
+	const checked = prefs.qualityCheck ? await qualityCheck(provider, apiKey, model, context, accepted, before) : []
+	return [...failed, ...checked, ...unanswered]
 }
 
 /**
@@ -346,6 +437,11 @@ ${SHAPES}`,
 	const accepted: Candidate[] = []
 	const rejected = check(items, prefs, accepted)
 	onRejected?.('first', describe(rejected))
+	if (prefs.qualityCheck) {
+		const checked = await qualityCheck(provider, apiKey, model, context, accepted)
+		onRejected?.('checked', describe(checked))
+		rejected.push(...checked)
+	}
 	const dropped = await rewrite(provider, apiKey, model, context, rejected, prefs, accepted, sourceFor)
 	onRejected?.('dropped', describe(dropped))
 	return { ideas, questions: accepted.map(({ source: _, ...q }) => q) }
@@ -392,7 +488,13 @@ ${SHAPES}`,
 	const accepted: Candidate[] = []
 	const rejected = check(items, prefs, accepted)
 	onRejected?.('first', describe(rejected))
-	const dropped = await rewrite(provider, apiKey, model, `Key ideas of the text:\n\n${context}`, rejected, prefs, accepted, sourceFor)
+	const ideasContext = `Key ideas of the text:\n\n${context}`
+	if (prefs.qualityCheck) {
+		const checked = await qualityCheck(provider, apiKey, model, ideasContext, accepted)
+		onRejected?.('checked', describe(checked))
+		rejected.push(...checked)
+	}
+	const dropped = await rewrite(provider, apiKey, model, ideasContext, rejected, prefs, accepted, sourceFor)
 	onRejected?.('dropped', describe(dropped))
 	return accepted.map(({ source: _, ...q }) => q)
 }

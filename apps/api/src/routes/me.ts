@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { db, t } from '../db'
 import { isTimeZone, parseBody, requireUser, type AppEnv, type User } from '../http'
 
-const view = (u: User) => ({ email: u.email, timezone: u.timezone, reminderTime: u.reminderTime, dailyReviewCap: u.dailyReviewCap })
+const view = (u: User) => ({ email: u.email, timezone: u.timezone, reminderTime: u.reminderTime, dailyReviewCap: u.dailyReviewCap, qualityCheck: u.qualityCheck })
 
 export const me = new Hono<AppEnv>()
 	.use(requireUser)
@@ -16,6 +16,7 @@ export const me = new Hono<AppEnv>()
 				reminderTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable().optional(),
 				dailyReviewCap: z.number().int().min(5).max(500).optional(),
 				timezone: z.string().refine(isTimeZone, 'Unknown timezone').optional(),
+				qualityCheck: z.boolean().optional(),
 			}),
 		)
 		const [user] = await db.update(t.users).set(patch).where(eq(t.users.id, c.var.user.id)).returning()

@@ -108,7 +108,7 @@ export type Today = {
 	streak: number
 	ongoing: { id: string; title: string }[]
 }
-export type Me = { email: string; timezone: string; reminderTime: string | null; dailyReviewCap: number }
+export type Me = { email: string; timezone: string; reminderTime: string | null; dailyReviewCap: number; qualityCheck: boolean }
 export type Provider = 'anthropic' | 'openai'
 export type KeyInfo = { provider: Provider; model: string; last4: string }
 

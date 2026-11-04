@@ -5,6 +5,7 @@ import {
 	QUESTION_LEVELS,
 	reviewIdea,
 	sectionText,
+	showsChoices,
 	startIdea,
 	toPrompt,
 	type IdeaSchedule,
@@ -159,12 +160,12 @@ const reviewPayload = (q: { id: string; ideaId: string | null; type: QuestionTyp
 })
 
 /** Topics mixed, then written questions first: seeing options would hint at later answers. */
-function arrange<Q extends { type: string }>(qs: Q[]) {
+function arrange<Q extends { type: QuestionType }>(qs: Q[]) {
 	for (let i = qs.length - 1; i > 0; i--) {
 		const j = Math.floor(Math.random() * (i + 1))
 		;[qs[i], qs[j]] = [qs[j]!, qs[i]!]
 	}
-	return qs.sort((a, b) => Number(a.type === 'mcq') - Number(b.type === 'mcq'))
+	return qs.sort((a, b) => Number(showsChoices(a.type)) - Number(showsChoices(b.type)))
 }
 
 export const study = new Hono<AppEnv>()

@@ -4,7 +4,7 @@ import { BASE } from './api'
 import { hairline, radius, space, useColors } from './theme'
 import { Group, Text } from './ui'
 
-const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'ui-monospace, Menlo, monospace' })
+export const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'ui-monospace, Menlo, monospace' })
 
 /** Renders stored content blocks natively. No foreign HTML is ever rendered. */
 export function BlockView({ block }: { block: Block }) {
@@ -50,14 +50,26 @@ export function BlockView({ block }: { block: Block }) {
 				/>
 			)
 		case 'code':
-			return (
-				<ScrollView
-					horizontal
-					style={{ borderRadius: radius, borderWidth: hairline, borderColor: c.ring }}
-					contentContainerStyle={{ padding: space.md }}
-				>
-					<RNText selectable style={{ fontFamily: mono, fontSize: 13, lineHeight: 20, color: c.fg }}>{block.text}</RNText>
-				</ScrollView>
-			)
+			return <CodeBlock code={block.text} />
 	}
+}
+
+/**
+ * Code in monospace. In the reader it scrolls sideways so long lines keep their shape; in a
+ * question it wraps (`wrap`), so no line is hidden from someone who must read all of it.
+ */
+export function CodeBlock({ code, wrap = false }: { code: string; wrap?: boolean }) {
+	const c = useColors()
+	const text = (
+		<RNText selectable style={{ fontFamily: mono, fontSize: 13, lineHeight: 20, color: c.fg }}>
+			{code}
+		</RNText>
+	)
+	const frame = { borderRadius: radius, borderWidth: hairline, borderColor: c.ring }
+	if (wrap) return <View style={[frame, { padding: space.md }]}>{text}</View>
+	return (
+		<ScrollView horizontal style={frame} contentContainerStyle={{ padding: space.md }}>
+			{text}
+		</ScrollView>
+	)
 }

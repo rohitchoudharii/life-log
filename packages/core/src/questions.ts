@@ -70,6 +70,8 @@ type QuestionTypeDef<C extends z.ZodType, R extends z.ZodType, P> = {
 	response: R
 	/** Content safe to show before the user answers (no answer key). */
 	toPrompt(content: z.infer<C>): P
+	/** Shows options or steps that could hint at other answers, so it goes after written questions. */
+	showsChoices?: boolean
 	grade(content: z.infer<C>, response: z.infer<R>, judge: Judge): Promise<Grade>
 }
 
@@ -79,42 +81,105 @@ export function ratingForScore(score: JudgeVerdict['score']): Rating {
 	return score <= 1 ? 'again' : score === 2 ? 'hard' : score === 3 ? 'good' : 'easy'
 }
 
+/** Every question has a prompt; code it is about goes in its own field, shown as code. */
+const stem = { prompt: z.string().min(1), code: z.string().min(1).optional() }
+const stemOf = ({ prompt, code }: { prompt: string; code?: string }) => ({ prompt, code })
+const judged = {
+	...stem,
+	reference: z.string().min(1),
+	mustHave: z.array(z.string().min(1)).max(6).default([]),
+	niceToHave: z.array(z.string().min(1)).default([]),
+	misconceptions: z.array(z.string().min(1)).default([]),
+}
+type Judged = { prompt: string; code?: string; reference: string; mustHave: string[]; misconceptions: string[] }
+const written = z.union([z.object({ answer: z.string().trim().min(1).max(4000) }), z.object({ skipped: z.literal(true) })])
+const withCode = (c: { prompt: string; code?: string }) => (c.code ? `${c.prompt}\n\n${c.code}` : c.prompt)
+
+/** Grades a written answer against its must-have points with the judge. */
+async function gradeWritten(c: Judged, r: z.infer<typeof written>, judge: Judge): Promise<Grade> {
+	// "I don't know" is an honest miss; there is nothing for the judge to read.
+	if ('skipped' in r) return { rating: 'again', correct: false, reveal: { reference: c.reference, mustHave: c.mustHave, score: 0, feedback: '' } }
+	// Questions written before checklists existed are graded against their reference answer as one point.
+	const mustHave = c.mustHave.length ? c.mustHave : [c.reference]
+	const verdict = await judge({ question: withCode(c), reference: c.reference, mustHave, misconceptions: c.misconceptions, answer: r.answer })
+	return {
+		rating: ratingForScore(verdict.score),
+		correct: verdict.score >= 3,
+		reveal: {
+			reference: c.reference,
+			score: verdict.score,
+			feedback: verdict.feedback,
+			mustHave: c.mustHave,
+			points: c.mustHave.length ? verdict.points : undefined,
+			misconception: verdict.misconception ?? null,
+		},
+	}
+}
+
+/**
+ * Reads the number at the start of an answer, so "12.5 ms", "1,024", "-3e-4" and "3/4" all work;
+ * whatever follows the number, such as a unit, is ignored. Returns null when the answer does not start with a number.
+ */
+export function parseNumber(text: string): number | null {
+	const m = text
+		.replace(/(\d),(?=\d{3}\b)/g, '$1')
+		.trim()
+		.match(/^([-+−]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)(?:\s*\/\s*((?:\d+\.?\d*|\.\d+)))?/i)
+	if (!m) return null
+	let n = Number(m[1]!.replace('−', '-'))
+	if (m[2] !== undefined) n /= Number(m[2])
+	return Number.isFinite(n) ? n : null
+}
+
+/** Program output compared the way a person reads it: spacing within and around lines does not count. */
+export const normalizeOutput = (text: string) =>
+	text
+		.replace(/\r\n?/g, '\n')
+		.split('\n')
+		.map((l) => l.replace(/\s+/g, ' ').trim())
+		.join('\n')
+		.replace(/^\n+|\n+$/g, '')
+
+const isPermutation = (xs: number[], n: number) => xs.length === n && new Set(xs).size === n && xs.every((x) => Number.isInteger(x) && x >= 0 && x < n)
+
+/** The share of step pairs the learner put in the right relative order: 1 is fully right. */
+export function pairsInOrder(order: number[]) {
+	let right = 0
+	let total = 0
+	for (let i = 0; i < order.length; i++)
+		for (let j = i + 1; j < order.length; j++) {
+			total++
+			if (order[i]! < order[j]!) right++
+		}
+	return total ? right / total : 1
+}
+
+type OrderSteps = { steps: string[]; shown?: number[] }
+/** Questions stored before their order was set are shown reversed, never in the right order. */
+const shownOrder = (c: OrderSteps) => c.shown ?? c.steps.map((_, i) => c.steps.length - 1 - i)
+
+/** Picks the order steps are shown in: shuffled, and never already right. */
+export function shuffleSteps<C extends OrderSteps>(c: C, random = Math.random): C {
+	const order = c.steps.map((_, i) => i)
+	for (let i = order.length - 1; i > 0; i--) {
+		const j = Math.floor(random() * (i + 1))
+		;[order[i], order[j]] = [order[j]!, order[i]!]
+	}
+	if (order.every((x, i) => x === i)) order.push(order.shift()!)
+	return { ...c, shown: order }
+}
+
 export const questionTypes = {
 	short_answer: def({
-		content: z.object({
-			prompt: z.string().min(1),
-			reference: z.string().min(1),
-			mustHave: z.array(z.string().min(1)).max(6).default([]),
-			niceToHave: z.array(z.string().min(1)).default([]),
-			misconceptions: z.array(z.string().min(1)).default([]),
-		}),
-		response: z.union([z.object({ answer: z.string().trim().min(1).max(4000) }), z.object({ skipped: z.literal(true) })]),
-		toPrompt: ({ prompt }) => ({ prompt }),
-		async grade(c, r, judge) {
-			// "I don't know" is an honest miss; there is nothing for the judge to read.
-			if ('skipped' in r)
-				return { rating: 'again', correct: false, reveal: { reference: c.reference, mustHave: c.mustHave, score: 0, feedback: '' } }
-			// Questions written before checklists existed are graded against their reference answer as one point.
-			const mustHave = c.mustHave.length ? c.mustHave : [c.reference]
-			const verdict = await judge({ question: c.prompt, reference: c.reference, mustHave, misconceptions: c.misconceptions, answer: r.answer })
-			return {
-				rating: ratingForScore(verdict.score),
-				correct: verdict.score >= 3,
-				reveal: {
-					reference: c.reference,
-					score: verdict.score,
-					feedback: verdict.feedback,
-					mustHave: c.mustHave,
-					points: c.mustHave.length ? verdict.points : undefined,
-					misconception: verdict.misconception ?? null,
-				},
-			}
-		},
+		content: z.object(judged),
+		response: written,
+		toPrompt: stemOf,
+		grade: gradeWritten,
 	}),
 	mcq: def({
 		content: z
 			.object({
-				prompt: z.string().min(1),
+				...stem,
 				options: z.array(z.string().min(1)).min(2).max(6),
 				answerIndex: z.number().int().min(0),
 				explanation: z.string().default(''),
@@ -123,7 +188,8 @@ export const questionTypes = {
 			})
 			.refine((c) => c.answerIndex < c.options.length, 'answerIndex out of range'),
 		response: z.object({ choice: z.number().int().min(0) }),
-		toPrompt: ({ prompt, options }) => ({ prompt, options }),
+		showsChoices: true,
+		toPrompt: ({ prompt, code, options }) => ({ prompt, code, options }),
 		async grade(c, r) {
 			const correct = r.choice === c.answerIndex
 			return {
@@ -131,6 +197,97 @@ export const questionTypes = {
 				correct,
 				reveal: { answerIndex: c.answerIndex, explanation: c.explanation, whyWrong: c.whyWrong[r.choice] ?? '' },
 			}
+		},
+	}),
+	/** A problem with a numeric answer. The number is checked exactly; the working, when given, against the key steps. */
+	worked_problem: def({
+		content: z.object({
+			...stem,
+			answer: z.number().finite(),
+			/** How far from `answer` still counts as right, in the same unit. */
+			tolerance: z.number().min(0).default(0),
+			unit: z.string().default(''),
+			/** The worked solution, shown afterwards. */
+			solution: z.string().min(1),
+			/** The steps a correct working takes, used to grade the working. */
+			steps: z.array(z.string().min(1)).max(6).default([]),
+			misconceptions: z.array(z.string().min(1)).default([]),
+		}),
+		response: z.union([
+			z.object({ value: z.string().trim().min(1).max(200), working: z.string().trim().max(4000).optional() }),
+			z.object({ skipped: z.literal(true) }),
+		]),
+		toPrompt: ({ prompt, code, unit }) => ({ prompt, code, unit }),
+		async grade(c, r, judge) {
+			const key = { answer: c.answer, unit: c.unit, solution: c.solution, steps: c.steps }
+			if ('skipped' in r) return { rating: 'again', correct: false, reveal: key }
+			const given = parseNumber(r.value)
+			// A tiny relative margin absorbs floating-point rounding in the key itself.
+			const correct = given !== null && Math.abs(given - c.answer) <= Math.max(c.tolerance, Math.abs(c.answer) * 1e-9)
+			let verdict: JudgeVerdict | null = null
+			if (r.working && c.steps.length)
+				verdict = await judge({
+					question: withCode(c),
+					reference: c.solution,
+					mustHave: c.steps,
+					misconceptions: c.misconceptions,
+					answer: `Final answer: ${r.value}\nWorking:\n${r.working}`,
+				})
+			return {
+				// The number decides whether it was right; clean working on a right answer makes it easy.
+				rating: correct ? (verdict?.score === 4 ? 'easy' : 'good') : 'again',
+				correct,
+				reveal: {
+					...key,
+					given,
+					feedback: verdict?.feedback ?? '',
+					points: verdict?.points,
+					misconception: verdict?.misconception ?? null,
+				},
+			}
+		},
+	}),
+	/** Code to run in the head: the learner writes what it prints. */
+	predict_output: def({
+		content: z.object({ prompt: z.string().min(1), code: z.string().min(1), output: z.string().min(1), explanation: z.string().default('') }),
+		response: z.union([z.object({ output: z.string().max(4000) }), z.object({ skipped: z.literal(true) })]),
+		toPrompt: stemOf,
+		async grade(c, r) {
+			const correct = !('skipped' in r) && normalizeOutput(r.output) === normalizeOutput(c.output)
+			return { rating: correct ? 'good' : 'again', correct, reveal: { output: c.output, explanation: c.explanation } }
+		},
+	}),
+	/** A flawed claim or piece of code: the learner says what is wrong and why. */
+	find_error: def({
+		content: z.object(judged),
+		response: written,
+		toPrompt: stemOf,
+		grade: gradeWritten,
+	}),
+	/** Steps of a process, shown shuffled, to be put in order. */
+	order_steps: def({
+		content: z
+			.object({
+				...stem,
+				/** In the right order. */
+				steps: z.array(z.string().min(1)).min(3).max(8),
+				/** The order they are shown in, as indexes into `steps`; set when the question is stored. */
+				shown: z.array(z.number().int()).optional(),
+				explanation: z.string().default(''),
+			})
+			.refine((c) => !c.shown || isPermutation(c.shown, c.steps.length), 'shown is not an order of the steps'),
+		/** Positions in the shown list, in the order the learner put them. */
+		response: z.object({ order: z.array(z.number().int().min(0)).max(8) }),
+		showsChoices: true,
+		toPrompt: (c) => ({ prompt: c.prompt, code: c.code, steps: shownOrder(c).map((i) => c.steps[i]!) }),
+		async grade(c, r) {
+			const shown = shownOrder(c)
+			if (!isPermutation(r.order, shown.length))
+				throw new z.ZodError([{ code: 'custom', path: ['order'], message: 'Put every step in order once', input: r.order }])
+			const pairs = pairsInOrder(r.order.map((k) => shown[k]!))
+			const correct = pairs === 1
+			// Partial credit: one pair swapped in a long list is close, but still not right.
+			return { rating: correct ? 'good' : pairs >= 0.8 ? 'hard' : 'again', correct, reveal: { steps: c.steps, explanation: c.explanation, pairs } }
 		},
 	}),
 } satisfies Record<string, QuestionTypeDef<z.ZodType, z.ZodType, unknown>>
@@ -141,6 +298,9 @@ export const QUESTION_TYPES = Object.keys(questionTypes) as QuestionType[]
 export type QuestionPrompt = {
 	[K in QuestionType]: { type: K; prompt: ReturnType<(typeof questionTypes)[K]['toPrompt']> }
 }[QuestionType]
+
+/** Types that show options or steps, which could hint at other answers. */
+export const showsChoices = (type: QuestionType) => Boolean((questionTypes[type] as { showsChoices?: boolean }).showsChoices)
 
 export function isQuestionType(type: string): type is QuestionType {
 	return Object.hasOwn(questionTypes, type)
@@ -182,7 +342,7 @@ export function shuffleMcq(c: McqContent, random = Math.random): McqContent {
 }
 
 /**
- * Orders a test. Written questions come before multiple choice, because seeing options hints at
+ * Orders a test. Written questions come before ones with options or steps, because seeing them hints at
  * later answers. Within each, questions on ideas the brain dump missed come first, then vague
  * ones, then the rest; order within a group is shuffled so topics mix.
  */
@@ -194,7 +354,7 @@ export function orderForTest<Q extends { type: QuestionType; ideaId: string | nu
 	const rank = (q: Q) => {
 		const status = q.ideaId ? recall.get(q.ideaId) : undefined
 		const idea = status === 'missing' ? 0 : status === 'vague' ? 1 : 2
-		return (q.type === 'mcq' ? 3 : 0) + idea
+		return (showsChoices(q.type) ? 3 : 0) + idea
 	}
 	return questions
 		.map((q) => ({ q, rank: rank(q), r: random() }))

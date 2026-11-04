@@ -165,5 +165,7 @@ export function subtreeEnd(levels: readonly number[], index: number): number {
 }
 
 export function sectionText(section: { title: string; blocks: Block[] }): string {
-	return [section.title, ...section.blocks.map(blockText)].filter(Boolean).join('\n\n')
+	// Code is marked, so a question writer can tell it from prose and ask about it as code.
+	const text = (b: Block) => (b.type === 'code' ? `<code>\n${b.text}\n</code>` : blockText(b))
+	return [section.title, ...section.blocks.map(text)].filter(Boolean).join('\n\n')
 }

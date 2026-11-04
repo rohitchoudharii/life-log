@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gradeResponse, localDay, pickQuestion, reviewIdea, startIdea, type IdeaSchedule, isDuplicatePrompt, lintQuestion, orderForTest, parseMarkdown, scoreRubric, shuffleMcq, splitSections, stepsThenEase, subtreeEnd, toPrompt } from './index'
+import { gradeResponse, normalizeOutput, parseNumber, shuffleSteps, localDay, pickQuestion, reviewIdea, startIdea, type IdeaSchedule, isDuplicatePrompt, lintQuestion, orderForTest, parseMarkdown, scoreRubric, shuffleMcq, splitSections, stepsThenEase, subtreeEnd, toPrompt } from './index'
 
 const DAY = 86_400_000
 const t0 = new Date('2026-01-01T09:00:00Z')
@@ -125,6 +125,53 @@ describe('question types', () => {
 	})
 })
 
+describe('exact question types', () => {
+	const noJudge = async () => {
+		throw new Error('judge must not be called')
+	}
+
+	it('reads the number an answer starts with, ignoring units and thousands commas', () => {
+		expect(parseNumber('1,024 bytes')).toBe(1024)
+		expect(parseNumber('3/4')).toBe(0.75)
+		expect(parseNumber('-3e-4 s')).toBe(-0.0003)
+		expect(parseNumber('about 5')).toBeNull()
+	})
+
+	it('grades a worked problem by its number, within the tolerance, and judges the working only when given', async () => {
+		const wp = { prompt: 'A 4-head layer with d_model 512: what is d_k?', answer: 2.5, tolerance: 0.05, unit: 'ms', solution: 's', steps: ['a', 'b'], misconceptions: [] }
+		expect(toPrompt('worked_problem', wp)).toEqual({ type: 'worked_problem', prompt: { prompt: wp.prompt, code: undefined, unit: 'ms' } })
+		expect(await gradeResponse('worked_problem', wp, { value: '2.54 ms' }, noJudge)).toMatchObject({ correct: true, rating: 'good' })
+		expect(await gradeResponse('worked_problem', wp, { value: '2.56' }, noJudge)).toMatchObject({ correct: false, rating: 'again' })
+		expect(await gradeResponse('worked_problem', wp, { value: 'two and a half' }, noJudge)).toMatchObject({ correct: false, reveal: { given: null } })
+		// A wrong number stays wrong however good the working; the working only explains where it went wrong.
+		const judged = await gradeResponse('worked_problem', wp, { value: '3', working: 'w' }, async (input) => {
+			expect(input.mustHave).toEqual(['a', 'b'])
+			return { score: 4, feedback: 'Step two slipped.', points: ['covered', 'covered'] }
+		})
+		expect(judged).toMatchObject({ correct: false, rating: 'again', reveal: { feedback: 'Step two slipped.' } })
+	})
+
+	it('grades predicted output ignoring spacing, but not line breaks', async () => {
+		const po = { prompt: 'What does it print?', code: 'print(1, 2)\nprint(3)', output: '1 2\n3', explanation: '' }
+		expect(toPrompt('predict_output', po)).toEqual({ type: 'predict_output', prompt: { prompt: po.prompt, code: po.code } })
+		expect(await gradeResponse('predict_output', po, { output: '\n1  2 \r\n3\n' }, noJudge)).toMatchObject({ correct: true })
+		expect(await gradeResponse('predict_output', po, { output: '1 2 3' }, noJudge)).toMatchObject({ correct: false, reveal: { output: '1 2\n3' } })
+		expect(normalizeOutput('a\t b\n\n')).toBe('a b')
+	})
+
+	it('shows steps shuffled and grades the order the learner gives against the right one', async () => {
+		const os = { prompt: 'Order the steps of a request.', steps: ['A', 'B', 'C', 'D'], shown: [2, 0, 3, 1], explanation: '' }
+		expect(toPrompt('order_steps', os).prompt).toEqual({ prompt: os.prompt, code: undefined, steps: ['C', 'A', 'D', 'B'] })
+		// Positions in the shown list: A is shown second, B fourth, C first, D third.
+		expect(await gradeResponse('order_steps', os, { order: [1, 3, 0, 2] }, noJudge)).toMatchObject({ correct: true, rating: 'good' })
+		expect(await gradeResponse('order_steps', os, { order: [0, 1, 2, 3] }, noJudge)).toMatchObject({ correct: false, rating: 'again' })
+		// One neighbouring pair swapped out of six pairs is close, but not right.
+		expect(await gradeResponse('order_steps', os, { order: [3, 1, 0, 2] }, noJudge)).toMatchObject({ correct: false, rating: 'hard' })
+		await expect(gradeResponse('order_steps', os, { order: [1, 1, 0, 2] }, noJudge)).rejects.toThrow()
+		for (let k = 0; k < 20; k++) expect(shuffleSteps({ steps: ['a', 'b', 'c'] }).shown).not.toEqual([0, 1, 2])
+	})
+})
+
 describe('scoreRubric', () => {
 	it('needs every point, precisely, for full marks and caps a stated misconception at 1', () => {
 		expect(scoreRubric(['covered', 'covered', 'covered'], false)).toBe(4)
@@ -160,6 +207,18 @@ describe('lintQuestion', () => {
 		expect(mcq(['Dividing each score by the square root of the key dimension before softmax', 'Add d_k', 'Use ReLU', 'Square it']).join()).toMatch(/longest/)
 		expect(mcq(['Divide by √d_k', 'Multiply by d_k', 'None of the above', 'Add d_k']).join()).toMatch(/above/)
 		expect(mcq(['Divide by √d_k', 'Multiply by d_k', 'Add d_k', 'Square'], ['', '', '', '']).join()).toMatch(/reason/)
+	})
+
+	it('rejects code in the prompt, code copied from the text, and steps that give away their order', () => {
+		const code = 'for i in range(3):\n    total = total + i * i\nprint(total)'
+		const withCode = `The text runs this loop.\n\n${code}`
+		const po = (prompt: string, c: string) => lintQuestion({ type: 'predict_output', level: 'apply', content: { prompt, code: c, output: '5' } }, withCode)
+		expect(po('What does it print if total starts at 0?', code.replace('3', '4'))).toEqual([])
+		expect(po('What does it print if total starts at 0?', code).join()).toMatch(/copies the text's own code/)
+		expect(po('What does `print(total)` show?', code.replace('3', '4')).join()).toMatch(/backticks/)
+		const steps = (s: string[]) => lintQuestion({ type: 'order_steps', level: 'recall', content: { prompt: 'Put the request in order.', steps: s } }, source)
+		expect(steps(['DNS lookup', 'TCP handshake', 'TLS handshake', 'HTTP request'])).toEqual([])
+		expect(steps(['First, DNS lookup', 'TCP handshake', 'TLS handshake', 'HTTP request']).join()).toMatch(/position/)
 	})
 
 	it('treats reworded prompts with the same content words as duplicates, but not different questions', () => {

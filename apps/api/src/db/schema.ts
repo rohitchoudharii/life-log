@@ -16,6 +16,8 @@ export const users = pgTable('users', {
 	timezone: text('timezone').notNull().default('UTC'),
 	reminderTime: text('reminder_time'), // "HH:MM" local time, null when reminders are off
 	dailyReviewCap: integer('daily_review_cap').notNull().default(80),
+	/** A second AI call checks new questions, and their answer keys, before they are stored. */
+	qualityCheck: boolean('quality_check').notNull().default(true),
 	createdAt: createdAt(),
 })
 

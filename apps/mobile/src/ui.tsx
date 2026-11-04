@@ -5,10 +5,12 @@ import {
 	Platform,
 	Pressable,
 	ScrollView,
+	Switch,
 	Text as RNText,
 	TextInput,
 	View,
 	type StyleProp,
+	type SwitchProps,
 	type TextInputProps,
 	type TextStyle,
 	type ViewStyle,
@@ -297,4 +299,14 @@ export function Checkbox({ state }: { state: boolean | 'mixed' }) {
 			{state ? <Ionicons name={state === 'mixed' ? 'remove' : 'checkmark'} size={15} color={c.bg} /> : null}
 		</View>
 	)
+}
+
+/**
+ * A switch in the theme's black and white. On the web, react-native-web colours the thumb teal
+ * when on unless `activeThumbColor` is set; the prop is web-only, so it is not in the types.
+ */
+export function Toggle(props: Omit<SwitchProps, 'trackColor' | 'thumbColor'>) {
+	const c = useColors()
+	const web = { activeThumbColor: c.bg } as object
+	return <Switch {...props} {...web} trackColor={{ true: c.fg, false: c.track }} thumbColor={c.bg} />
 }

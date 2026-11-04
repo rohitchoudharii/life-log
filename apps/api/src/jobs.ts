@@ -63,7 +63,8 @@ export async function generateForItem(itemId: string) {
 	for (const row of await db.select().from(t.ideas).where(eq(t.ideas.itemId, itemId)).orderBy(asc(t.ideas.position))) {
 		ideas[all.findIndex((s) => s.id === row.sectionId)]?.push({ id: row.id, text: row.text })
 	}
-	const prefs = { intensity: item.questionIntensity, style: item.questionStyle }
+	const [owner] = await db.select({ qualityCheck: t.users.qualityCheck }).from(t.users).where(eq(t.users.id, item.userId))
+	const prefs = { intensity: item.questionIntensity, style: item.questionStyle, qualityCheck: owner?.qualityCheck ?? true }
 	const apiKey = decryptSecret(key.encryptedKey)
 	const provider = providers[key.provider]
 

@@ -57,6 +57,13 @@
       "when": 1793818085798,
       "tag": "0007_superb_blacklash",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793819430310,
+      "tag": "0008_fast_celestials",
+      "breakpoints": true
     }
   ]
 }
