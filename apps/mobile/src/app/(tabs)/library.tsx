@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useFocusEffect, useRouter } from 'expo-router'
 import { useCallback, useState } from 'react'
-import { Pressable } from 'react-native'
+import { Pressable, View } from 'react-native'
 import { api, type Collection, type ItemSummary } from '@/api'
 import { space, useColors } from '@/theme'
 import { Button, ErrorText, Group, Loading, Row, Screen, Text, Tile } from '@/ui'
@@ -19,11 +19,34 @@ const sourceLabel = (item: ItemSummary) => (item.sourceUrl ? new URL(item.source
 function ItemTile({ item, order }: { item: ItemSummary; order?: { up?(): void; down?(): void; position: number } }) {
 	const router = useRouter()
 	const c = useColors()
+	const queryClient = useQueryClient()
 	const source = sourceLabel(item)
-	return (
+	// Deleting asks once, on the tile itself, since it takes the questions and review history with it.
+	const [confirming, setConfirming] = useState(false)
+	const remove = useMutation({
+		mutationFn: () => api.deleteItem(item.id),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['items'] })
+			queryClient.invalidateQueries({ queryKey: ['today'] })
+			queryClient.invalidateQueries({ queryKey: ['due'] })
+		},
+	})
+	if (confirming)
+		return (
+			<Tile style={{ gap: space.md }}>
+				<Text>Delete “{item.title}”?</Text>
+				<Text variant="muted">Its questions, review history and explanations are deleted too. Words you learned from it stay in your vocabulary.</Text>
+				<Row style={{ gap: space.sm }}>
+					<Button title="Keep it" kind="outline" onPress={() => setConfirming(false)} style={{ flex: 1 }} />
+					<Button title="Delete" onPress={() => remove.mutate()} loading={remove.isPending} style={{ flex: 1 }} />
+				</Row>
+				<ErrorText error={remove.error} />
+			</Tile>
+		)
+	const tile = (
 		<Tile onPress={order ? undefined : () => router.push(`/read/${item.id}`)}>
 			<Row style={{ alignItems: 'flex-start' }}>
-				<Text style={{ flex: 1 }}>
+				<Text style={{ flex: 1, paddingRight: order ? 0 : 28 }}>
 					{order ? `${order.position + 1}. ` : ''}
 					{item.title}
 				</Text>
@@ -53,6 +76,22 @@ function ItemTile({ item, order }: { item: ItemSummary; order?: { up?(): void; d
 				{statusLabel[item.status] ? <Text variant="muted">{statusLabel[item.status]}</Text> : null}
 			</Row>
 		</Tile>
+	)
+	if (order) return tile
+	// Beside the tile, not inside it: a button inside the tile's button is invalid on the web.
+	return (
+		<View>
+			{tile}
+			<Pressable
+				accessibilityRole="button"
+				accessibilityLabel={`Delete ${item.title}`}
+				onPress={() => setConfirming(true)}
+				hitSlop={8}
+				style={{ position: 'absolute', top: 12, right: space.md, padding: space.xs }}
+			>
+				<Ionicons name="trash-outline" size={18} color={c.sub} />
+			</Pressable>
+		</View>
 	)
 }
 
