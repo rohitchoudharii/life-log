@@ -106,6 +106,10 @@ export function htmlToBlocks(root: DomNode, baseUrl: string, { imageSchemes = WE
 		out.push({ type: 'image', mediaId: null, alt: squash(attr(n, 'alt')).slice(0, 500), src, width: size('width'), height: size('height') })
 	}
 
+	/** Images inside text-only blocks (a list item, a quote), in order, so they are not lost with the markup. */
+	const imagesIn = (n: DomNode): DomNode[] =>
+		children(n).flatMap((c) => (c.nodeType !== ELEMENT || SKIP.has(tag(c)) ? [] : tag(c) === 'IMG' ? (mathText(c) ? [] : [c]) : imagesIn(c)))
+
 	const walk = (n: DomNode) => {
 		for (const c of children(n)) {
 			if (c.nodeType === TEXT) {
@@ -139,15 +143,27 @@ export function htmlToBlocks(root: DomNode, baseUrl: string, { imageSchemes = WE
 				if (text) out.push({ type: 'code', text, ...(language && { language }) })
 			} else if (name === 'UL' || name === 'OL') {
 				flush()
-				const items = children(c)
-					.filter((li) => li.nodeType === ELEMENT && tag(li) === 'LI')
-					.map((li) => squash(textOf(li)))
-					.filter(Boolean)
-				if (items.length) out.push({ type: 'list', ordered: name === 'OL', items })
+				// An image in an item ends the list there, shows the image, and the list goes on after it.
+				let items: string[] = []
+				const push = () => {
+					if (items.length) out.push({ type: 'list', ordered: name === 'OL', items })
+					items = []
+				}
+				for (const li of children(c).filter((x) => x.nodeType === ELEMENT && tag(x) === 'LI')) {
+					const text = squash(textOf(li))
+					if (text) items.push(text)
+					const imgs = imagesIn(li)
+					if (imgs.length) {
+						push()
+						imgs.forEach(image)
+					}
+				}
+				push()
 			} else if (name === 'BLOCKQUOTE') {
 				flush()
 				const text = squash(textOf(c))
 				if (text) out.push({ type: 'quote', text })
+				imagesIn(c).forEach(image)
 			} else if (name === 'TABLE') {
 				flush()
 				const rows: DomNode[] = []

@@ -50,6 +50,19 @@ Promise.resolve().then(g)</code></pre>
 		expect(blocks[0]).toMatchObject({ width: 640, height: 320 })
 	})
 
+	it('keeps images inside list items and quotes, in reading order', () => {
+		const blocks = convert(`
+			<ol><li>Remove a server</li><li><p>Add a server</p><a href="/a.png"><img src="/a.png" alt="Ring"></a></li><li>Rebalance</li></ol>
+			<blockquote>A note <img src="/b.png" alt="Note"></blockquote>`)
+		expect(blocks.map((b) => (b.type === 'image' ? `image ${b.src}` : b.type === 'list' ? `list ${b.items.join(',')}` : b.type))).toEqual([
+			'list Remove a server,Add a server',
+			'image https://example.com/a.png',
+			'list Rebalance',
+			'quote',
+			'image https://example.com/b.png',
+		])
+	})
+
 	it('keeps a formula drawn as an image as its LaTeX, inside the sentence', () => {
 		expect(
 			convert(
