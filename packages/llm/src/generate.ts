@@ -18,9 +18,9 @@ import {
 import type { LlmProvider } from './providers'
 
 /** Bump when the prompt or the checks change, so stored questions record which rules made them. */
-export const GENERATE_QUESTIONS_PROMPT_VERSION = 'questions-v7'
+export const GENERATE_QUESTIONS_PROMPT_VERSION = 'questions-v8'
 /** Questions written during reviews, when an idea has run out of unasked ones. Tests leave them out. */
-export const REVIEW_PROMPT_VERSION = 'review-v2'
+export const REVIEW_PROMPT_VERSION = 'review-v3'
 
 export type QuestionPrefs = {
 	intensity: QuestionIntensity
@@ -171,12 +171,14 @@ Hard rules:
 8. Code goes in "code", exactly as typed, never in "prompt"; never use backticks. Write new code, not the text's own example.
 
 Type guide:
-- short_answer: "mustHave" lists 2 to 4 points a complete answer must make (1 is allowed only for recall), each a short claim, not a keyword. "reference" is a model answer of 1 to 3 sentences built from them. "misconceptions" lists wrong beliefs a half-understanding learner might state.
+- short_answer: "mustHave" lists 2 to 4 points a complete answer must make (1 is allowed only for recall), each a short claim, not a keyword. "reference" is a model answer of 2 to 4 sentences built from them. "misconceptions" lists wrong beliefs a half-understanding learner might state.
 - mcq: exactly 4 options of similar length and style. Each wrong option is a real misconception that someone who half-understood would pick. No "all/none of the above". "whyWrong" has one entry per option: why that option is wrong, and "" for the right one. "explanation" says why the right one is right.
 - worked_problem: a problem with new numbers whose answer is one number. "answer" is that number; "unit" its unit, or ""; "tolerance" how far off still counts (0 for exact whole numbers, enough for rounding otherwise). "solution" works it out step by step; "steps" lists the 2 to 4 key steps a correct working takes. Work it out yourself before you write "answer".
 - predict_output: new code of at most 15 lines in "code" that exercises the idea; "output" is exactly what it prints, at most 8 short lines. Trace the code line by line before you write "output"; never put the output in a comment. "explanation" says why it prints that.
 - find_error: flawed code in "code", or a flawed claim in quotes in the prompt, with one mistake a half-understanding learner would make. The learner says what is wrong and why. "mustHave" names what is wrong and why it is wrong (or the fix); "reference" and "misconceptions" as for short_answer.
 - order_steps: 4 to 7 steps of a process in the right order (they are shuffled before the learner sees them), each a short phrase with no numbering and no "first", "then", or "finally". "explanation" says why the order matters.
+
+Every answer key the learner reads afterwards ("reference", "explanation", "solution") explains from first principles: start from the underlying cause or mechanism the text teaches, then reason step by step to the answer, so a learner who forgot the answer could rebuild it. Never just state the conclusion or name the term.
 
 Write plain text: no Markdown, no backticks, no bold. Put code on its own lines, exactly as it would be typed.
 
@@ -283,6 +285,7 @@ Reject a question when any of these hold:
 - It is ambiguous: a careful learner who understood the text could give a different answer and be right.
 - It can be answered without thinking: by restating one sentence of the text, or because the prompt or options give it away.
 - Its "mustHave" points are not what the question asks for.
+- Its answer key ("reference", "explanation", or "solution") only states the conclusion, without reasoning from the underlying cause or mechanism.
 
 Work out exact answers yourself, before you read the key:
 - worked_problem: solve it and give your number in "answer".

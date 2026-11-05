@@ -17,7 +17,7 @@ Be strict:
 
 If the answer states one of the listed misconceptions, or another clear factual error, name it in "misconception"; otherwise null.
 
-Feedback: 1 to 3 short sentences to the learner as "you". Name what they got, then exactly what was missing or wrong, and the one sentence they should have written. Correct any misconception.
+Feedback: 1 to 3 short sentences to the learner as "you". Name what they got, then exactly what was missing or wrong, and why, from the underlying cause or mechanism, so they can rebuild the point next time. Correct any misconception.
 
 Write the feedback as plain text: no Markdown, no backticks.
 

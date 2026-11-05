@@ -1,5 +1,5 @@
 import { orderForTest, parseMarkdown, QUESTION_INTENSITIES, QUESTION_STYLES, splitSections, toPrompt, type Block, type ContentSourceType, type PointStatus } from '@peak/core'
-import { and, asc, count, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, ne, notLike, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
@@ -26,8 +26,9 @@ const sectionCount = db
 	.groupBy(t.sections.itemId)
 	.as('sc')
 
-// Questions written during reviews belong to reviews only, so tests and counts leave them out.
-const notReviewWritten = ne(t.questions.promptVersion, REVIEW_PROMPT_VERSION)
+// Questions written during reviews belong to reviews only, so tests and counts leave them out,
+// whichever version of the review prompt wrote them.
+const notReviewWritten = notLike(t.questions.promptVersion, `${REVIEW_PROMPT_VERSION.split('-')[0]}-%`)
 
 // Ideas per item, and how many are learned (recalled on 3 separate days).
 const ideaCount = db
