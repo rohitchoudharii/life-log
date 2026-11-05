@@ -6,6 +6,8 @@ const DEFAULTS = { apiUrl: 'http://localhost:8787', appUrl: 'http://localhost:80
 const NEW_BUCKET = '__new'
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 const MAX_IMAGES = 20
+/** Images that live only in the tab (blob: addresses) are sent inside the page, up to this much in all; the capture request is capped at 12 MB. */
+const INLINE_IMAGE_BYTES = 6 * 1024 * 1024
 
 let settings = { ...DEFAULTS }
 let token = null
@@ -118,9 +120,57 @@ $('sign-out').addEventListener('click', async () => {
 	show('email-form')
 })
 
-/** Runs in the page: the page as the user sees it now, including what scripts and sign-ins added. */
-function readPage() {
-	return { url: location.href, title: document.title, html: document.documentElement.outerHTML }
+/**
+ * Runs in the page: the page as the user sees it now, including what scripts and sign-ins added,
+ * with its images normalised. Each image points at the file the browser actually shows (lazy-loaded
+ * and responsive images included), icons are dropped, and images that exist only in this tab
+ * (blob: addresses, which no server can download) are inlined as WebP, within `inlineBudget` bytes.
+ */
+async function readPage(inlineBudget) {
+	const live = Array.from(document.images)
+	const root = document.documentElement.cloneNode(true)
+	const copies = Array.from(root.querySelectorAll('img'))
+	let budget = inlineBudget
+	const inline = async (src) => {
+		const bitmap = await createImageBitmap(await (await fetch(src)).blob())
+		const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+		canvas.getContext('2d').drawImage(bitmap, 0, 0)
+		const blob = await canvas.convertToBlob({ type: 'image/webp', quality: 0.85 })
+		if (blob.size > budget) return null
+		budget -= blob.size
+		return new Promise((resolve, reject) => {
+			const r = new FileReader()
+			r.onload = () => resolve(String(r.result))
+			r.onerror = reject
+			r.readAsDataURL(blob)
+		})
+	}
+	for (const [i, img] of live.entries()) {
+		const copy = copies[i]
+		if (!copy) continue
+		// Shown at icon size (a logo, an avatar, a share button), whatever the file's own size.
+		const shown = img.getBoundingClientRect()
+		if (shown.width > 0 && shown.width < 32 && shown.height < 32) {
+			copy.remove()
+			continue
+		}
+		const src = img.currentSrc
+		if (!src) continue
+		if (src.startsWith('blob:')) {
+			const data = await inline(src).catch(() => null)
+			if (data) copy.setAttribute('src', data)
+			else copy.remove()
+		} else copy.setAttribute('src', src)
+		copy.removeAttribute('srcset')
+		copy.removeAttribute('loading')
+	}
+	const videos = Array.from(root.querySelectorAll('video'))
+	for (const [i, v] of Array.from(document.querySelectorAll('video')).entries()) {
+		if (!videos[i]) continue
+		if (v.poster) videos[i].setAttribute('poster', v.poster)
+		if (/^https?:/.test(v.currentSrc)) videos[i].setAttribute('src', v.currentSrc)
+	}
+	return { url: location.href, title: document.title, html: root.outerHTML }
 }
 
 /** Runs in the page, so images load with the site's own cookies: the ones Peak's server could not get. */
@@ -161,7 +211,7 @@ $('capture-form').addEventListener('submit', async (e) => {
 		await chrome.storage.local.set({ lastBucket: collectionId })
 
 		status('Reading the page…')
-		const [{ result: page }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: readPage })
+		const [{ result: page }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: readPage, args: [INLINE_IMAGE_BYTES] })
 		status('Saving the article and its images…')
 		const { item, missingImages } = await api('POST', '/items/capture', {
 			...page,

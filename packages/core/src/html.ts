@@ -98,12 +98,15 @@ export function htmlToBlocks(root: DomNode, baseUrl: string, { imageSchemes = WE
 	const image = (n: DomNode) => {
 		const src = imageSource(n, baseUrl, imageSchemes)
 		if (!src || images >= MAX_IMAGES) return
-		images++
 		const size = (name: string) => {
 			const v = Number(attr(n, name))
 			return Number.isInteger(v) && v > 0 ? v : undefined
 		}
-		out.push({ type: 'image', mediaId: null, alt: squash(attr(n, 'alt')).slice(0, 500), src, width: size('width'), height: size('height') })
+		const [width, height] = [size('width'), size('height')]
+		// Drawn at icon size (a logo, an avatar, a share button): not part of the article.
+		if (width && height && width < 32 && height < 32) return
+		images++
+		out.push({ type: 'image', mediaId: null, alt: squash(attr(n, 'alt')).slice(0, 500), src, width, height })
 	}
 
 	/** Images inside text-only blocks (a list item, a quote), in order, so they are not lost with the markup. */
