@@ -1,4 +1,4 @@
-import type { Block, ContentSourceType, IdeaSchedule, PointStatus, QuestionIntensity, QuestionLevel, QuestionStyle, QuestionType, Rating } from '@life-log-club/core'
+import type { Block, Confidence, ContentSourceType, IdeaSchedule, PointStatus, QuestionIntensity, QuestionLevel, QuestionStyle, QuestionType, Rating } from '@life-log-club/core'
 import type { ExplainKind, ExplainLevel, ProviderId, TeachMessage } from '@life-log-club/llm'
 import { sql } from 'drizzle-orm'
 import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core'
@@ -23,6 +23,8 @@ export const users = pgTable('users', {
 	questionStyle: text('question_style').$type<QuestionStyle>().notNull().default('mixed'),
 	/** Who explanations are written for: the level picked last in the reader. */
 	explainLevel: text('explain_level').$type<ExplainLevel>().notNull().default('standard'),
+	/** Guess first: type a guess before multiple-choice options show, and say how sure you are on every answer. */
+	guessFirst: boolean('guess_first').notNull().default(false),
 	createdAt: createdAt(),
 })
 
@@ -244,6 +246,8 @@ export const reviewLog = pgTable(
 		practice: boolean('practice').notNull().default(false),
 		/** The judge's feedback, kept for a future error journal. */
 		feedback: text('feedback'),
+		/** How sure the learner said they were; null when Guess first was off or they tapped I don't know. */
+		confidence: text('confidence').$type<Confidence>(),
 		reviewedAt: timestamp('reviewed_at', { withTimezone: true }).notNull().default(sql`now()`),
 	},
 	(t) => [index('review_log_user_idx').on(t.userId, t.reviewedAt)],

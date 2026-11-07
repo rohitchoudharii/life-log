@@ -15,6 +15,7 @@ const view = (u: User) => ({
 	questionIntensity: u.questionIntensity,
 	questionStyle: u.questionStyle,
 	explainLevel: u.explainLevel,
+	guessFirst: u.guessFirst,
 })
 
 export const me = new Hono<AppEnv>()
@@ -31,6 +32,7 @@ export const me = new Hono<AppEnv>()
 				questionIntensity: z.enum(QUESTION_INTENSITIES).optional(),
 				questionStyle: z.enum(QUESTION_STYLES).optional(),
 				explainLevel: z.enum(EXPLAIN_LEVELS).optional(),
+				guessFirst: z.boolean().optional(),
 			}),
 		)
 		const [user] = await db.update(t.users).set(patch).where(eq(t.users.id, c.var.user.id)).returning()

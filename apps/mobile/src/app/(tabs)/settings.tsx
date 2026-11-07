@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Pressable, View } from 'react-native'
 import { api, type ExplainLevel, type Me } from '@/api'
-import { QuestionSettings } from '@/question-settings'
+import { GuessFirstSetting, QuestionSettings } from '@/question-settings'
 import { remindersSupported, scheduleDailyReminder } from '@/reminders'
 import { useSession } from '@/session'
 import { hairline, radius, setAppearance, space, useAppearance, useColors, type Appearance } from '@/theme'
@@ -114,6 +114,7 @@ export default function Settings() {
 						/>
 						<Text variant="muted">Where Manage test starts. Each reading keeps the settings its quiz was made with.</Text>
 					</Tile>
+					<GuessFirstSetting />
 					<Tile>
 						<Row>
 							<Group gap={2} style={{ flex: 1 }}>

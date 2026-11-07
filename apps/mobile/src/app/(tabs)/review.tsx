@@ -3,6 +3,7 @@ import { useFocusEffect, useRouter } from 'expo-router'
 import { useCallback, useState } from 'react'
 import { api } from '@/api'
 import { PracticeSession } from '@/practice'
+import { GuessFirstSetting } from '@/question-settings'
 import { Button, ErrorText, Group, Loading, Screen, Text, Tile } from '@/ui'
 
 export default function Review() {
@@ -10,6 +11,7 @@ export default function Review() {
 	const router = useRouter()
 	const [started, setStarted] = useState(false)
 	const due = useQuery({ queryKey: ['due'], queryFn: api.due, enabled: !started })
+	const me = useQuery({ queryKey: ['me'], queryFn: api.me })
 	const { refetch } = due
 	useFocusEffect(useCallback(() => void (!started && refetch()), [started, refetch]))
 
@@ -21,6 +23,8 @@ export default function Review() {
 			<PracticeSession
 				title="Review"
 				questions={questions}
+				feedback="each"
+				guessFirst={me.data?.guessFirst}
 				onDone={() => {
 					setStarted(false)
 					queryClient.invalidateQueries({ queryKey: ['due'] })
@@ -39,9 +43,10 @@ export default function Review() {
 			<ErrorText error={due.error} />
 			<Text>
 				{questions.length
-					? `${questions.length} idea${questions.length === 1 ? ' is' : 's are'} due. Topics are mixed on purpose: switching between subjects makes recall stronger.`
+					? `${questions.length} idea${questions.length === 1 ? ' is' : 's are'} due. Topics are mixed on purpose: switching between subjects makes recall stronger. You see each result right after you answer.`
 					: 'Nothing is due right now. Read a section and test yourself on it to add its ideas.'}
 			</Text>
+			{questions.length > 0 && <GuessFirstSetting />}
 			<Tile onPress={() => router.push('/words')}>
 				<Text>Vocabulary</Text>
 				<Text variant="muted">Terms from your reading, spaced and tested</Text>

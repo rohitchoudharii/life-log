@@ -94,6 +94,18 @@ export function ratingForScore(score: JudgeVerdict['score']): Rating {
 	return score <= 1 ? 'again' : score === 2 ? 'hard' : score === 3 ? 'good' : 'easy'
 }
 
+/** How sure the learner said they were, picked as they submitted the answer (Guess first). */
+export const CONFIDENCES = ['guessing', 'think_so', 'sure'] as const
+export type Confidence = (typeof CONFIDENCES)[number]
+
+/**
+ * A right answer the learner called a guess is spaced like a hard one, so a lucky guess does not
+ * push its idea far out. Confidence only ever lowers credit, never raises it.
+ */
+export function withConfidence(grade: Grade, confidence: Confidence | null | undefined): Grade {
+	return grade.correct && confidence === 'guessing' ? { ...grade, rating: 'hard' } : grade
+}
+
 /** Every question has a prompt; code it is about goes in its own field, shown as code. */
 const stem = { prompt: z.string().min(1), code: z.string().min(1).optional() }
 const stemOf = ({ prompt, code }: { prompt: string; code?: string }) => ({ prompt, code })

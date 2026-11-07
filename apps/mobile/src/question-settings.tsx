@@ -1,6 +1,38 @@
 import type { QuestionIntensity, QuestionStyle } from '@life-log-club/core'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { api } from './api'
 import { space } from './theme'
-import { Choice, ChoiceRow, Group, Text } from './ui'
+import { Choice, ChoiceRow, ErrorText, Group, Row, Text, Tile, Toggle } from './ui'
+
+/**
+ * The Guess first switch. It is one setting for the learner, shown on the test picker, on the Review
+ * start screen, and in Settings, so turning it on in one place turns it on everywhere.
+ */
+export function GuessFirstSetting() {
+	const queryClient = useQueryClient()
+	const me = useQuery({ queryKey: ['me'], queryFn: api.me })
+	const update = useMutation({
+		mutationFn: (guessFirst: boolean) => api.updateMe({ guessFirst }),
+		onSuccess: (next) => queryClient.setQueryData(['me'], next),
+	})
+	if (!me.data) return null
+	return (
+		<Tile>
+			<Row>
+				<Group gap={2} style={{ flex: 1 }}>
+					<Text>Guess first</Text>
+					<Text variant="muted">Type your guess before you see the choices, then tap how sure you are.</Text>
+				</Group>
+				<Toggle
+					accessibilityLabel="Guess first"
+					value={update.isPending ? update.variables : me.data.guessFirst}
+					onValueChange={(on) => update.mutate(on)}
+				/>
+			</Row>
+			<ErrorText error={update.error} />
+		</Tile>
+	)
+}
 
 export const INTENSITIES: { value: QuestionIntensity; label: string; detail: string }[] = [
 	{ value: 'quick', label: 'Quick', detail: 'Key ideas only' },

@@ -1,4 +1,5 @@
 import {
+	CONFIDENCES,
 	gradeResponse,
 	localDay,
 	pickQuestion,
@@ -8,6 +9,7 @@ import {
 	showsChoices,
 	startIdea,
 	toPrompt,
+	withConfidence,
 	type IdeaSchedule,
 	type QuestionLevel,
 	type QuestionType,
@@ -170,9 +172,14 @@ export const study = new Hono<AppEnv>()
 	// Grades an answer and moves its idea's schedule. Retry-round answers (practice) are only logged.
 	.post('/answers', async (c) => {
 		const user = c.var.user
-		const { questionId, response, practice } = await parseBody(
+		const { questionId, response, practice, confidence } = await parseBody(
 			c,
-			z.object({ questionId: z.uuid(), response: z.unknown(), practice: z.boolean().default(false) }),
+			z.object({
+				questionId: z.uuid(),
+				response: z.unknown(),
+				practice: z.boolean().default(false),
+				confidence: z.enum(CONFIDENCES).nullable().default(null),
+			}),
 		)
 		const [q] = await db
 			.select()
@@ -182,7 +189,7 @@ export const study = new Hono<AppEnv>()
 
 		let grade
 		try {
-			grade = await gradeResponse(q.type, q.content, response, judgeFor(user.id))
+			grade = withConfidence(await gradeResponse(q.type, q.content, response, judgeFor(user.id)), confidence)
 		} catch (err) {
 			if (err instanceof ZodError) throw new HTTPException(400, { message: 'That answer does not fit this question' })
 			throw err
@@ -199,6 +206,7 @@ export const study = new Hono<AppEnv>()
 				response,
 				practice,
 				feedback: typeof grade.reveal.feedback === 'string' ? grade.reveal.feedback : null,
+				confidence,
 				reviewedAt: now,
 			})
 			if (practice || !ideaId) return null

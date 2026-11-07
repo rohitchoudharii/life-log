@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
 import { api, type Question, type Recall } from '@/api'
 import { PracticeSession } from '@/practice'
+import { GuessFirstSetting } from '@/question-settings'
 import { BrainDump, RecallSummary } from '@/recall'
 import { SectionPicker } from '@/section-picker'
 import { space } from '@/theme'
@@ -94,6 +95,7 @@ export default function Test() {
 				title={item.title}
 				questions={stage.questions}
 				before={<RecallSummary recall={stage.recall} itemId={id} />}
+				guessFirst={me.data?.guessFirst}
 				doneLabel={afterSession ? 'Take a 5-minute break' : 'Done'}
 				onDone={() => (afterSession ? setStage({ name: 'break' }) : leave(false))}
 			/>
@@ -139,6 +141,7 @@ export default function Test() {
 				</Tile>
 			)}
 			<SectionPicker sections={sections} selected={selected} onChange={setSelected} canPick={hasQuestions} />
+			<GuessFirstSetting />
 			{sections.some((s) => s.wordCount > 0 && !hasQuestions(s)) && (
 				<Text variant="muted">Greyed-out sections have no questions yet. Add them in Manage test.</Text>
 			)}

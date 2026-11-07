@@ -1,4 +1,4 @@
-import type { Block, PointStatus, QuestionIntensity, QuestionPrompt, QuestionStyle, Rating } from '@life-log-club/core'
+import type { Block, Confidence, PointStatus, QuestionIntensity, QuestionPrompt, QuestionStyle, Rating } from '@life-log-club/core'
 import Constants from 'expo-constants'
 import * as SecureStore from 'expo-secure-store'
 import { Platform } from 'react-native'
@@ -124,6 +124,8 @@ export type Me = {
 	questionStyle: QuestionStyle
 	/** Who explanations are written for: the level picked last in the reader. */
 	explainLevel: ExplainLevel
+	/** Type a guess before multiple-choice options show, and say how sure you are on every answer. */
+	guessFirst: boolean
 }
 export type ExplainLevel = 'new' | 'standard' | 'expert'
 export type ExplainKind = 'explain' | 'analogy' | 'example'
@@ -228,7 +230,8 @@ export const api = {
 	testQuestions: (itemId: string, sectionIds: string[], recallId?: string) =>
 		request<{ itemTitle: string; itemStatus: ItemStatus; questions: Question[] }>('POST', `/items/${itemId}/test`, { sectionIds, recallId }),
 
-	answer: (questionId: string, response: unknown, practice = false) => request<AnswerResult>('POST', '/answers', { questionId, response, practice }),
+	answer: (questionId: string, response: unknown, practice = false, confidence: Confidence | null = null) =>
+		request<AnswerResult>('POST', '/answers', { questionId, response, practice, confidence }),
 	due: () => request<{ questions: Question[] }>('GET', '/reviews/due'),
 	retry: (ideaIds: string[], exclude: string[]) => request<{ questions: Question[] }>('POST', '/reviews/retry', { ideaIds, exclude }),
 }

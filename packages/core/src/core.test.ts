@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gradeResponse, normalizeOutput, parseNumber, shuffleSteps, localDay, pickQuestion, reviewIdea, startIdea, type IdeaSchedule, isDuplicatePrompt, lintQuestion, orderForTest, parseMarkdown, scoreRubric, shuffleMcq, splitSections, stepsThenEase, subtreeEnd, toPrompt } from './index'
+import { gradeResponse, normalizeOutput, parseNumber, shuffleSteps, localDay, pickQuestion, reviewIdea, startIdea, type IdeaSchedule, isDuplicatePrompt, lintQuestion, orderForTest, parseMarkdown, scoreRubric, shuffleMcq, splitSections, stepsThenEase, subtreeEnd, toPrompt, withConfidence } from './index'
 
 const DAY = 86_400_000
 const t0 = new Date('2026-01-01T09:00:00Z')
@@ -94,6 +94,17 @@ describe('question types', () => {
 		expect(toPrompt('mcq', mcq)).toEqual({ type: 'mcq', prompt: { prompt: 'Scale factor?', options: mcq.options } })
 		expect(await gradeResponse('mcq', mcq, { choice: 0 }, noJudge)).toMatchObject({ correct: false, rating: 'again', reveal: { answerIndex: 1, whyWrong: 'Too large.' } })
 		expect(await gradeResponse('mcq', mcq, { choice: 1 }, noJudge)).toMatchObject({ correct: true, rating: 'good' })
+	})
+
+	it('accepts a typed guess with an MCQ pick, and spaces a right answer called a guess like a hard one', async () => {
+		const right = await gradeResponse('mcq', mcq, { choice: 1, guess: 'the square root of d_k' }, noJudge)
+		const wrong = await gradeResponse('mcq', mcq, { choice: 0 }, noJudge)
+		expect(withConfidence(right, 'guessing')).toMatchObject({ correct: true, rating: 'hard' })
+		expect(withConfidence(right, 'think_so').rating).toBe('good')
+		expect(withConfidence(right, null).rating).toBe('good')
+		// Confidence only lowers credit: a wrong answer stays a miss however it was rated.
+		expect(withConfidence(wrong, 'guessing')).toMatchObject({ correct: false, rating: 'again' })
+		expect(withConfidence(wrong, 'sure')).toMatchObject({ correct: false, rating: 'again' })
 	})
 
 	const sa = { prompt: 'Why scale?', reference: 'Keeps softmax gradients from vanishing.', mustHave: [], niceToHave: [], misconceptions: [] }

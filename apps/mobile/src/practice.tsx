@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
-import type { AnswerMark, PointStatus, QuestionType } from '@life-log-club/core'
+import { CONFIDENCES, type AnswerMark, type Confidence, type PointStatus, type QuestionType } from '@life-log-club/core'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type ComponentType, type ReactNode } from 'react'
 import { ActivityIndicator, Platform, Pressable, TextInput, View, type TextInputProps } from 'react-native'
@@ -17,8 +17,11 @@ export function nextReviewLabel(dueAt: string) {
 }
 
 type Of<K extends QuestionType> = Extract<Question, { type: K }>
-/** While answering: the question and the user's draft response, null until it can be submitted. */
-type InputProps<Q extends Question> = { question: Q; response: unknown; onChange(response: unknown): void }
+/**
+ * While answering: the question and the user's draft response, null until it can be submitted.
+ * `guessFirst` hides options behind a typed guess; `atEnd` says results wait until the end of the session.
+ */
+type InputProps<Q extends Question> = { question: Q; response: unknown; onChange(response: unknown): void; guessFirst: boolean; atEnd: boolean }
 /** On the results screen: what they answered and how it was graded. */
 type ReviewProps<Q extends Question> = { question: Q; response: unknown; result: AnswerResult }
 
@@ -197,11 +200,11 @@ function Checklist({ reveal, skipped, heading }: { reveal: WrittenReveal; skippe
 const writtenView = <K extends 'short_answer' | 'find_error'>(label: string, hint: string): QuestionView<K> => ({
 	label,
 	skip: { skipped: true },
-	Input({ response, onChange }) {
+	Input({ response, onChange, atEnd }) {
 		const answer = (response as { answer?: string } | null)?.answer ?? ''
 		return (
 			<Group gap={space.sm}>
-				<Text variant="muted">{hint}</Text>
+				<Text variant="muted">{atEnd ? `${hint} You see how you did at the end.` : hint}</Text>
 				<Field value={answer} onChangeText={(text) => onChange(text.trim() ? { answer: text } : null)} placeholder="Type your answer" multiline lines={5} />
 			</Group>
 		)
@@ -222,8 +225,8 @@ const writtenView = <K extends 'short_answer' | 'find_error'>(label: string, hin
 	},
 })
 
-const shortAnswer = writtenView<'short_answer'>('Explain it', 'Answer from memory, in your own words. You see how you did at the end.')
-const findError = writtenView<'find_error'>('Find the error', 'Say what is wrong and why. You see how you did at the end.')
+const shortAnswer = writtenView<'short_answer'>('Explain it', 'Answer from memory, in your own words.')
+const findError = writtenView<'find_error'>('Find the error', 'Say what is wrong and why.')
 
 const workedProblem: QuestionView<'worked_problem'> = {
 	label: 'Work it out',
@@ -448,31 +451,51 @@ function McqOption({ text, selected, onPress, mark }: { text: string; selected: 
 const mcq: QuestionView<'mcq'> = {
 	label: 'Multiple choice',
 	advanceOnPick: true,
-	Input({ question, response, onChange }) {
-		const choice = (response as { choice?: number } | null)?.choice
+	Input({ question, response, onChange, guessFirst }) {
+		const r = response as { choice?: number; guess?: string } | null
+		const choice = r?.choice
 		// Recall first, then choose: the options stay hidden until the learner has tried to answer in their head.
 		const [shown, setShown] = useState(choice !== undefined)
+		// With Guess first, that attempt is typed, so it is a recall and not only a feeling of knowing.
+		const [guess, setGuess] = useState(r?.guess ?? '')
 		if (!shown)
-			return (
+			return guessFirst ? (
+				<Group gap={space.md}>
+					<Text variant="muted">Type your answer before you see the options.</Text>
+					<Field value={guess} onChangeText={setGuess} placeholder="Your answer in a few words" accessibilityLabel="Your guess" />
+					<Button title="Show options" kind="outline" onPress={() => setShown(true)} disabled={!guess.trim()} />
+				</Group>
+			) : (
 				<Group gap={space.md}>
 					<Text variant="muted">Think of the answer before you look at the options.</Text>
 					<Button title="Show options" kind="outline" onPress={() => setShown(true)} />
 				</Group>
 			)
+		const typed = guessFirst ? guess.trim() : ''
 		return (
 			<Group gap={space.sm}>
+				{typed ? (
+					<Labeled label="Your guess">
+						<Text selectable>{typed}</Text>
+					</Labeled>
+				) : null}
 				{question.prompt.options.map((option, i) => (
-					<McqOption key={i} text={option} selected={choice === i} onPress={() => onChange({ choice: i })} />
+					<McqOption key={i} text={option} selected={choice === i} onPress={() => onChange(typed ? { choice: i, guess: typed } : { choice: i })} />
 				))}
 			</Group>
 		)
 	},
 	Review({ question, response, result }) {
 		const { answerIndex, explanation, whyWrong } = result.reveal as { answerIndex: number; explanation?: string; whyWrong?: string }
-		const choice = (response as { choice: number }).choice
+		const { choice, guess } = response as { choice: number; guess?: string }
 		return (
 			<Group gap={space.md}>
 				<Mark ok={result.correct} label={result.correct ? 'Correct' : 'Not quite'} />
+				{guess ? (
+					<Labeled label="You said, before seeing the options">
+						<Text selectable>{guess}</Text>
+					</Labeled>
+				) : null}
 				<Group gap={space.xs}>
 					{question.prompt.options.map((option, i) => (
 						<McqOption
@@ -566,11 +589,13 @@ const viewFor = (q: Question) => views[q.type] as unknown as QuestionView<Questi
 }
 
 type Graded = { status: 'checking' } | { status: 'done'; result: AnswerResult } | { status: 'error'; error: unknown }
-type Entry = { question: Question; response: unknown; graded: Graded }
+type Entry = { question: Question; response: unknown; confidence: Confidence | null; graded: Graded }
+
+const CONFIDENCE_LABEL: Record<Confidence, string> = { guessing: 'Guessing', think_so: 'Think so', sure: 'Sure' }
 
 function ResultTile({ entry, index, onRetry }: { entry: Entry; index: number; onRetry(): void }) {
 	const c = useColors()
-	const { question, response, graded } = entry
+	const { question, response, confidence, graded } = entry
 	const view = viewFor(question)
 	return (
 		<Tile style={{ gap: space.md, paddingVertical: space.lg }}>
@@ -601,6 +626,7 @@ function ResultTile({ entry, index, onRetry }: { entry: Entry; index: number; on
 			{graded.status === 'done' && (
 				<>
 					<view.Review question={question} response={response} result={graded.result} />
+					{confidence ? <Text variant="muted">You said: {CONFIDENCE_LABEL[confidence]}</Text> : null}
 					{graded.result.practice ? (
 						<Text variant="muted">Practice: when this idea comes back is unchanged.</Text>
 					) : graded.result.dueAt ? (
@@ -612,9 +638,23 @@ function ResultTile({ entry, index, onRetry }: { entry: Entry; index: number; on
 	)
 }
 
+/** "Sure: 4 of 5 right · Think so: 2 of 3 · Guessing: 1 of 2", over the graded answers that have a confidence. */
+function calibrationLine(entries: Entry[]) {
+	return [...CONFIDENCES].reverse()
+		.flatMap((level) => {
+			const rated = entries.filter((e) => e.confidence === level && e.graded.status === 'done')
+			const right = rated.filter((e) => e.graded.status === 'done' && e.graded.result.correct).length
+			return rated.length ? [`${CONFIDENCE_LABEL[level]}: ${right} of ${rated.length}${level === 'sure' ? ' right' : ''}`] : []
+		})
+		.join(' · ')
+}
+
 /**
- * Runs a test over a list of questions. Answers are sent as the user goes, but nothing is
- * revealed until the end, so earlier answers cannot hint at later ones.
+ * Runs a test over a list of questions. With `feedback: 'end'` (fresh tests) nothing is revealed
+ * until Finish, so earlier answers cannot hint at later ones. With `feedback: 'each'` (Review) each
+ * answer is checked when it is submitted and its result shows before the next question, while the
+ * reason for a wrong answer is still fresh. With `guessFirst`, multiple-choice options wait for a
+ * typed guess, and each answer is submitted with how sure the learner is.
  */
 export function PracticeSession({
 	title,
@@ -623,32 +663,41 @@ export function PracticeSession({
 	doneLabel = 'Done',
 	before,
 	submit = api.answer,
+	guessFirst = false,
+	feedback = 'end',
 }: {
 	title: string
 	questions: Question[]
 	/** Where answers are sent; vocabulary has its own endpoint. */
-	submit?: (id: string, response: unknown, practice: boolean) => Promise<AnswerResult>
+	submit?: (id: string, response: unknown, practice: boolean, confidence: Confidence | null) => Promise<AnswerResult>
 	onDone(): void
 	doneLabel?: string
 	/** Shown on the results screen above the answers, such as how the brain dump went. */
 	before?: ReactNode
+	guessFirst?: boolean
+	feedback?: 'end' | 'each'
 }) {
 	const queryClient = useQueryClient()
+	const each = feedback === 'each'
 	// The first round moves schedules; retry rounds after it are practice on the ideas just missed.
 	const [round, setRound] = useState({ questions, practice: false, number: 0 })
-	// Responses stay editable (Previous) until Finish; only then are they sent for grading.
+	// At the end of a test, responses stay editable (Previous) until Finish; only then are they sent for grading.
 	const [responses, setResponses] = useState<unknown[]>(() => questions.map(() => null))
+	const [confidences, setConfidences] = useState<(Confidence | null)[]>(() => questions.map(() => null))
 	const [index, setIndex] = useState(0)
-	const [entries, setEntries] = useState<Entry[] | null>(null)
+	/** Answers sent for grading, by question index. */
+	const [entries, setEntries] = useState<(Entry | undefined)[]>([])
+	const [finished, setFinished] = useState(false)
 	/** Every question asked in this sitting, so a retry asks something new. */
 	const [asked, setAsked] = useState<string[]>(() => questions.map((q) => q.id))
 	const current = round.questions[index]!
 	const last = index + 1 === round.questions.length
 
-	const grade = (i: number, question: Question, response: unknown) => {
-		const set = (graded: Graded) => setEntries((es) => es && es.map((e, j) => (j === i ? { ...e, graded } : e)))
-		set({ status: 'checking' })
-		submit(question.id, response, round.practice)
+	const grade = (i: number, question: Question, response: unknown, confidence: Confidence | null) => {
+		const set = (graded: Graded) => setEntries((es) => es.map((e, j) => (j === i && e ? { ...e, graded } : e)))
+		const entry: Entry = { question, response, confidence, graded: { status: 'checking' } }
+		setEntries((es) => Array.from({ length: Math.max(es.length, i + 1) }, (_, j) => (j === i ? entry : es[j])))
+		submit(question.id, response, round.practice, confidence)
 			.then((result) => set({ status: 'done', result }))
 			.catch((error) => set({ status: 'error', error }))
 			.finally(() => {
@@ -659,9 +708,9 @@ export function PracticeSession({
 			})
 	}
 
-	const finish = (all: unknown[]) => {
-		setEntries(round.questions.map((question, i) => ({ question, response: all[i], graded: { status: 'checking' } })))
-		round.questions.forEach((q, i) => grade(i, q, all[i]))
+	const finish = (all: unknown[], sure: (Confidence | null)[]) => {
+		round.questions.forEach((q, i) => grade(i, q, all[i], sure[i] ?? null))
+		setFinished(true)
 	}
 
 	const retry = useMutation({
@@ -671,28 +720,62 @@ export function PracticeSession({
 			setAsked((a) => [...a, ...next.map((q) => q.id)])
 			setRound((r) => ({ questions: next, practice: true, number: r.number + 1 }))
 			setResponses(next.map(() => null))
+			setConfidences(next.map(() => null))
 			setIndex(0)
-			setEntries(null)
+			setEntries([])
+			setFinished(false)
 		},
 	})
 
-	/** Records the response for the current question, then moves on when asked to. */
-	const answer = (response: unknown, advance: boolean) => {
-		const next = responses.map((r, i) => (i === index ? response : r))
-		setResponses(next)
-		if (!advance || response === null) return
-		if (last) finish(next)
-		// A short pause lets the picked option show before the next question replaces it.
-		else setTimeout(() => setIndex((i) => (i === index ? i + 1 : i)), 250)
+	/** Records the draft response; a multiple-choice pick moves on by itself only when nothing else is asked. */
+	const pick = (response: unknown) => {
+		setResponses(responses.map((r, i) => (i === index ? response : r)))
+		if (response !== null && viewFor(current).advanceOnPick && !guessFirst && !each && !last)
+			// A short pause lets the picked option show before the next question replaces it.
+			setTimeout(() => setIndex((i) => (i === index ? i + 1 : i)), 250)
 	}
 
-	if (entries) {
-		const checking = entries.filter((e) => e.graded.status === 'checking').length
-		const failed = entries.filter((e) => e.graded.status === 'error').length
-		const recalled = entries.filter((e) => e.graded.status === 'done' && e.graded.result.correct).length
+	/** Submits the current answer: in Review it is checked now; in a test it is kept and the next question shows. */
+	const commit = (response: unknown, confidence: Confidence | null) => {
+		const nextResponses = responses.map((r, i) => (i === index ? response : r))
+		const nextConfidences = confidences.map((c, i) => (i === index ? confidence : c))
+		setResponses(nextResponses)
+		setConfidences(nextConfidences)
+		if (each) grade(index, current, response, confidence)
+		else if (last) finish(nextResponses, nextConfidences)
+		else setIndex(index + 1)
+	}
+
+	const progress = (
+		<Group>
+			<Row>
+				<Text variant="muted" style={{ flex: 1 }} numberOfLines={1}>
+					{round.practice ? 'Retry round' : (current.itemTitle ?? title)}
+				</Text>
+				<Text variant="muted">
+					{index + 1} of {round.questions.length}
+				</Text>
+			</Row>
+			<Progress value={(index + (each && entries[index] ? 1 : 0)) / round.questions.length} />
+		</Group>
+	)
+
+	if (finished) {
+		const graded = entries.flatMap((e, i) => (e ? [{ e, i }] : []))
+		const checking = graded.filter(({ e }) => e.graded.status === 'checking').length
+		const failed = graded.filter(({ e }) => e.graded.status === 'error').length
+		const recalled = graded.filter(({ e }) => e.graded.status === 'done' && e.graded.result.correct).length
 		const missedIdeas = [
-			...new Set(entries.flatMap((e) => (e.graded.status === 'done' && !e.graded.result.correct && e.question.ideaId ? [e.question.ideaId] : []))),
+			...new Set(graded.flatMap(({ e }) => (e.graded.status === 'done' && !e.graded.result.correct && e.question.ideaId ? [e.question.ideaId] : []))),
 		]
+		// Wrong answers the learner was sure of are the misconceptions most worth fixing, so they come first.
+		const sureWrong = graded.filter(({ e }) => e.confidence === 'sure' && e.graded.status === 'done' && !e.graded.result.correct)
+		// In Review every result was shown as it came; here only the ones that still need a look.
+		const rest = graded.filter((g) => !sureWrong.includes(g) && (!each || g.e.graded.status !== 'done'))
+		const calibration = checking ? '' : calibrationLine(graded.map(({ e }) => e))
+		const tile = ({ e, i }: { e: Entry; i: number }) => (
+			<ResultTile key={i} entry={e} index={i} onRetry={() => grade(i, e.question, e.response, e.confidence)} />
+		)
 		const heading = round.practice ? `Retry round${round.number > 1 ? ` ${round.number}` : ''}` : title
 		return (
 			<Screen
@@ -713,76 +796,105 @@ export function PracticeSession({
 				<Group>
 					<Text variant="muted">{heading}</Text>
 					<Text variant="title">
-						{checking ? `Checking ${checking} answer${checking === 1 ? '' : 's'}…` : `You recalled ${recalled} of ${entries.length - failed}`}
+						{checking ? `Checking ${checking} answer${checking === 1 ? '' : 's'}…` : `You recalled ${recalled} of ${graded.length - failed}`}
 					</Text>
 					{!checking && (
 						<Text variant="muted">
 							{failed
 								? `${failed} could not be checked. Try them again below.`
 								: round.practice
-									? recalled === entries.length
+									? recalled === graded.length
 										? 'Every missed idea came back. Practice answers do not change when ideas are due.'
 										: 'Practice answers do not change when ideas are due. Retry again until each one comes back.'
-									: recalled === entries.length - failed
+									: recalled === graded.length - failed
 										? 'Every idea is spaced further out now.'
 										: 'Missed ideas come back in about 10 minutes, with an easier question. Retry them now with new questions: missing is how recall gets stronger.'}
 						</Text>
 					)}
+					{calibration ? <Text variant="muted">{calibration}</Text> : null}
 				</Group>
 				<ErrorText error={retry.error} />
 				{retry.data && !retry.data.questions.length ? <Text variant="muted">No other questions on these ideas yet. Connect your AI in Settings to get new ones.</Text> : null}
 				{!round.practice && before}
-				<Group gap={space.md}>
-					{entries.map((e, i) => (
-						<ResultTile key={i} entry={e} index={i} onRetry={() => grade(i, e.question, e.response)} />
-					))}
-				</Group>
+				{sureWrong.length > 0 && (
+					<Group gap={space.md}>
+						<Group gap={2}>
+							<Text variant="heading">You were sure about these</Text>
+							<Text variant="muted">Wrong answers you felt sure of are the ones most worth fixing. Read why each one is wrong.</Text>
+						</Group>
+						{sureWrong.map(tile)}
+					</Group>
+				)}
+				{rest.length > 0 && <Group gap={space.md}>{rest.map(tile)}</Group>}
 			</Screen>
 		)
 	}
 
+	const checked = each ? entries[index] : undefined
+	if (checked)
+		return (
+			<Screen
+				footer={
+					<Button
+						title={last ? 'See summary' : 'Next question'}
+						onPress={() => (last ? setFinished(true) : setIndex(index + 1))}
+						disabled={checked.graded.status === 'checking'}
+					/>
+				}
+			>
+				{progress}
+				<ResultTile entry={checked} index={index} onRetry={() => grade(index, checked.question, checked.response, checked.confidence)} />
+			</Screen>
+		)
+
 	const view = viewFor(current)
 	const response = responses[index]
+	const previous = !each && (
+		<Button title="Previous" kind="outline" onPress={() => setIndex(index - 1)} disabled={index === 0} style={{ flex: 1 }} />
+	)
+	const skip = view.skip !== undefined && <Button title="I don't know" kind="outline" onPress={() => commit(view.skip, null)} style={{ flex: 1 }} />
 	return (
 		<Screen
 			footer={
-				<Group gap={space.sm}>
-					<Row style={{ gap: space.sm }}>
-						<Button title="Previous" kind="outline" onPress={() => setIndex(index - 1)} disabled={index === 0} style={{ flex: 1 }} />
-						<Button
-							title={last ? 'Finish' : 'Next'}
-							onPress={() => (last ? finish(responses) : setIndex(index + 1))}
-							disabled={response === null}
-							style={{ flex: 1 }}
-						/>
-					</Row>
-					{view.skip !== undefined && <Button title="I don't know" kind="outline" onPress={() => answer(view.skip, true)} />}
-				</Group>
+				guessFirst ? (
+					<Group gap={space.sm}>
+						<Text variant="muted">How sure are you?</Text>
+						<Row style={{ gap: space.sm }}>
+							{CONFIDENCES.map((level) => (
+								<Button key={level} title={CONFIDENCE_LABEL[level]} onPress={() => commit(response, level)} disabled={response === null} style={{ flex: 1 }} />
+							))}
+						</Row>
+						{(previous || skip) && (
+							<Row style={{ gap: space.sm }}>
+								{previous}
+								{skip}
+							</Row>
+						)}
+					</Group>
+				) : (
+					<Group gap={space.sm}>
+						<Row style={{ gap: space.sm }}>
+							{previous}
+							<Button
+								title={each ? 'Check answer' : last ? 'Finish' : 'Next'}
+								onPress={() => commit(response, null)}
+								disabled={response === null}
+								style={{ flex: 1 }}
+							/>
+						</Row>
+						{skip}
+					</Group>
+				)
 			}
 		>
-			<Group>
-				<Row>
-					<Text variant="muted" style={{ flex: 1 }} numberOfLines={1}>
-						{round.practice ? 'Retry round' : (current.itemTitle ?? title)}
-					</Text>
-					<Text variant="muted">
-						{index + 1} of {round.questions.length}
-					</Text>
-				</Row>
-				<Progress value={index / round.questions.length} />
-			</Group>
+			{progress}
 			<Group gap={space.xl}>
 				<Group gap={space.md}>
 					<Pill>{view.label}</Pill>
 					<Text variant="question">{current.prompt.prompt}</Text>
 					{'code' in current.prompt && current.prompt.code ? <CodeBlock code={current.prompt.code} wrap /> : null}
 				</Group>
-				<view.Input
-					key={current.id + index}
-					question={current}
-					response={response}
-					onChange={(r) => answer(r, Boolean(view.advanceOnPick) && !last)}
-				/>
+				<view.Input key={current.id + index} question={current} response={response} onChange={pick} guessFirst={guessFirst} atEnd={!each} />
 			</Group>
 		</Screen>
 	)
