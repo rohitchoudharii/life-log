@@ -1,5 +1,5 @@
-import { sectionText } from '@peak/core'
-import { extractIdeas, gradeRecall } from '@peak/llm'
+import { sectionText } from '@life-log-club/core'
+import { extractIdeas, gradeRecall } from '@life-log-club/llm'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'

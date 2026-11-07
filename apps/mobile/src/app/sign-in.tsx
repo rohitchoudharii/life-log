@@ -38,7 +38,7 @@ export default function SignIn() {
 	return (
 		<Screen>
 			<Group style={{ marginTop: space.xl }}>
-				<Text variant="title">Peak</Text>
+				<Text variant="title">Life Log Club</Text>
 				<Text variant="muted">Read, recall, repeat. Practice that sticks.</Text>
 			</Group>
 			{step === 'email' ? (

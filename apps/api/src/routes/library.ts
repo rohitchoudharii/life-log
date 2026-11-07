@@ -1,12 +1,12 @@
-import { orderForTest, parseMarkdown, QUESTION_INTENSITIES, QUESTION_STYLES, splitSections, toPrompt, type Block, type ContentSourceType, type PointStatus } from '@peak/core'
-import { and, asc, count, desc, eq, inArray, isNotNull, isNull, ne, notLike, or, sql } from 'drizzle-orm'
+import { blockLinks, orderForTest, parseMarkdown, QUESTION_INTENSITIES, QUESTION_STYLES, splitSections, toPrompt, type Block, type ContentSourceType, type PointStatus } from '@life-log-club/core'
+import { and, arrayOverlaps, asc, count, desc, eq, gt, inArray, isNotNull, isNull, ne, notLike, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
-import { REVIEW_PROMPT_VERSION } from '@peak/llm'
+import { REVIEW_PROMPT_VERSION } from '@life-log-club/llm'
 import { db, t } from '../db'
 import { parseBody, requireUser, type AppEnv } from '../http'
-import { enqueueGeneration, ON_DEMAND_WORDS, rewriteQuestions } from '../jobs'
+import { enqueueGeneration } from '../jobs'
 
 const MAX_PASTE_CHARS = 200_000
 
@@ -58,23 +58,35 @@ const questionCount = db
 	.as('qc')
 
 export const ItemPrefs = z.object({
-	questionIntensity: z.enum(QUESTION_INTENSITIES).default('standard'),
-	questionStyle: z.enum(QUESTION_STYLES).default('mixed'),
 	/** A bucket to add the reading to, at the end. */
 	collectionId: z.uuid().nullish(),
 })
 
+/** How a reading is added. A page imported from a link in another reading has that reading as its parent. */
+export type ItemInput = Partial<z.infer<typeof ItemPrefs>> & { parentId?: string; requestedUrl?: string }
+
+/** The user's readings of these addresses, as address → reading id, by the link asked for or where it led. */
+export async function savedReadings(userId: string, urls: string[]): Promise<Map<string, string>> {
+	if (!urls.length) return new Map()
+	const rows = await db
+		.select({ id: t.contentItems.id, requestedUrl: t.contentItems.requestedUrl, sourceUrl: t.contentItems.sourceUrl })
+		.from(t.contentItems)
+		.where(and(eq(t.contentItems.userId, userId), or(inArray(t.contentItems.requestedUrl, urls), inArray(t.contentItems.sourceUrl, urls))))
+	const found = new Map<string, string>()
+	for (const r of rows) for (const u of [r.requestedUrl, r.sourceUrl]) if (u && urls.includes(u) && !found.has(u)) found.set(u, r.id)
+	return found
+}
+
 /**
- * Adds a reading from any source: splits its blocks into sections, puts it at the end of its
- * bucket, and starts writing its questions.
+ * Adds a reading from any source: splits its blocks into sections and puts it at the end of its
+ * bucket. It has no questions until they are asked for in Manage test.
  */
 export async function createItem(
 	userId: string,
-	input: { title: string; source: ContentSourceType; sourceUrl?: string; blocks: Block[] } & Partial<z.infer<typeof ItemPrefs>>,
+	input: { title: string; source: ContentSourceType; sourceUrl?: string; blocks: Block[] } & ItemInput,
 ) {
 	const sections = splitSections(input.blocks, input.title)
 	if (!sections.some((s) => s.wordCount > 0)) throw new HTTPException(400, { message: 'No readable text found' })
-	const questionsOnDemand = sections.reduce((n, s) => n + s.wordCount, 0) > ON_DEMAND_WORDS
 	const item = await db.transaction(async (tx) => {
 		let collectionPosition: number | null = null
 		if (input.collectionId) {
@@ -96,20 +108,17 @@ export async function createItem(
 				userId,
 				source: input.source,
 				sourceUrl: input.sourceUrl,
+				requestedUrl: input.requestedUrl,
+				parentId: input.parentId,
 				title: input.title,
-				questionIntensity: input.questionIntensity ?? 'standard',
-				questionStyle: input.questionStyle ?? 'mixed',
 				collectionId: input.collectionId ?? null,
 				collectionPosition,
-				questionsOnDemand,
-				// A book waits for chapters to be picked; there is nothing to write yet.
-				status: questionsOnDemand ? 'ready' : 'processing',
+				status: 'ready',
 			})
 			.returning()
 		await tx.insert(t.sections).values(sections.map((s, position) => ({ itemId: item!.id, position, ...s })))
 		return item!
 	})
-	if (!questionsOnDemand) await enqueueGeneration(item.id)
 	return item
 }
 
@@ -132,6 +141,7 @@ export const library = new Hono<AppEnv>()
 				sourceUrl: t.contentItems.sourceUrl,
 				collectionId: t.contentItems.collectionId,
 				collectionPosition: t.contentItems.collectionPosition,
+				parentId: t.contentItems.parentId,
 			})
 			.from(t.contentItems)
 			.leftJoin(sectionCount, eq(sectionCount.itemId, t.contentItems.id))
@@ -185,9 +195,33 @@ export const library = new Hono<AppEnv>()
 			.select({ sectionId: t.questions.sectionId, also: t.questions.alsoSectionIds })
 			.from(t.questions)
 			.where(and(eq(t.questions.itemId, item.id), isNotNull(t.questions.alsoSectionIds)))
+		const blocks = sections.flatMap((s) => s.blocks)
+		const linked = await savedReadings(c.var.user.id, blockLinks(blocks))
+		const children = await db
+			.select({ id: t.contentItems.id, title: t.contentItems.title, sourceUrl: t.contentItems.sourceUrl })
+			.from(t.contentItems)
+			.where(eq(t.contentItems.parentId, item.id))
+			.orderBy(asc(t.contentItems.createdAt))
+		const [parent] = item.parentId
+			? await db.select({ id: t.contentItems.id, title: t.contentItems.title }).from(t.contentItems).where(eq(t.contentItems.id, item.parentId))
+			: []
+		// Up next is the reading after this one in its bucket.
+		const [next] = item.collectionId
+			? await db
+					.select({ id: t.contentItems.id, title: t.contentItems.title })
+					.from(t.contentItems)
+					.where(and(eq(t.contentItems.collectionId, item.collectionId), gt(t.contentItems.collectionPosition, item.collectionPosition ?? -1)))
+					.orderBy(asc(t.contentItems.collectionPosition))
+					.limit(1)
+			: []
 		return c.json({
 			item,
 			sections,
+			next: next ?? null,
+			/** Pages its links point at that are already readings: address → reading id. */
+			linked: Object.fromEntries(linked),
+			children,
+			parent: parent ?? null,
 			/** Each linking question, as the sections that must all be picked for it to be asked. */
 			links: links.map((l) => ({ sectionIds: [...(l.also ?? []), l.sectionId] })),
 			activeSession: activeSession ?? null,
@@ -228,13 +262,73 @@ export const library = new Hono<AppEnv>()
 			questions: ordered.map((q) => ({ id: q.id, ideaId: q.ideaId, ...toPrompt(q.type, q.content) })),
 		})
 	})
-	.post('/:id/rewrite-questions', async (c) => {
+	// Makes another reading come right after this one: both go in this reading's bucket (a new one,
+	// named after it, when it is in none), and the other moves to just after it.
+	.put('/:id/next', async (c) => {
 		const item = await ownItem(c.var.user.id, c.req.param('id'))
-		await rewriteQuestions(item.id)
+		const { itemId } = await parseBody(c, z.object({ itemId: z.uuid() }))
+		const other = await ownItem(c.var.user.id, itemId)
+		if (other.id === item.id) throw new HTTPException(400, { message: 'A reading cannot come after itself' })
+		await db.transaction(async (tx) => {
+			let bucket = item.collectionId
+			if (!bucket) {
+				const [row] = await tx.insert(t.collections).values({ userId: c.var.user.id, name: item.title.slice(0, 100) }).returning()
+				bucket = row!.id
+			}
+			const members = await tx
+				.select({ id: t.contentItems.id })
+				.from(t.contentItems)
+				.where(eq(t.contentItems.collectionId, bucket))
+				.orderBy(asc(t.contentItems.collectionPosition))
+				.for('update')
+			const ids = members.map((m) => m.id).filter((id) => id !== other.id)
+			const at = ids.indexOf(item.id)
+			if (at === -1) ids.push(item.id, other.id)
+			else ids.splice(at + 1, 0, other.id)
+			for (const [position, id] of ids.entries())
+				await tx.update(t.contentItems).set({ collectionId: bucket, collectionPosition: position }).where(eq(t.contentItems.id, id))
+		})
 		return c.json({ ok: true })
 	})
+	// Manage test: writes questions for the picked sections with the picked settings. Sections that
+	// have questions get new ones; their old questions go, with their review history, and so do
+	// linking questions that draw on them. Other sections keep theirs.
+	.post('/:id/generate', async (c) => {
+		const item = await ownItem(c.var.user.id, c.req.param('id'))
+		const body = await parseBody(
+			c,
+			z.object({
+				sectionIds: z.array(z.uuid()).min(1, 'Pick at least one section').max(2000),
+				intensity: z.enum(QUESTION_INTENSITIES),
+				style: z.enum(QUESTION_STYLES),
+			}),
+		)
+		if (item.status === 'processing') throw new HTTPException(409, { message: 'Questions are still being written for this reading' })
+		const picked = await db
+			.select({ id: t.sections.id })
+			.from(t.sections)
+			.where(and(eq(t.sections.itemId, item.id), inArray(t.sections.id, body.sectionIds), gt(t.sections.wordCount, 0)))
+		if (!picked.length) throw new HTTPException(400, { message: 'Pick sections of this reading that have text' })
+		const ids = picked.map((s) => s.id)
+		await db.transaction(async (tx) => {
+			await tx
+				.delete(t.questions)
+				.where(and(eq(t.questions.itemId, item.id), or(inArray(t.questions.sectionId, ids), arrayOverlaps(t.questions.alsoSectionIds, ids))))
+			await tx.update(t.sections).set({ questionsWanted: true }).where(inArray(t.sections.id, ids))
+			await tx
+				.update(t.contentItems)
+				.set({ status: 'processing', error: null, questionIntensity: body.intensity, questionStyle: body.style })
+				.where(eq(t.contentItems.id, item.id))
+		})
+		await enqueueGeneration(item.id)
+		return c.json({ sections: ids.length })
+	})
+	// Everything that came from the reading goes with it, its vocabulary words too; the rest cascades.
 	.delete('/:id', async (c) => {
 		const item = await ownItem(c.var.user.id, c.req.param('id'))
-		await db.delete(t.contentItems).where(eq(t.contentItems.id, item.id))
+		await db.transaction(async (tx) => {
+			await tx.delete(t.words).where(eq(t.words.itemId, item.id))
+			await tx.delete(t.contentItems).where(eq(t.contentItems.id, item.id))
+		})
 		return c.json({ ok: true })
 	})

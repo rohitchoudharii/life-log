@@ -134,7 +134,17 @@ describe('judgeAnswer', () => {
 	const input = { question: 'q', reference: 'r', mustHave: ['p1', 'p2', 'p3', 'p4'], misconceptions: [], answer: 'a' }
 	it('computes the score from the points and treats an unreadable point as missing', async () => {
 		const { provider } = scripted('{"points": ["covered", "vague"], "misconception": null, "feedback": " Close. "}')
-		expect(await judgeAnswer(provider, 'k', 'm', input)).toEqual({ score: 1, points: ['covered', 'vague', 'missing', 'missing'], misconception: null, feedback: 'Close.' })
+		expect(await judgeAnswer(provider, 'k', 'm', input)).toEqual({ score: 1, points: ['covered', 'vague', 'missing', 'missing'], misconception: null, feedback: 'Close.', marks: [] })
+	})
+	it('keeps only marks quoted from the answer itself', async () => {
+		const answer = 'Batch fills idle gaps. Instant is cheaper to run.'
+		const { provider } = scripted(
+			'{"points": ["covered"], "misconception": null, "feedback": "f", "marks": [{"quote": " Batch fills idle gaps.", "right": true}, {"quote": "Instant is cheaper to run", "right": false}, {"quote": "batch fills idle gaps", "right": true}, {"quote": "Packing raises utilization", "right": true}, {"quote": "Instant", "right": "no"}]}',
+		)
+		expect((await judgeAnswer(provider, 'k', 'm', { ...input, answer })).marks).toEqual([
+			{ quote: 'Batch fills idle gaps.', right: true },
+			{ quote: 'Instant is cheaper to run', right: false },
+		])
 	})
 	it('caps the score at 1 when the answer states a misconception', async () => {
 		const { provider } = scripted('{"points": ["covered", "covered", "covered", "covered"], "misconception": "Thinks scaling speeds up training", "feedback": "f"}')

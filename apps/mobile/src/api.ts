@@ -1,4 +1,4 @@
-import type { Block, PointStatus, QuestionIntensity, QuestionPrompt, QuestionStyle, Rating } from '@peak/core'
+import type { Block, PointStatus, QuestionIntensity, QuestionPrompt, QuestionStyle, Rating } from '@life-log-club/core'
 import Constants from 'expo-constants'
 import * as SecureStore from 'expo-secure-store'
 import { Platform } from 'react-native'
@@ -8,7 +8,7 @@ const devHost = Constants.expoConfig?.hostUri?.split(':')[0]
 export const BASE =
 	process.env.EXPO_PUBLIC_API_URL ??
 	(Platform.OS !== 'web' && devHost ? `http://${devHost}:8787` : 'http://localhost:8787')
-const TOKEN_KEY = 'peak.session'
+const TOKEN_KEY = 'lifelogclub.session'
 
 // Native keeps the session in the Keychain or Keystore; web has only localStorage.
 export const tokenStore = {
@@ -63,13 +63,17 @@ export type ItemSummary = {
 	ideaCount: number
 	ideasLearned: number
 	createdAt: string
+	/** When the reading was last opened, or null if never. */
+	lastOpenedAt: string | null
 	sourceUrl: string | null
 	/** The bucket it is in and its place there, or null for none. */
 	collectionId: string | null
 	collectionPosition: number | null
+	/** The reading it was imported from by a link, or null. */
+	parentId: string | null
 }
 export type Collection = { id: string; name: string }
-type ItemPrefs = { questionIntensity: QuestionIntensity; questionStyle: QuestionStyle; collectionId?: string | null }
+type ItemPrefs = { collectionId?: string | null }
 export type Section = {
 	id: string
 	position: number
@@ -79,14 +83,15 @@ export type Section = {
 	blocks: Block[]
 	wordCount: number
 	questionCount: number
-	/** For readings with questions on demand: their questions were asked for. */
+	/** Picked in Manage test at some point. */
 	questionsWanted: boolean
 }
 export type Item = Omit<ItemSummary, 'sectionCount' | 'questionCount' | 'ideaCount' | 'ideasLearned' | 'collectionPosition'> & {
-	questionIntensity: QuestionIntensity
-	questionStyle: QuestionStyle
-	/** A long reading whose questions are written chapter by chapter, when picked. */
-	questionsOnDemand: boolean
+	/** Importing every page it links to: running, finished, or never asked for. */
+	linksImport: 'importing' | 'done' | null
+	/** How its quiz was last made in Manage test; null until it has one. */
+	questionIntensity: QuestionIntensity | null
+	questionStyle: QuestionStyle | null
 }
 export type StudySession = {
 	id: string
@@ -108,7 +113,18 @@ export type Today = {
 	streak: number
 	ongoing: { id: string; title: string }[]
 }
-export type Me = { email: string; timezone: string; reminderTime: string | null; dailyReviewCap: number; qualityCheck: boolean }
+export type Me = {
+	email: string
+	timezone: string
+	reminderTime: string | null
+	dailyReviewCap: number
+	qualityCheck: boolean
+	/** The settings Manage test starts on: how many questions, and which kinds. */
+	questionIntensity: QuestionIntensity
+	questionStyle: QuestionStyle
+	/** Who explanations are written for: the level picked last in the reader. */
+	explainLevel: ExplainLevel
+}
 export type ExplainLevel = 'new' | 'standard' | 'expert'
 export type ExplainKind = 'explain' | 'analogy' | 'example'
 export type TeachMessage = { role: 'learner' | 'student'; text: string }
@@ -157,25 +173,39 @@ export const api = {
 
 	items: () => request<{ items: ItemSummary[]; collections: Collection[] }>('GET', '/items'),
 	addItem: (input: { title: string; text: string } & ItemPrefs) => request<{ item: ItemSummary }>('POST', '/items', input),
-	addUrl: (input: { url: string } & ItemPrefs) => request<{ item: ItemSummary }>('POST', '/items/url', input),
+	addUrl: (input: { url: string; importLinks?: boolean } & ItemPrefs) => request<{ item: ItemSummary }>('POST', '/items/url', input),
 	/** Uploads an EPUB or PDF. `file` is a File on the web and a { uri, name, type } on phones. */
 	uploadItem: async (file: Blob | { uri: string; name: string; type: string }, prefs: ItemPrefs) => {
 		const form = new FormData()
 		form.append('file', file as Blob)
-		form.append('questionIntensity', prefs.questionIntensity)
-		form.append('questionStyle', prefs.questionStyle)
 		if (prefs.collectionId) form.append('collectionId', prefs.collectionId)
 		return request<{ item: ItemSummary }>('POST', '/items/upload', form)
 	},
-	prepare: (itemId: string, sectionIds: string[]) => request<{ sections: number }>('POST', `/items/${itemId}/prepare`, { sectionIds }),
 	addCollection: (name: string) => request<{ collection: Collection }>('POST', '/collections', { name }),
 	renameCollection: (id: string, name: string) => request<{ collection: Collection }>('PATCH', `/collections/${id}`, { name }),
 	deleteCollection: (id: string) => request('DELETE', `/collections/${id}`),
 	orderCollection: (id: string, itemIds: string[]) => request('PUT', `/collections/${id}/order`, { itemIds }),
 	moveItem: (id: string, collectionId: string | null) => request('PUT', `/items/${id}/collection`, { collectionId }),
 	item: (id: string) =>
-		request<{ item: Item; sections: Section[]; links: { sectionIds: string[] }[]; activeSession: StudySession | null }>('GET', `/items/${id}`),
-	rewriteQuestions: (id: string) => request<{ ok: true }>('POST', `/items/${id}/rewrite-questions`),
+		request<{
+			item: Item
+			sections: Section[]
+			links: { sectionIds: string[] }[]
+			activeSession: StudySession | null
+			/** Linked pages that are already readings: address → reading id. */
+			linked: Record<string, string>
+			children: { id: string; title: string; sourceUrl: string | null }[]
+			parent: { id: string; title: string } | null
+			/** The reading after this one in its bucket. */
+			next: { id: string; title: string } | null
+		}>('GET', `/items/${id}`),
+	/** Puts `nextId` right after this reading, in its bucket (a new one when it is in none). */
+	setNext: (id: string, nextId: string) => request<{ ok: true }>('PUT', `/items/${id}/next`, { itemId: nextId }),
+	/** Imports the page a link in a reading points at, nested under it; an existing reading comes back instead. */
+	importLink: (itemId: string, url: string) => request<{ item: ItemSummary; existed: boolean }>('POST', `/items/${itemId}/links`, { url }),
+	/** Writes questions for these sections, replacing any they have. */
+	generateQuiz: (id: string, input: { sectionIds: string[]; intensity: QuestionIntensity; style: QuestionStyle }) =>
+		request<{ sections: number }>('POST', `/items/${id}/generate`, input),
 	deleteItem: (id: string) => request('DELETE', `/items/${id}`),
 	startSession: (itemId: string, plannedMinutes: number) =>
 		request<{ session: StudySession }>('POST', `/items/${itemId}/sessions`, { plannedMinutes }),
@@ -187,7 +217,7 @@ export const api = {
 	wordsDue: () => request<{ questions: Question[] }>('GET', '/words/due'),
 	answerWord: (id: string, response: unknown, practice = false) => request<AnswerResult>('POST', `/words/${id}/answer`, { response, practice }),
 	notes: (itemId: string) => request<{ notes: Note[] }>('GET', `/items/${itemId}/notes`),
-	explain: (itemId: string, input: { sectionId: string; passage: string; level: ExplainLevel; kind: ExplainKind }) =>
+	explain: (itemId: string, input: { sectionId: string; passage: string; level?: ExplainLevel; kind: ExplainKind }) =>
 		request<{ note: Note }>('POST', `/items/${itemId}/explain`, input),
 	deleteNote: (id: string) => request('DELETE', `/notes/${id}`),
 	ideas: (itemId: string) => request<{ ideas: IdeaRef[] }>('GET', `/items/${itemId}/ideas`),

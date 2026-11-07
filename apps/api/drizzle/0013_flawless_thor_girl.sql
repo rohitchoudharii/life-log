@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "explain_level" text DEFAULT 'standard' NOT NULL;

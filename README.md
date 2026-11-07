@@ -1,4 +1,4 @@
-# Peak
+# Life Log Club
 
 A learning app built on deliberate practice (*Peak*) and retrieval practice: read a section, take a recall check on exactly what you read, and review it again after 1, 2, and 3 days, then at growing gaps.
 
@@ -55,9 +55,9 @@ Install the extension:
 
 1. Open `chrome://extensions` and turn on **Developer mode**.
 2. Click **Load unpacked** and pick `apps/extension`.
-3. Pin **Peak capture**. Click it on any page, sign in with your email code, pick a bucket, and capture.
+3. Pin **Life Log Club capture**. Click it on any page, sign in with your email code, pick a bucket, and capture.
 
-If Peak runs somewhere other than `localhost:8787`, change the address under **Settings** in the popup.
+If Life Log Club runs somewhere other than `localhost:8787`, change the address under **Settings** in the popup.
 
 ## Books and PDFs
 
@@ -65,14 +65,14 @@ If Peak runs somewhere other than `localhost:8787`, change the address under **S
 
 - **EPUB:** chapters come from the table of contents, including books that put many chapters in one file. Chapter pages go through the same conversion as web pages, and the book's own images are re-encoded and stored. Books with DRM are refused.
 - **PDF:** headings come from font size and numbering ("3.1 Attention"). Two-column pages are read column by column, headers and page numbers repeated on every page are dropped, and each page start is marked so you can find a passage in the original. Scanned PDFs without text are refused for now.
-- **Long readings** (over 8,000 words) get questions chapter by chapter: pick chapters in the test picker and tap **Write questions**. Shorter readings get all their questions right away.
+- **Long readings** (over 8,000 words) get questions chapter by chapter, in the background: a chapter's questions are written once it has been on screen for 20 seconds, or when it is picked for a test. If they are not done by the end of the brain dump, the test waits for them. Shorter readings get all their questions right away. How hard the questions are, and which kinds, is set once in **Settings → Questions**.
 
 How captured pages are kept safe:
 
-- **No HTML is stored or shown.** Readability finds the article, and only its text, headings, lists, code, quotes and images become Peak's own blocks.
-- **Images are our own copies.** The server downloads each one, checks that it is a raster image, and re-encodes it as WebP, which drops metadata and anything hidden in the file. Peak serves it from `/media/:id` with `nosniff`. SVG is refused. When a site blocks the server, the extension sends the image bytes, and the same checks apply.
+- **No HTML is stored or shown.** Readability finds the article, and only its text, headings, lists, code, quotes and images become Life Log Club's own blocks.
+- **Images are our own copies.** The server downloads each one, checks that it is a raster image, and re-encodes it as WebP, which drops metadata and anything hidden in the file. Life Log Club serves it from `/media/:id` with `nosniff`. SVG is refused. When a site blocks the server, the extension sends the image bytes, and the same checks apply.
 - **Server fetches go only to public addresses.** Private, local and cloud-metadata addresses are refused, and every redirect is checked again. Pages are limited to 5 MB and 15 seconds.
-- **The web app has a strict Content Security Policy** in `apps/mobile/public/index.html`. Set the real API address there when Peak is hosted.
+- **The web app has a strict Content Security Policy** in `apps/mobile/public/index.html`. Set the real API address there when Life Log Club is hosted.
 
 ## Checks
 

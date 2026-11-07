@@ -1,5 +1,5 @@
 import { Readability } from '@mozilla/readability'
-import { htmlToBlocks, type Block, type DomNode } from '@peak/core'
+import { htmlToBlocks, type Block, type DomNode } from '@life-log-club/core'
 import { parseHTML } from 'linkedom'
 
 export class ExtractError extends Error {}
@@ -23,7 +23,7 @@ const squash = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').
 
 /**
  * Puts a page's media in the shape the reader keeps: images as plain <img>, figure captions as
- * text, and videos (which Peak does not store) as their poster image and a line saying where to
+ * text, and videos (which Life Log Club does not store) as their poster image and a line saying where to
  * watch them. Runs before Readability, which would otherwise drop the embeds.
  */
 function normaliseMedia(document: Doc, url: string) {
@@ -97,10 +97,18 @@ export function extractArticle(html: string, url: string): { title: string; bloc
 		const holdsMedia = wrapper?.querySelector('img, picture, video, iframe, svg, table, pre')
 		if (wrapper?.tagName === 'DIV' && !holdsMedia && (wrapper.textContent ?? '').length - (h.textContent ?? '').length < 30) wrapper.replaceWith(h)
 	}
+	// Some sites (GeeksforGeeks) hide the whole page with visibility:hidden until their scripts run.
+	// Readability skips hidden elements, so a box holding most of the page's text is shown again.
+	// Scripts go first (Readability drops them anyway): their JSON can outweigh the page's text.
+	for (const s of Array.from(document.querySelectorAll('script, style')) as El[]) s.remove()
+	const pageText = (document.body?.textContent ?? '').length
+	for (const el of Array.from(document.querySelectorAll('[style*="visibility"]')) as El[])
+		if (/visibility\s*:\s*hidden/i.test(el.getAttribute('style') ?? '') && (el.textContent ?? '').length > pageText / 2)
+			el.setAttribute('style', (el.getAttribute('style') ?? '').replace(/visibility\s*:\s*hidden\s*;?/gi, ''))
 	const article = new Readability(document as unknown as Document, { charThreshold: 300, keepClasses: true }).parse()
 	if (!article?.content) throw new ExtractError("Couldn't find an article on that page")
-	const { document: doc } = parseHTML(`<!doctype html><html><body><div id="peak-article">${article.content}</div></body></html>`)
-	const blocks = htmlToBlocks(doc.getElementById('peak-article') as unknown as DomNode, url)
+	const { document: doc } = parseHTML(`<!doctype html><html><body><div id="life-log-club-article">${article.content}</div></body></html>`)
+	const blocks = htmlToBlocks(doc.getElementById('life-log-club-article') as unknown as DomNode, url)
 	if (!blocks.some((b) => b.type !== 'image')) throw new ExtractError("Couldn't find any text on that page")
 	const title = (article.title ?? '').replace(/\s+/g, ' ').trim() || new URL(url).hostname
 	return { title: title.slice(0, 200), blocks }

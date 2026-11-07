@@ -1,7 +1,7 @@
-import type { Block, ContentSourceType, IdeaSchedule, PointStatus, QuestionIntensity, QuestionLevel, QuestionStyle, QuestionType, Rating } from '@peak/core'
-import type { ExplainKind, ExplainLevel, ProviderId, TeachMessage } from '@peak/llm'
+import type { Block, ContentSourceType, IdeaSchedule, PointStatus, QuestionIntensity, QuestionLevel, QuestionStyle, QuestionType, Rating } from '@life-log-club/core'
+import type { ExplainKind, ExplainLevel, ProviderId, TeachMessage } from '@life-log-club/llm'
 import { sql } from 'drizzle-orm'
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core'
 
 const id = () => uuid('id').primaryKey().defaultRandom()
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
@@ -18,6 +18,11 @@ export const users = pgTable('users', {
 	dailyReviewCap: integer('daily_review_cap').notNull().default(80),
 	/** A second AI call checks new questions, and their answer keys, before they are stored. */
 	qualityCheck: boolean('quality_check').notNull().default(true),
+	/** The settings Manage test starts on: how many questions, and which kinds. */
+	questionIntensity: text('question_intensity').$type<QuestionIntensity>().notNull().default('thorough'),
+	questionStyle: text('question_style').$type<QuestionStyle>().notNull().default('mixed'),
+	/** Who explanations are written for: the level picked last in the reader. */
+	explainLevel: text('explain_level').$type<ExplainLevel>().notNull().default('standard'),
 	createdAt: createdAt(),
 })
 
@@ -77,21 +82,29 @@ export const contentItems = pgTable(
 		sourceUrl: text('source_url'),
 		status: text('status').$type<ItemStatus>().notNull().default('processing'),
 		error: text('error'),
-		/** What the user asked for when adding it: how many questions, and which kinds. */
-		questionIntensity: text('question_intensity').$type<QuestionIntensity>().notNull().default('standard'),
-		questionStyle: text('question_style').$type<QuestionStyle>().notNull().default('mixed'),
 		lastOpenedAt: timestamp('last_opened_at', { withTimezone: true }),
-		/**
-		 * Long readings (books) get questions chapter by chapter, when the user picks a chapter to be
-		 * tested on, instead of all at once.
-		 */
-		questionsOnDemand: boolean('questions_on_demand').notNull().default(false),
+		/** How its quiz was last made, in Manage test; null until it has one. */
+		questionIntensity: text('question_intensity').$type<QuestionIntensity>(),
+		questionStyle: text('question_style').$type<QuestionStyle>(),
 		/** The bucket this reading is in, and its place there; both null when it is in none. */
 		collectionId: uuid('collection_id').references(() => collections.id, { onDelete: 'set null' }),
 		collectionPosition: integer('collection_position'),
+		/**
+		 * The reading this one was imported from, by a link in its text; it is listed under it. When
+		 * the parent is deleted, it stays as a reading of its own.
+		 */
+		parentId: uuid('parent_id').references((): AnyPgColumn => contentItems.id, { onDelete: 'set null' }),
+		/** The link it was imported from, before redirects, so the link finds it again. */
+		requestedUrl: text('requested_url'),
+		/** Importing every page this reading links to: running, or finished. Null when not asked. */
+		linksImport: text('links_import').$type<'importing' | 'done'>(),
 		createdAt: createdAt(),
 	},
-	(t) => [index('items_user_idx').on(t.userId, t.createdAt), index('items_collection_idx').on(t.collectionId, t.collectionPosition)],
+	(t) => [
+		index('items_user_idx').on(t.userId, t.createdAt),
+		index('items_collection_idx').on(t.collectionId, t.collectionPosition),
+		index('items_parent_idx').on(t.parentId),
+	],
 )
 
 export const sections = pgTable(
@@ -107,7 +120,7 @@ export const sections = pgTable(
 		title: text('title').notNull(),
 		blocks: jsonb('blocks').$type<Block[]>().notNull(),
 		wordCount: integer('word_count').notNull(),
-		/** For readings with questions on demand: the user asked for this section's questions. */
+		/** Picked in Manage test: its questions are written, and rewritten after a failure, until it has some. */
 		questionsWanted: boolean('questions_wanted').notNull().default(false),
 	},
 	(t) => [index('sections_item_idx').on(t.itemId, t.position)],
@@ -293,7 +306,7 @@ export const words = pgTable(
 	{
 		id: id(),
 		userId: userRef(),
-		/** Where it was met; null for words added by hand, or once the reading is deleted. */
+		/** Where it was met; null for words added by hand. Deleting the reading deletes its words. */
 		itemId: uuid('item_id').references(() => contentItems.id, { onDelete: 'set null' }),
 		word: text('word').notNull(),
 		/** The word as it appears in `sentence`. */

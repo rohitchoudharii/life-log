@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Peak",
-    "slug": "peak",
+    "name": "Life Log Club",
+    "slug": "life-log-club",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -39,7 +39,7 @@
       "expo-secure-store",
       "expo-notifications"
     ],
-    "scheme": "peak",
+    "scheme": "lifelogclub",
     "experiments": {
       "typedRoutes": true
     }

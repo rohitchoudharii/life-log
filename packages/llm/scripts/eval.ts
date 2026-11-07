@@ -2,12 +2,12 @@
  * Writes questions for fixed sample texts with a real key and prints them with their levels and
  * every rule the model broke, so prompt versions can be compared on the same input.
  *
- *   PEAK_PROVIDER=anthropic PEAK_MODEL=claude-… PEAK_API_KEY=… pnpm --filter @peak/llm eval [--intensity thorough] [--style mixed] [--budget 4000] [--skip-check] [files…]
+ *   LIFE_LOG_CLUB_PROVIDER=anthropic LIFE_LOG_CLUB_MODEL=claude-… LIFE_LOG_CLUB_API_KEY=… pnpm --filter @life-log-club/llm eval [--intensity thorough] [--style mixed] [--budget 4000] [--skip-check] [files…]
  *
  * --budget lowers the reply budget so even a short text takes several calls, which exercises the linking pass.
  * --skip-check turns off the second-pass quality check, which is on by default as in the app.
  */
-import { parseMarkdown, QUESTION_INTENSITIES, QUESTION_STYLES, sectionText, splitSections, type QuestionIntensity, type QuestionStyle } from '@peak/core'
+import { parseMarkdown, QUESTION_INTENSITIES, QUESTION_STYLES, sectionText, splitSections, type QuestionIntensity, type QuestionStyle } from '@life-log-club/core'
 import { readdirSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { parseArgs } from 'node:util'
@@ -20,10 +20,10 @@ const { values, positionals } = parseArgs({
 const intensity = values.intensity as QuestionIntensity
 const style = values.style as QuestionStyle
 if (!QUESTION_INTENSITIES.includes(intensity) || !QUESTION_STYLES.includes(style)) throw new Error('Bad --intensity or --style')
-const providerId = process.env.PEAK_PROVIDER ?? 'anthropic'
-const model = process.env.PEAK_MODEL
-const apiKey = process.env.PEAK_API_KEY
-if (!isProviderId(providerId) || !model || !apiKey) throw new Error('Set PEAK_PROVIDER, PEAK_MODEL, and PEAK_API_KEY')
+const providerId = process.env.LIFE_LOG_CLUB_PROVIDER ?? 'anthropic'
+const model = process.env.LIFE_LOG_CLUB_MODEL
+const apiKey = process.env.LIFE_LOG_CLUB_API_KEY
+if (!isProviderId(providerId) || !model || !apiKey) throw new Error('Set LIFE_LOG_CLUB_PROVIDER, LIFE_LOG_CLUB_MODEL, and LIFE_LOG_CLUB_API_KEY')
 const provider = providers[providerId]
 const budget = values.budget ? Number(values.budget) : undefined
 const prefs = { intensity, style, qualityCheck: !values['skip-check'] }

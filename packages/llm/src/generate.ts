@@ -4,6 +4,7 @@ import {
 	MIN_ABOVE_RECALL,
 	normalizeOutput,
 	parseQuestionContent,
+	questionCountFor,
 	QUESTION_LEVELS,
 	shuffleMcq,
 	shuffleSteps,
@@ -14,7 +15,7 @@ import {
 	type QuestionLevel,
 	type QuestionStyle,
 	type QuestionType,
-} from '@peak/core'
+} from '@life-log-club/core'
 import type { LlmProvider } from './providers'
 
 /** Bump when the prompt or the checks change, so stored questions record which rules made them. */
@@ -44,16 +45,6 @@ export type Generated = { ideas: Map<number, string[]>; terms: Map<number, Term[
 export type OnRejected = (stage: 'first' | 'checked' | 'dropped', rejected: { prompt: string; reasons: string[] }[]) => void
 const describe = (r: Rejected[]) =>
 	r.map((x) => ({ prompt: String((x.raw as { content?: { prompt?: unknown } })?.content?.prompt ?? '(no prompt)'), reasons: x.reasons }))
-
-const PER_QUESTION_WORDS: Record<QuestionIntensity, number> = { quick: 150, standard: 70, thorough: 35 }
-const LIMITS: Record<QuestionIntensity, [min: number, max: number]> = { quick: [1, 3], standard: [2, 8], thorough: [3, 20] }
-
-/** How many questions a section gets: more for longer sections and higher intensity. */
-export function questionCountFor(wordCount: number, intensity: QuestionIntensity) {
-	if (wordCount === 0) return 0
-	const [min, max] = LIMITS[intensity]
-	return Math.max(min, Math.min(max, Math.round(wordCount / PER_QUESTION_WORDS[intensity])))
-}
 
 /** Rough reply size of one question with its checklist, as JSON. */
 const TOKENS_PER_QUESTION = 350

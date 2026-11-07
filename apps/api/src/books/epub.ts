@@ -1,4 +1,4 @@
-import { htmlToBlocks, type Block, type DomNode } from '@peak/core'
+import { htmlToBlocks, type Block, type DomNode } from '@life-log-club/core'
 import { unzipSync } from 'fflate'
 import { DOMParser, parseHTML } from 'linkedom'
 import { posix } from 'node:path'
@@ -94,7 +94,7 @@ export function readEpub(bytes: Uint8Array): Epub {
 	// Encrypted chapters mean DRM. Encrypted fonts alone (font obfuscation) are fine.
 	const encryption = text('META-INF/encryption.xml')
 	if (files['META-INF/rights.xml'] || (encryption && byLocalName(xml(encryption), 'CipherReference').some((r) => !/\.(ttf|otf|woff2?)$/i.test(r.getAttribute('URI') ?? ''))))
-		throw new ExtractError("This book is protected with DRM, so Peak can't read it. Try a DRM-free copy.")
+		throw new ExtractError("This book is protected with DRM, so Life Log Club can't read it. Try a DRM-free copy.")
 
 	const container = text('META-INF/container.xml')
 	const opfPath = container && byLocalName(xml(container), 'rootfile')[0]?.getAttribute('full-path')

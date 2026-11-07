@@ -1,4 +1,4 @@
-import type { Block } from '@peak/core'
+import type { Block } from '@life-log-club/core'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -155,7 +155,7 @@ function titleOf(page: PdfPage | undefined): string {
 const require = createRequire(import.meta.url)
 const FONTS = pathToFileURL(join(dirname(require.resolve('pdfjs-dist/package.json')), 'standard_fonts') + '/').href
 
-/** Reads a PDF's text with pdf.js. A PDF with almost no text is a scan, which Peak cannot read yet. */
+/** Reads a PDF's text with pdf.js. A PDF with almost no text is a scan, which Life Log Club cannot read yet. */
 export async function readPdf(bytes: Uint8Array, fallbackTitle: string): Promise<{ title: string; blocks: Block[] }> {
 	const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs')
 	let doc
@@ -180,7 +180,7 @@ export async function readPdf(bytes: Uint8Array, fallbackTitle: string): Promise
 	}
 	const chars = pages.reduce((n, p) => n + p.items.reduce((m, i) => m + i.str.trim().length, 0), 0)
 	if (chars < Math.max(200, pages.length * 40))
-		throw new ExtractError("This PDF is scanned pages without text, so Peak can't read it yet.")
+		throw new ExtractError("This PDF is scanned pages without text, so Life Log Club can't read it yet.")
 	const meta = (await doc.getMetadata().catch(() => null))?.info as { Title?: string } | undefined
 	await doc.destroy()
 	const blocks = layoutPdf(pages)

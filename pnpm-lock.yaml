@@ -174,10 +174,10 @@ importers:
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
-      '@peak/core':
+      '@life-log-club/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@peak/llm':
+      '@life-log-club/llm':
         specifier: workspace:*
         version: link:../../packages/llm
       drizzle-orm:
@@ -232,7 +232,7 @@ importers:
       '@expo/vector-icons':
         specifier: ^15.1.1
         version: 15.1.1(expo-font@58.0.11(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0)
-      '@peak/core':
+      '@life-log-club/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@tanstack/react-query':
@@ -321,7 +321,7 @@ importers:
 
   packages/llm:
     dependencies:
-      '@peak/core':
+      '@life-log-club/core':
         specifier: workspace:*
         version: link:../core
       zod:

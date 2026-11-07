@@ -34,8 +34,8 @@ function Navigator() {
 				<Stack.Screen name="add" options={{ title: 'Add to library', presentation: 'modal' }} />
 				<Stack.Screen name="read/[id]" options={{ headerTitle: () => null }} />
 				<Stack.Screen name="test/[id]" options={{ title: 'Recall test' }} />
+				<Stack.Screen name="manage/[id]" options={{ headerTitle: () => null }} />
 				<Stack.Screen name="llm-key" options={{ headerTitle: () => null }} />
-				<Stack.Screen name="explain/[id]" options={{ title: 'Explain this', presentation: 'modal' }} />
 				<Stack.Screen name="teach/[id]" options={{ headerTitle: () => null }} />
 				<Stack.Screen name="words" options={{ headerTitle: () => null }} />
 			</Stack.Protected>

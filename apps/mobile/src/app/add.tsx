@@ -2,39 +2,25 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import * as DocumentPicker from 'expo-document-picker'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
-import type { QuestionIntensity, QuestionStyle } from '@peak/core'
 import { api } from '@/api'
 import { BucketPicker } from '@/buckets'
 import { space } from '@/theme'
-import { Button, Choice, ChoiceRow, ErrorText, Field, Group, Screen, Text } from '@/ui'
-
-const INTENSITIES: { value: QuestionIntensity; label: string; detail: string }[] = [
-	{ value: 'quick', label: 'Quick', detail: 'Key ideas only' },
-	{ value: 'standard', label: 'Standard', detail: 'Every main idea' },
-	{ value: 'thorough', label: 'Thorough', detail: 'As many as possible' },
-]
-
-const STYLES: { value: QuestionStyle; label: string }[] = [
-	{ value: 'mixed', label: 'Mixed' },
-	{ value: 'written', label: 'Written' },
-	{ value: 'choice', label: 'Choice' },
-]
+import { Button, Choice, ChoiceRow, ErrorText, Field, Group, Row, Screen, Text, Toggle } from '@/ui'
 
 export default function Add() {
 	const router = useRouter()
 	const queryClient = useQueryClient()
 	const [mode, setMode] = useState<'link' | 'file' | 'text'>('link')
 	const [url, setUrl] = useState('')
+	const [importLinks, setImportLinks] = useState(false)
 	const [file, setFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null)
 	const [title, setTitle] = useState('')
 	const [text, setText] = useState('')
-	const [questionIntensity, setIntensity] = useState<QuestionIntensity>('thorough')
-	const [questionStyle, setStyle] = useState<QuestionStyle>('mixed')
 	const [collectionId, setCollectionId] = useState<string | null>(null)
 	const add = useMutation({
 		mutationFn: () => {
-			const prefs = { questionIntensity, questionStyle, collectionId }
-			if (mode === 'link') return api.addUrl({ url: url.trim(), ...prefs })
+			const prefs = { collectionId }
+			if (mode === 'link') return api.addUrl({ url: url.trim(), importLinks, ...prefs })
 			if (mode === 'file' && file)
 				return api.uploadItem(file.file ?? { uri: file.uri, name: file.name, type: file.mimeType ?? 'application/octet-stream' }, prefs)
 			return api.addItem({ title, text, ...prefs })
@@ -74,7 +60,7 @@ export default function Add() {
 							}}
 						/>
 						<Text variant="muted">
-							Up to 50 MB, without DRM. Chapters become sections. For long books, questions are written chapter by chapter when you pick chapters to be tested on. Scanned PDFs without text can&apos;t be read yet.
+							Up to 50 MB, without DRM. Chapters become sections. Scanned PDFs without text can&apos;t be read yet.
 						</Text>
 					</Group>
 				) : mode === 'link' ? (
@@ -90,8 +76,19 @@ export default function Add() {
 							inputMode="url"
 						/>
 						<Text variant="muted">
-							Peak fetches the page and keeps only the article: its text, headings, and images. PDF links work too. For pages you need to be signed in to see, use the Chrome extension.
+							Life Log Club fetches the page and keeps only the article: its text, headings, and images. PDF links work too. For pages you need to be signed in to see, use the Chrome extension.
 						</Text>
+						<Row style={{ gap: space.md, marginTop: space.sm }}>
+							<Group gap={2} style={{ flex: 1 }}>
+								<Text>Import the pages it links to</Text>
+								<Text variant="muted">
+									{importLinks
+										? 'Each linked page becomes a reading inside this one, in the background. Pages that need a sign-in are skipped.'
+										: 'Links stay underlined while you read: tap one to open it or import it then.'}
+								</Text>
+							</Group>
+							<Toggle accessibilityLabel="Import the pages it links to" value={importLinks} onValueChange={setImportLinks} />
+						</Row>
 					</Group>
 				) : (
 					<>
@@ -111,29 +108,6 @@ export default function Add() {
 					</>
 				)}
 				<BucketPicker value={collectionId} onChange={setCollectionId} />
-				<Group gap={space.xs}>
-					<Text variant="label">How hard should the tests be?</Text>
-					<ChoiceRow>
-						{INTENSITIES.map((o) => (
-							<Choice key={o.value} label={o.label} detail={o.detail} selected={questionIntensity === o.value} onPress={() => setIntensity(o.value)} />
-						))}
-					</ChoiceRow>
-				</Group>
-				<Group gap={space.xs}>
-					<Text variant="label">Question style</Text>
-					<ChoiceRow>
-						{STYLES.map((o) => (
-							<Choice key={o.value} label={o.label} selected={questionStyle === o.value} onPress={() => setStyle(o.value)} />
-						))}
-					</ChoiceRow>
-					<Text variant="muted">
-						{questionStyle === 'choice'
-							? 'Multiple choice and putting steps in order, graded instantly without your AI.'
-							: questionStyle === 'written'
-								? 'Explain it, work out a number, predict what code prints, find the error. Numbers and outputs are checked exactly; explanations by your AI. Harder, and they stick better.'
-								: 'Peak picks the type that fits each idea: code gets predict the output and find the error, math gets worked problems, processes get steps to order.'}
-					</Text>
-				</Group>
 				<ErrorText error={add.error} />
 			</Group>
 		</Screen>

@@ -13,7 +13,17 @@ const words = (text: string) => text.split(/\s+/).filter(Boolean).length
  * The brain dump: before any question, the learner writes everything they remember. Free recall
  * right after reading is the strongest retrieval practice there is, so it cannot be skipped.
  */
-export function BrainDump({ itemId, sectionIds, title, onDone }: { itemId: string; sectionIds: string[]; title: string; onDone(recall: Recall): void }) {
+export function BrainDump({
+	itemId,
+	sectionIds,
+	title,
+	onDone,
+}: {
+	itemId: string
+	sectionIds: string[]
+	title: string
+	onDone(recall: Recall): void
+}) {
 	const c = useColors()
 	const [text, setText] = useState('')
 	const submit = useMutation({

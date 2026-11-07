@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Pressable, View } from 'react-native'
-import { api, type Me } from '@/api'
+import { api, type ExplainLevel, type Me } from '@/api'
+import { QuestionSettings } from '@/question-settings'
 import { remindersSupported, scheduleDailyReminder } from '@/reminders'
 import { useSession } from '@/session'
 import { hairline, radius, setAppearance, space, useAppearance, useColors, type Appearance } from '@/theme'
@@ -47,6 +48,12 @@ const APPEARANCES: { value: Appearance; label: string }[] = [
 	{ value: 'dark', label: 'Dark' },
 ]
 
+
+const EXPLAIN_LEVELS: { value: ExplainLevel; label: string }[] = [
+	{ value: 'new', label: 'New to this' },
+	{ value: 'standard', label: 'Standard' },
+	{ value: 'expert', label: 'Expert' },
+]
 const shiftTime = (time: string, minutes: number) => {
 	const [h, m] = time.split(':').map(Number)
 	const total = (((h! * 60 + m! + minutes) % 1440) + 1440) % 1440
@@ -70,7 +77,7 @@ export default function Settings() {
 			const ok = await scheduleDailyReminder(next.reminderTime)
 			setNotice(
 				next.reminderTime && remindersSupported && !ok
-					? 'Notifications are off for Peak, so no reminder will show. That is fine: the streak still tracks you.'
+					? 'Notifications are off for Life Log Club, so no reminder will show. That is fine: the streak still tracks you.'
 					: null,
 			)
 		},
@@ -94,7 +101,19 @@ export default function Settings() {
 					<Text>{k ? `${k.provider === 'anthropic' ? 'Anthropic' : 'OpenAI'} connected` : 'No AI connected'}</Text>
 					<Text variant="muted">{k ? `${k.model}, key ending ${k.last4}` : 'Add your own key to generate questions'}</Text>
 				</Tile>
-				{m && (
+			</Group>
+
+			{m && (
+				<Group gap={10}>
+					<Text variant="label">Questions</Text>
+					<Tile style={{ gap: space.md }}>
+						<QuestionSettings
+							intensity={m.questionIntensity}
+							style={m.questionStyle}
+							onChange={({ intensity, style }) => update.mutate({ questionIntensity: intensity, questionStyle: style })}
+						/>
+						<Text variant="muted">Where Manage test starts. Each reading keeps the settings its quiz was made with.</Text>
+					</Tile>
 					<Tile>
 						<Row>
 							<Group gap={2} style={{ flex: 1 }}>
@@ -104,8 +123,25 @@ export default function Settings() {
 							<Toggle accessibilityLabel="Check new questions" value={m.qualityCheck} onValueChange={(on) => update.mutate({ qualityCheck: on })} />
 						</Row>
 					</Tile>
-				)}
-			</Group>
+				</Group>
+			)}
+
+			{m && (
+				<Group gap={10}>
+					<Text variant="label">Explanations</Text>
+					<Tile style={{ gap: space.md }}>
+						<Group gap={space.xs}>
+							<Text>Explain for</Text>
+							<ChoiceRow>
+								{EXPLAIN_LEVELS.map((o) => (
+									<Choice key={o.value} label={o.label} selected={m.explainLevel === o.value} onPress={() => update.mutate({ explainLevel: o.value })} />
+								))}
+							</ChoiceRow>
+						</Group>
+						<Text variant="muted">Select text while reading, then tap Explain, Analogy or Example. The level menu on that pill changes this too.</Text>
+					</Tile>
+				</Group>
+			)}
 
 			<Group gap={10}>
 				<Text variant="label">Appearance</Text>

@@ -38,7 +38,7 @@ export const auth = new Hono<AppEnv>()
 
 		const code = newOtpCode()
 		await db.insert(t.otpCodes).values({ email, codeHash: hashOtp(email, code), expiresAt: new Date(Date.now() + CODE_TTL_MS) })
-		await mailer.send(email, 'Your Peak sign-in code', `Your code is ${code}. It expires in 10 minutes.`)
+		await mailer.send(email, 'Your Life Log Club sign-in code', `Your code is ${code}. It expires in 10 minutes.`)
 		// Same reply whether or not the account exists, so the endpoint does not reveal who signed up.
 		return c.json({ ok: true })
 	})

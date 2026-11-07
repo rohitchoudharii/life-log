@@ -1,4 +1,4 @@
-import { isProviderId, LlmError, providers, PROVIDER_IDS, type ProviderId } from '@peak/llm'
+import { isProviderId, LlmError, providers, PROVIDER_IDS, type ProviderId } from '@life-log-club/llm'
 import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'

@@ -42,7 +42,7 @@ export async function scheduleSessionEnd(at: Date) {
 	if (!remindersSupported || at.getTime() <= Date.now() || !(await allowed())) return
 	await Notifications.scheduleNotificationAsync({
 		identifier: SESSION_END,
-		content: { title: 'Focus time is up', body: 'Tell Peak where you stopped, then take your recall test.' },
+		content: { title: 'Focus time is up', body: 'Tell Life Log Club where you stopped, then take your recall test.' },
 		trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: at, channelId: 'reminders' },
 	})
 }

@@ -1,5 +1,5 @@
-import { localDay, sectionText, startIdea } from '@peak/core'
-import { EXPLAIN_KINDS, EXPLAIN_LEVELS, explainPassage, teachTurn, type TeachMessage } from '@peak/llm'
+import { localDay, sectionText, startIdea } from '@life-log-club/core'
+import { EXPLAIN_KINDS, EXPLAIN_LEVELS, explainPassage, teachTurn, type TeachMessage } from '@life-log-club/llm'
 import { and, asc, desc, eq, gt } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
@@ -87,10 +87,13 @@ export const notes = new Hono<AppEnv>()
 			z.object({
 				sectionId: z.uuid(),
 				passage: z.string().trim().min(1, 'Pick some text to explain').max(4000, 'Pick a shorter passage'),
-				level: z.enum(EXPLAIN_LEVELS).default('standard'),
+				// Left out, the level comes from the user's settings.
+				level: z.enum(EXPLAIN_LEVELS).optional(),
 				kind: z.enum(EXPLAIN_KINDS).default('explain'),
 			}),
 		)
+		const level = input.level ?? user.explainLevel
+		const { kind } = input
 		const [section] = await db
 			.select()
 			.from(t.sections)
@@ -99,13 +102,13 @@ export const notes = new Hono<AppEnv>()
 		const ai = await userAi(user.id, 'explain this')
 		let out
 		try {
-			out = await explainPassage(ai.provider, ai.apiKey, ai.model, { section: sectionText(section), passage: input.passage, level: input.level, kind: input.kind })
+			out = await explainPassage(ai.provider, ai.apiKey, ai.model, { section: sectionText(section), passage: input.passage, level, kind })
 		} catch (err) {
 			throw aiFailure(err, 'explain this')
 		}
 		const [note] = await db
 			.insert(t.notes)
-			.values({ userId: user.id, itemId: item.id, sectionId: section.id, kind: 'explanation', passage: input.passage, detail: { level: input.level, kind: input.kind, ...out } })
+			.values({ userId: user.id, itemId: item.id, sectionId: section.id, kind: 'explanation', passage: input.passage, detail: { level, kind, ...out } })
 			.returning()
 		return c.json({ note: view(note!) })
 	})

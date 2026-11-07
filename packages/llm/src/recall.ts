@@ -1,4 +1,4 @@
-import type { PointStatus } from '@peak/core'
+import type { PointStatus } from '@life-log-club/core'
 import { extractJson } from './generate'
 import type { LlmProvider } from './providers'
 

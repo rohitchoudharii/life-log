@@ -1,5 +1,5 @@
-import type { Judge } from '@peak/core'
-import { judgeAnswer, LlmError, providers, type LlmProvider } from '@peak/llm'
+import type { Judge } from '@life-log-club/core'
+import { judgeAnswer, LlmError, providers, type LlmProvider } from '@life-log-club/llm'
 import { eq } from 'drizzle-orm'
 import { HTTPException } from 'hono/http-exception'
 import { decryptSecret } from './crypto'

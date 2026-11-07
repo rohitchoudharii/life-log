@@ -22,7 +22,7 @@ Promise.resolve().then(g)</code></pre>
 			<table><tr><th>Queue</th><th>Runs</th></tr><tr><td>micro</td><td>first</td></tr></table>`)
 		expect(blocks).toEqual([
 			{ type: 'heading', level: 2, text: 'Tasks and microtasks' },
-			{ type: 'paragraph', text: 'Promise callbacks are microtasks. They run first.' },
+			{ type: 'paragraph', text: 'Promise callbacks are microtasks. They run first.', links: [{ start: 22, end: 32, href: 'https://example.com/mt' }] },
 			{ type: 'paragraph', text: 'Loose text in a div' },
 			{ type: 'paragraph', text: 'and a paragraph inside it' },
 			{ type: 'list', ordered: false, items: ['one', 'two nested'] },
@@ -31,6 +31,18 @@ Promise.resolve().then(g)</code></pre>
 			{ type: 'quote', text: 'Quoted' },
 			{ type: 'paragraph', text: 'Queue | Runs' },
 			{ type: 'paragraph', text: 'micro | first' },
+		])
+	})
+
+	it('keeps where links point, as ranges of the squashed text', () => {
+		const blocks = convert(`
+			<p>See   <a href="https://other.org/a#part">the   <b>full</b> guide</a> and <a href="#top">this page</a>, or <a href="mailto:x@y.z">mail</a>.</p>
+			<ul><li>plain</li><li>Read <a href="/b">B</a></li></ul>
+			<blockquote>As <a href="/c">C</a> says</blockquote>`)
+		expect(blocks).toEqual([
+			{ type: 'paragraph', text: 'See the full guide and this page, or mail.', links: [{ start: 4, end: 18, href: 'https://other.org/a' }] },
+			{ type: 'list', ordered: false, items: ['plain', 'Read B'], links: [{ start: 5, end: 6, href: 'https://example.com/b', item: 1 }] },
+			{ type: 'quote', text: 'As C says', links: [{ start: 3, end: 4, href: 'https://example.com/c' }] },
 		])
 	})
 

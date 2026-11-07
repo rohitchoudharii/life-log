@@ -29,4 +29,12 @@ describe('extractArticle', () => {
 		expect(text.some((t) => t.includes('https://learning.example.com/talk.mp4'))).toBe(true)
 		expect(text.some((t) => t.includes('https://www.youtube.com/watch?v=abc123XYZ_-'))).toBe(true)
 	})
+
+	it('reads pages hidden until their scripts run, even when the scripts outweigh the text', () => {
+		const html = `<html><body><div style="visibility:hidden;min-height:100vh"><article><h1>Hub</h1>${prose(8)}
+			<ul><li><a href="/python/intro/">Introduction</a></li></ul></article></div>
+			<script id="__NEXT_DATA__" type="application/json">${'{"x":1}'.repeat(5000)}</script></body></html>`
+		const { blocks } = extractArticle(html, 'https://site.example/hub/')
+		expect(blocks.find((b) => b.type === 'list')).toEqual({ type: 'list', ordered: false, items: ['Introduction'], links: [{ start: 0, end: 12, href: 'https://site.example/python/intro/', item: 0 }] })
+	})
 })

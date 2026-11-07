@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
-import type { PointStatus, QuestionType } from '@peak/core'
+import type { AnswerMark, PointStatus, QuestionType } from '@life-log-club/core'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type ComponentType, type ReactNode } from 'react'
 import { ActivityIndicator, Platform, Pressable, TextInput, View, type TextInputProps } from 'react-native'
@@ -96,7 +96,15 @@ function Field({ mono: monospace, lines = 1, style, ...props }: TextInputProps &
 	)
 }
 
-type WrittenReveal = { reference?: string; score?: number; feedback?: string; mustHave?: string[]; points?: PointStatus[]; misconception?: string | null }
+type WrittenReveal = {
+	reference?: string
+	score?: number
+	feedback?: string
+	mustHave?: string[]
+	points?: PointStatus[]
+	misconception?: string | null
+	marks?: AnswerMark[]
+}
 
 function Labeled({ label, children }: { label: string; children: ReactNode }) {
 	return (
@@ -107,13 +115,72 @@ function Labeled({ label, children }: { label: string; children: ReactNode }) {
 	)
 }
 
+/** Splits the answer around the judge's quotes, first occurrence each, skipping any that overlap an earlier one. */
+function markedRuns(text: string, marks: AnswerMark[]) {
+	const found = marks
+		.map((m) => ({ ...m, start: text.indexOf(m.quote) }))
+		.filter((m) => m.start >= 0)
+		.sort((a, b) => a.start - b.start)
+	const runs: { text: string; right?: boolean }[] = []
+	let at = 0
+	for (const m of found) {
+		if (m.start < at) continue
+		if (m.start > at) runs.push({ text: text.slice(at, m.start) })
+		runs.push({ text: m.quote, right: m.right })
+		at = m.start + m.quote.length
+	}
+	if (at < text.length) runs.push({ text: text.slice(at) })
+	return runs
+}
+
+/** The learner's answer in a box like the one they typed it into, with right phrases underlined and wrong ones struck through. */
+function MarkedAnswer({ text, marks = [] }: { text: string; marks?: AnswerMark[] }) {
+	const c = useColors()
+	const runs = markedRuns(text, marks)
+	const hasRight = runs.some((r) => r.right === true)
+	const hasWrong = runs.some((r) => r.right === false)
+	return (
+		<Labeled label="Your answer">
+			<View style={{ borderWidth: hairline, borderColor: c.ring, borderRadius: radius, padding: space.md, marginTop: space.xs }}>
+				<Text selectable>
+					{runs.map((r, i) =>
+						r.right === undefined ? (
+							r.text
+						) : (
+							<Text
+								key={i}
+								style={
+									r.right
+										? { textDecorationLine: 'underline', textDecorationColor: c.fg }
+										: { textDecorationLine: 'line-through', color: c.sub }
+								}
+							>
+								{r.text}
+							</Text>
+						),
+					)}
+				</Text>
+			</View>
+			{hasRight || hasWrong ? (
+				<Text variant="muted" style={{ marginTop: space.xs }}>
+					{[hasRight && 'Underlined: right', hasWrong && 'Struck through: wrong'].filter(Boolean).join('. ')}
+				</Text>
+			) : null}
+		</Labeled>
+	)
+}
+
 /** Feedback and the must-have points, as the judge marked them. */
 function Checklist({ reveal, skipped, heading }: { reveal: WrittenReveal; skipped: boolean; heading: string }) {
 	const points = reveal.mustHave ?? []
 	return (
 		<>
-			{reveal.misconception ? <Text>Misconception: {reveal.misconception}</Text> : null}
-			{reveal.feedback ? <Text>{reveal.feedback}</Text> : null}
+			{reveal.feedback || reveal.misconception ? (
+				<Labeled label="Feedback">
+					{reveal.misconception ? <Text>Misconception: {reveal.misconception}</Text> : null}
+					{reveal.feedback ? <Text>{reveal.feedback}</Text> : null}
+				</Labeled>
+			) : null}
 			{points.length ? (
 				<Group gap={space.xs}>
 					<Text variant="label">{heading}</Text>
@@ -145,12 +212,8 @@ const writtenView = <K extends 'short_answer' | 'find_error'>(label: string, hin
 		return (
 			<Group gap={space.md}>
 				<Mark ok={result.correct} label={skipped ? "You didn't know this one" : verdictLabel(reveal.score ?? 0)} />
-				{!skipped && (
-					<Labeled label="Your answer">
-						<Text selectable>{(response as { answer: string }).answer.trim()}</Text>
-					</Labeled>
-				)}
-				<Checklist reveal={reveal} skipped={skipped} heading="A full answer makes these points" />
+				{!skipped && <MarkedAnswer text={(response as { answer: string }).answer.trim()} marks={reveal.marks} />}
+				<Checklist reveal={reveal} skipped={skipped} heading="Important points" />
 				<Labeled label="Model answer">
 					<Text selectable>{reveal.reference}</Text>
 				</Labeled>
@@ -427,7 +490,7 @@ const mcq: QuestionView<'mcq'> = {
 	},
 }
 
-/** One view per question type. Adding a type in @peak/core means adding its view here. */
+/** One view per question type. Adding a type in @life-log-club/core means adding its view here. */
 type WordReveal = { word: string; sentence: string; meaning: string } & WrittenReveal
 
 /** The sentence a word was met in, set off like a quote. */

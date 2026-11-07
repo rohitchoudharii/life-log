@@ -1,17 +1,13 @@
-import { subtreeEnd, type Block } from '@peak/core'
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import type { Block } from '@life-log-club/core'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { HTTPException } from 'hono/http-exception'
-import { z } from 'zod'
 import { readEpub } from '../books/epub'
 import { readPdf } from '../books/pdf'
-import { db, t } from '../db'
-import { parseBody, requireUser, type AppEnv } from '../http'
-import { enqueueGeneration } from '../jobs'
+import { requireUser, type AppEnv } from '../http'
 import { saveImage } from '../media'
 import { ExtractError } from '../web/extract'
-import { createItem, ItemPrefs, ownItem } from './library'
+import { createItem, ItemPrefs } from './library'
 
 const MB = 1024 * 1024
 export const MAX_BOOK_BYTES = 50 * MB
@@ -42,11 +38,7 @@ export const books = new Hono<AppEnv>()
 			const form = await c.req.parseBody()
 			const file = form.file
 			if (!(file instanceof File)) throw new HTTPException(400, { message: 'Choose an EPUB or PDF file' })
-			const prefs = ItemPrefs.parse({
-				questionIntensity: form.questionIntensity || undefined,
-				questionStyle: form.questionStyle || undefined,
-				collectionId: form.collectionId || undefined,
-			})
+			const prefs = ItemPrefs.parse({ collectionId: form.collectionId || undefined })
 			const bytes = new Uint8Array(await file.arrayBuffer())
 			const name = file.name.replace(/\.(epub|pdf)$/i, '') || 'Untitled'
 			try {
@@ -63,33 +55,6 @@ export const books = new Hono<AppEnv>()
 				if (err instanceof ExtractError) throw new HTTPException(422, { message: err.message })
 				throw err
 			}
-			throw new HTTPException(415, { message: 'Peak reads EPUB and PDF files' })
+			throw new HTTPException(415, { message: 'Life Log Club reads EPUB and PDF files' })
 		},
 	)
-	// Questions for the chapters the user wants to be tested on. A picked section brings its whole
-	// chapter, so the chapter's questions are written together and can link its parts.
-	.post('/items/:id/prepare', async (c) => {
-		const item = await ownItem(c.var.user.id, c.req.param('id'))
-		const { sectionIds } = await parseBody(c, z.object({ sectionIds: z.array(z.uuid()).min(1).max(2000) }))
-		const all = await db
-			.select({ id: t.sections.id, level: t.sections.level })
-			.from(t.sections)
-			.where(eq(t.sections.itemId, item.id))
-			.orderBy(asc(t.sections.position))
-		const levels = all.map((s) => s.level)
-		const wanted = new Set<string>()
-		for (const id of sectionIds) {
-			let start = all.findIndex((s) => s.id === id)
-			if (start < 0) continue
-			while (start > 0 && all[start]!.level > 1) start--
-			for (let i = start; i < subtreeEnd(levels, start); i++) wanted.add(all[i]!.id)
-		}
-		if (!wanted.size) throw new HTTPException(400, { message: 'Pick sections of this reading' })
-		await db
-			.update(t.sections)
-			.set({ questionsWanted: true })
-			.where(and(eq(t.sections.itemId, item.id), inArray(t.sections.id, [...wanted])))
-		await db.update(t.contentItems).set({ status: 'processing', error: null }).where(eq(t.contentItems.id, item.id))
-		await enqueueGeneration(item.id)
-		return c.json({ sections: wanted.size })
-	})

@@ -1,9 +1,19 @@
 import { z } from 'zod'
 import type { Rating } from './scheduler'
 
-/** How many questions to write for each section, chosen per item when it is added. */
+/** How many questions to write for each section, chosen when a quiz is made. */
 export const QUESTION_INTENSITIES = ['quick', 'standard', 'thorough'] as const
 export type QuestionIntensity = (typeof QUESTION_INTENSITIES)[number]
+
+const PER_QUESTION_WORDS: Record<QuestionIntensity, number> = { quick: 150, standard: 70, thorough: 35 }
+const LIMITS: Record<QuestionIntensity, [min: number, max: number]> = { quick: [1, 3], standard: [2, 8], thorough: [3, 20] }
+
+/** How many questions a section gets: more for longer sections and higher intensity. */
+export function questionCountFor(wordCount: number, intensity: QuestionIntensity) {
+	if (wordCount === 0) return 0
+	const [min, max] = LIMITS[intensity]
+	return Math.max(min, Math.min(max, Math.round(wordCount / PER_QUESTION_WORDS[intensity])))
+}
 
 /** Which kinds of question to write: written answers, multiple choice, or both. */
 export const QUESTION_STYLES = ['mixed', 'written', 'choice'] as const
@@ -32,7 +42,10 @@ export type JudgeVerdict = {
 	points?: PointStatus[]
 	/** The misconception the answer stated, if any. */
 	misconception?: string | null
+	/** Exact phrases from the answer that are right or wrong, to mark in the learner's own words. */
+	marks?: AnswerMark[]
 }
+export type AnswerMark = { quote: string; right: boolean }
 
 /**
  * Turns the judge's per-point verdicts into a score. The judge only says what the answer covered;
@@ -112,6 +125,7 @@ async function gradeWritten(c: Judged, r: z.infer<typeof written>, judge: Judge)
 			mustHave: c.mustHave,
 			points: c.mustHave.length ? verdict.points : undefined,
 			misconception: verdict.misconception ?? null,
+			marks: verdict.marks ?? [],
 		},
 	}
 }

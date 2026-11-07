@@ -52,7 +52,7 @@ const publicLookup: typeof dnsLookup = ((hostname: string, options: { all?: bool
 
 export type Fetched = { url: string; status: number; contentType: string; body: Buffer }
 
-const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36 PeakReader/1.0'
+const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36 LifeLogClubReader/1.0'
 
 function once(url: URL, accept: string, maxBytes: number, signal: AbortSignal, referer?: string): Promise<Fetched & { location?: string }> {
 	const host = url.hostname.replace(/^\[|\]$/g, '')

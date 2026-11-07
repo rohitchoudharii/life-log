@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Peak capture",
+  "name": "Life Log Club capture",
   "version": "0.1.0",
-  "description": "Save the page you are reading to Peak, to learn it with recall tests.",
+  "description": "Save the page you are reading to Life Log Club, to learn it with recall tests.",
   "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
-  "action": { "default_popup": "popup.html", "default_title": "Capture this page to Peak" },
+  "action": { "default_popup": "popup.html", "default_title": "Capture this page to Life Log Club" },
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["http://localhost:8787/*"],
   "optional_host_permissions": ["https://*/*", "http://*/*"]

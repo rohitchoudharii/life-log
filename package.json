@@ -1,11 +1,11 @@
 {
-  "name": "peak",
+  "name": "life-log-club",
   "private": true,
   "packageManager": "pnpm@12.16.1",
   "scripts": {
     "db:up": "docker compose up -d db",
-    "dev:api": "pnpm --filter @peak/api dev",
-    "dev:app": "pnpm --filter @peak/mobile start",
+    "dev:api": "pnpm --filter @life-log-club/api dev",
+    "dev:app": "pnpm --filter @life-log-club/mobile start",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test"
   }

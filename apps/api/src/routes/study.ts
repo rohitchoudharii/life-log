@@ -10,10 +10,9 @@ import {
 	toPrompt,
 	type IdeaSchedule,
 	type QuestionLevel,
-	type QuestionStyle,
 	type QuestionType,
-} from '@peak/core'
-import { REVIEW_PROMPT_VERSION, writeForIdeas } from '@peak/llm'
+} from '@life-log-club/core'
+import { REVIEW_PROMPT_VERSION, writeForIdeas } from '@life-log-club/llm'
 import { and, asc, count, countDistinct, desc, eq, gte, inArray, isNotNull, lte, max, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
@@ -116,20 +115,18 @@ async function questionsFor(user: User, wants: Want[]) {
 /** Writes a fresh question for each idea whose questions have all been asked, and stores them. */
 async function writeFor(user: User, wants: Want[], existing: { ideaId: string | null; content: unknown }[]) {
 	const ideas = await db
-		.select({ id: t.ideas.id, text: t.ideas.text, itemId: t.ideas.itemId, sectionId: t.ideas.sectionId, style: t.contentItems.questionStyle, title: t.sections.title, blocks: t.sections.blocks })
+		.select({ id: t.ideas.id, text: t.ideas.text, itemId: t.ideas.itemId, sectionId: t.ideas.sectionId, title: t.sections.title, blocks: t.sections.blocks })
 		.from(t.ideas)
 		.innerJoin(t.sections, eq(t.sections.id, t.ideas.sectionId))
-		.innerJoin(t.contentItems, eq(t.contentItems.id, t.ideas.itemId))
 		.where(inArray(t.ideas.id, wants.map((w) => w.ideaId)))
 	const ai = await userAi(user.id, 'write new review questions')
-	const byStyle = new Map<QuestionStyle, { want: Want; idea: (typeof ideas)[number] }[]>()
-	for (const want of wants) {
+	const pairs = wants.flatMap((want) => {
 		const idea = ideas.find((i) => i.id === want.ideaId)
-		if (idea) byStyle.set(idea.style, [...(byStyle.get(idea.style) ?? []), { want, idea }])
-	}
-	const groups = [...byStyle].flatMap(([style, list]) => Array.from({ length: Math.ceil(list.length / 8) }, (_, k) => ({ style, list: list.slice(k * 8, k * 8 + 8) })))
+		return idea ? [{ want, idea }] : []
+	})
+	const groups = Array.from({ length: Math.ceil(pairs.length / 8) }, (_, k) => pairs.slice(k * 8, k * 8 + 8))
 	const out = await Promise.all(
-		groups.map(async ({ style, list }) => {
+		groups.map(async (list) => {
 			const made = await writeForIdeas(
 				ai.provider,
 				ai.apiKey,
@@ -140,7 +137,7 @@ async function writeFor(user: User, wants: Want[], existing: { ideaId: string | 
 					level: QUESTION_LEVELS[want.level]!,
 					asked: existing.filter((q) => q.ideaId === idea.id).map((q) => (q.content as { prompt: string }).prompt),
 				})),
-				style,
+				user.questionStyle,
 			)
 			const values = made.flatMap((q, k) => {
 				const { idea } = list[k]!

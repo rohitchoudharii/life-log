@@ -34,7 +34,7 @@ export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, screenX: 20, screen
 /** 'system' follows the phone or browser setting; the others override it on this device. */
 export type Appearance = 'system' | 'light' | 'dark'
 
-const APPEARANCE_KEY = 'peak.appearance'
+const APPEARANCE_KEY = 'lifelogclub.appearance'
 let appearance: Appearance = 'system'
 const listeners = new Set<() => void>()
 const isAppearance = (v: unknown): v is Appearance => v === 'system' || v === 'light' || v === 'dark'

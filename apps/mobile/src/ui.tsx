@@ -1,7 +1,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { useRef, type ComponentRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from 'react'
 import {
 	ActivityIndicator,
+	Animated,
+	Easing,
+	useWindowDimensions,
 	Platform,
 	Pressable,
 	ScrollView,
@@ -15,6 +18,8 @@ import {
 	type TextStyle,
 	type ViewStyle,
 	KeyboardAvoidingView,
+	Modal,
+	StyleSheet,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { font, hairline, radius, space, useColors } from './theme'
@@ -313,4 +318,47 @@ export function Toggle(props: Omit<SwitchProps, 'trackColor' | 'thumbColor'>) {
 	const c = useColors()
 	const web = { activeThumbColor: c.bg } as object
 	return <Switch {...props} {...web} trackColor={{ true: c.fg, false: c.track }} thumbColor={c.bg} />
+}
+
+/**
+ * A panel that slides up from the bottom over a dimmed page. Tapping outside it closes it. Its
+ * content scrolls when it is taller than most of the screen. `height` fixes the panel's height,
+ * such as '75%', so it opens at full size before its content loads.
+ */
+export function Sheet({ visible, onClose, height, children }: { visible: boolean; onClose(): void; height?: `${number}%`; children: ReactNode }) {
+	const c = useColors()
+	const insets = useSafeAreaInsets()
+	const { height: screen } = useWindowDimensions()
+	// The dim fades in with the modal while the panel slides up from below the screen.
+	const [slide] = useState(() => new Animated.Value(1))
+	useEffect(() => {
+		if (!visible) return
+		slide.setValue(1)
+		Animated.timing(slide, { toValue: 0, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }).start()
+	}, [visible, slide])
+	return (
+		<Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+			<View style={{ flex: 1, justifyContent: 'flex-end' }}>
+				{/* A sibling, not a parent, of the panel, so presses and scrolls in the panel stay in it. */}
+				<Pressable accessibilityLabel="Close" onPress={onClose} style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.35)' }]} />
+				<Animated.View
+					style={{
+						backgroundColor: c.bg,
+						width: '100%',
+						maxWidth: 680,
+						maxHeight: '85%',
+						height,
+						alignSelf: 'center',
+						borderTopLeftRadius: 16,
+						borderTopRightRadius: 16,
+						transform: [{ translateY: Animated.multiply(slide, screen) }],
+					}}
+				>
+					<ScrollView contentContainerStyle={{ padding: space.screenX, paddingBottom: space.xl + insets.bottom, gap: space.md }} keyboardShouldPersistTaps="handled">
+						{children}
+					</ScrollView>
+				</Animated.View>
+			</View>
+		</Modal>
+	)
 }

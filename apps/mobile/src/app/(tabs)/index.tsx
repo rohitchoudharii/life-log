@@ -51,7 +51,7 @@ export default function Today() {
 					<Tile onPress={() => router.push('/add')}>
 						<Text variant="label">Start here</Text>
 						<Text>Add your first reading</Text>
-						<Text variant="muted">Paste an article, notes, or a chapter. Peak splits it into sections and writes questions for each.</Text>
+						<Text variant="muted">Paste an article, notes, or a chapter. Life Log Club splits it into sections and writes questions for each.</Text>
 					</Tile>
 				)}
 			</Group>

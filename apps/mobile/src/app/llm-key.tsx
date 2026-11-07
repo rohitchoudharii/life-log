@@ -13,9 +13,9 @@ const guides: Record<Provider, { name: string; url: string; steps: string[] }> =
 		url: 'https://platform.claude.com/settings/keys',
 		steps: [
 			'Open the Claude Console at platform.claude.com and sign in, or create an account.',
-			'Go to Settings, then Billing, and add a little credit. You pay Anthropic directly for what Peak uses.',
+			'Go to Settings, then Billing, and add a little credit. You pay Anthropic directly for what Life Log Club uses.',
 			'Go to Settings, then API keys, and choose Create key.',
-			'Name it "Peak" and set Linked account to yourself. Scope it to one workspace, such as Default, not to all workspaces. Set the expiration to Never or a long period; Peak stops writing questions when the key expires.',
+			'Name it "Life Log Club" and set Linked account to yourself. Scope it to one workspace, such as Default, not to all workspaces. Set the expiration to Never or a long period; Life Log Club stops writing questions when the key expires.',
 			'Copy the key. It starts with sk-ant- and is shown only once. Paste it in the box above.',
 		],
 	},
@@ -25,7 +25,7 @@ const guides: Record<Provider, { name: string; url: string; steps: string[] }> =
 		steps: [
 			'Sign in at platform.openai.com. This is separate from ChatGPT, and a ChatGPT subscription does not pay for API use.',
 			'Open Settings, then Billing, and add a little credit. Until the account has credit, the key will not work.',
-			'Open API keys and choose Create new secret key. Name it "Peak", keep the Default project, and leave permissions on All.',
+			'Open API keys and choose Create new secret key. Name it "Life Log Club", keep the Default project, and leave permissions on All.',
 			'Copy the key. It starts with sk- and is shown only once. Paste it in the box above.',
 		],
 	},
@@ -96,7 +96,7 @@ export default function LlmKey() {
 			<Group>
 				<Text variant="title">Bring your own AI</Text>
 				<Text variant="muted">
-					Peak uses your own AI account to write questions and give feedback. Nobody else can use your key, and you can remove it any time.
+					Life Log Club uses your own AI account to write questions and give feedback. Nobody else can use your key, and you can remove it any time.
 				</Text>
 			</Group>
 

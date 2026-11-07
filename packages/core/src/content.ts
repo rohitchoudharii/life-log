@@ -1,12 +1,25 @@
 import { z } from 'zod'
 
+/**
+ * A link in a block's text: characters `start` to `end` of the text (of item `item`, in a list)
+ * point at `href`, an http(s) address without its #fragment. The reader offers to open it or to
+ * import the page it points at as a reading nested in this one.
+ */
+export const Link = z.object({
+	start: z.number().int().min(0),
+	end: z.number().int().positive(),
+	href: z.string(),
+	item: z.number().int().min(0).optional(),
+})
+export type Link = z.infer<typeof Link>
+
 // Content is stored as our own blocks, never as foreign HTML, so the app renders it natively.
 export const Block = z.discriminatedUnion('type', [
 	z.object({ type: z.literal('heading'), level: z.number().int().min(1).max(6), text: z.string() }),
-	z.object({ type: z.literal('paragraph'), text: z.string() }),
-	z.object({ type: z.literal('list'), ordered: z.boolean(), items: z.array(z.string()) }),
+	z.object({ type: z.literal('paragraph'), text: z.string(), links: z.array(Link).optional() }),
+	z.object({ type: z.literal('list'), ordered: z.boolean(), items: z.array(z.string()), links: z.array(Link).optional() }),
 	z.object({ type: z.literal('code'), language: z.string().optional(), text: z.string() }),
-	z.object({ type: z.literal('quote'), text: z.string() }),
+	z.object({ type: z.literal('quote'), text: z.string(), links: z.array(Link).optional() }),
 	/**
 	 * An image we downloaded, re-encoded, and serve ourselves at /media/:mediaId. `src` is where it
 	 * came from, kept only to attach bytes the browser extension sends later; it is never rendered.
@@ -50,6 +63,11 @@ export function blockText(block: Block): string {
 		default:
 			return block.text
 	}
+}
+
+/** Every page the blocks link to, once each, in reading order. */
+export function blockLinks(blocks: readonly Block[]): string[] {
+	return [...new Set(blocks.flatMap((b) => ('links' in b && b.links ? b.links.map((l) => l.href) : [])))]
 }
 
 /** Parses pasted plain text or Markdown into blocks. */

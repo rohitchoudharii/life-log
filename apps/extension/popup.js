@@ -1,4 +1,4 @@
-// Peak capture. Sends the page you are looking at to Peak, which keeps only its article.
+// Life Log Club capture. Sends the page you are looking at to Life Log Club, which keeps only its article.
 // Every value from a page or the server is set with textContent, never as HTML.
 
 const $ = (id) => document.getElementById(id)
@@ -29,7 +29,7 @@ async function api(method, path, body) {
 			body: body === undefined ? undefined : JSON.stringify(body),
 		})
 	} catch {
-		throw new Error(`Can't reach Peak at ${settings.apiUrl}. Is it running? You can change the address in Settings.`)
+		throw new Error(`Can't reach Life Log Club at ${settings.apiUrl}. Is it running? You can change the address in Settings.`)
 	}
 	const json = await res.json().catch(() => ({}))
 	if (res.status === 401 && token) {
@@ -38,7 +38,7 @@ async function api(method, path, body) {
 		show('email-form')
 		throw new Error('Your sign-in expired. Sign in again.')
 	}
-	if (!res.ok) throw new Error(json.error ?? `Peak answered ${res.status}`)
+	if (!res.ok) throw new Error(json.error ?? `Life Log Club answered ${res.status}`)
 	return json
 }
 
@@ -52,7 +52,7 @@ async function showCapture() {
 	const tab = await activeTab()
 	$('page-title').textContent = tab?.title ?? ''
 	const capturable = tab?.url && /^https?:/.test(tab.url)
-	$('page-host').textContent = capturable ? new URL(tab.url).hostname : 'Peak can capture web pages only, not this tab.'
+	$('page-host').textContent = capturable ? new URL(tab.url).hostname : 'Life Log Club can capture web pages only, not this tab.'
 	$('capture').disabled = !capturable
 
 	const { collections } = await api('GET', '/collections')
@@ -173,7 +173,7 @@ async function readPage(inlineBudget) {
 	return { url: location.href, title: document.title, html: root.outerHTML }
 }
 
-/** Runs in the page, so images load with the site's own cookies: the ones Peak's server could not get. */
+/** Runs in the page, so images load with the site's own cookies: the ones Life Log Club's server could not get. */
 async function readImages(srcs, maxBytes) {
 	const out = []
 	for (const src of srcs) {
@@ -213,12 +213,7 @@ $('capture-form').addEventListener('submit', async (e) => {
 		status('Reading the page…')
 		const [{ result: page }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: readPage, args: [INLINE_IMAGE_BYTES] })
 		status('Saving the article and its images…')
-		const { item, missingImages } = await api('POST', '/items/capture', {
-			...page,
-			collectionId,
-			questionIntensity: $('intensity').value,
-			questionStyle: 'mixed',
-		})
+		const { item, missingImages } = await api('POST', '/items/capture', { ...page, collectionId })
 
 		let rescued = 0
 		if (missingImages.length) {
@@ -232,7 +227,7 @@ $('capture-form').addEventListener('submit', async (e) => {
 		}
 
 		status()
-		$('done-text').textContent = `Added "${item.title}". Peak is writing its questions now.${missingImages.length ? ` ${rescued} of ${missingImages.length} blocked images were saved.` : ''}`
+		$('done-text').textContent = `Added "${item.title}".${missingImages.length ? ` ${rescued} of ${missingImages.length} blocked images were saved.` : ''}`
 		$('open').href = `${settings.appUrl}/read/${item.id}`
 		show('done')
 	} catch (err) {
@@ -253,7 +248,7 @@ $('save-settings').addEventListener('click', async () => {
 		// Another server needs permission to be reached from the extension.
 		const origin = `${new URL(apiUrl).origin}/*`
 		if (!(await chrome.permissions.contains({ origins: [origin] })) && !(await chrome.permissions.request({ origins: [origin] })))
-			throw new Error('Peak needs permission to reach that server')
+			throw new Error('Life Log Club needs permission to reach that server')
 		settings = { apiUrl, appUrl }
 		await chrome.storage.local.set({ settings })
 		status('Saved')

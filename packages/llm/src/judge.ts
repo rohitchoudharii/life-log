@@ -1,4 +1,4 @@
-import { scoreRubric, type JudgeInput, type JudgeVerdict, type PointStatus } from '@peak/core'
+import { scoreRubric, type AnswerMark, type JudgeInput, type JudgeVerdict, type PointStatus } from '@life-log-club/core'
 import { extractJson } from './generate'
 import type { LlmProvider } from './providers'
 
@@ -21,7 +21,9 @@ Feedback: 1 to 3 short sentences to the learner as "you". Name what they got, th
 
 Write the feedback as plain text: no Markdown, no backticks.
 
-Reply with JSON only: {"points": ["covered" | "vague" | "missing", …one per must-have point, in order], "misconception": string | null, "feedback": "…"}`
+Marks: the phrases in the answer that made a point ("right": true) and the phrases that are factually wrong ("right": false), so the learner sees them in their own words. Copy each "quote" exactly from the answer, character for character, a clause or sentence long, never the whole answer. Leave out phrases that are neither. Use [] when nothing stands out.
+
+Reply with JSON only: {"points": ["covered" | "vague" | "missing", …one per must-have point, in order], "misconception": string | null, "feedback": "…", "marks": [{"quote": "…", "right": true | false}, …]}`
 
 const STATUSES: PointStatus[] = ['covered', 'vague', 'missing']
 
@@ -45,9 +47,9 @@ Learner's answer:
 ${input.answer}
 """`,
 		json: true,
-		maxTokens: 600,
+		maxTokens: 1000,
 	})
-	const parsed = extractJson(raw) as { points?: unknown; misconception?: unknown; feedback?: unknown }
+	const parsed = extractJson(raw) as { points?: unknown; misconception?: unknown; feedback?: unknown; marks?: unknown }
 	if (!Array.isArray(parsed.points)) throw new Error('The model did not grade the points')
 	// A missing or unreadable verdict for a point counts against the answer, never for it.
 	const points = input.mustHave.map((_, i) => {
@@ -60,5 +62,10 @@ ${input.answer}
 		points,
 		misconception,
 		feedback: typeof parsed.feedback === 'string' ? parsed.feedback.trim() : '',
+		// A quote the answer does not contain cannot be marked, so it is dropped rather than shown out of place.
+		marks: (Array.isArray(parsed.marks) ? (parsed.marks as { quote?: unknown; right?: unknown }[]) : [])
+			.filter((m): m is AnswerMark => typeof m?.quote === 'string' && m.quote.trim() !== '' && typeof m.right === 'boolean')
+			.map((m) => ({ quote: m.quote.trim(), right: m.right }))
+			.filter((m) => input.answer.includes(m.quote)),
 	}
 }

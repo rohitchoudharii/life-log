@@ -15,7 +15,7 @@ import { recall } from './routes/recall'
 import { sessions } from './routes/sessions'
 import { study } from './routes/study'
 import { books } from './routes/books'
-import { mediaRoute, web } from './routes/web'
+import { mediaRoute, startLinkImports, web } from './routes/web'
 
 const app = new Hono()
 	.use(cors({ origin: env.CORS_ORIGINS.split(',').map((o) => o.trim()) }))
@@ -41,4 +41,5 @@ const app = new Hono()
 
 await runMigrations()
 await startJobs()
+await startLinkImports()
 serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, (info) => console.log(`API on http://localhost:${info.port}`))

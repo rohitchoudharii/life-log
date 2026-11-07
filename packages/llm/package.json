@@ -1,5 +1,5 @@
 {
-  "name": "@peak/llm",
+  "name": "@life-log-club/llm",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "eval": "tsx scripts/eval.ts"
   },
   "dependencies": {
-    "@peak/core": "workspace:*",
+    "@life-log-club/core": "workspace:*",
     "zod": "^4.1.0"
   },
   "devDependencies": {

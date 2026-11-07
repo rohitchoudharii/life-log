@@ -1,0 +1,1 @@
+ALTER TABLE "content_items" DROP COLUMN "questions_on_demand";

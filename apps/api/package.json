@@ -1,5 +1,5 @@
 {
-  "name": "@peak/api",
+  "name": "@life-log-club/api",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -13,8 +13,8 @@
   "dependencies": {
     "@hono/node-server": "^2.1.6",
     "@mozilla/readability": "^0.6.0",
-    "@peak/core": "workspace:*",
-    "@peak/llm": "workspace:*",
+    "@life-log-club/core": "workspace:*",
+    "@life-log-club/llm": "workspace:*",
     "drizzle-orm": "^0.45.4",
     "fflate": "^0.8.3",
     "hono": "^4.13.16",
