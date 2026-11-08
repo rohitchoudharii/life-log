@@ -1,4 +1,5 @@
-import { bigint, index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
+import { bigint, index, jsonb, pgPolicy, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 
 const id = () => uuid().primaryKey().defaultRandom()
 const createdAt = () => timestamp({ withTimezone: true }).notNull().defaultNow()
@@ -57,4 +58,33 @@ export const auditLog = pgTable(
 		at: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [index().on(t.event, t.email, t.at), index().on(t.event, t.ip, t.at)],
+)
+
+/** The member whose data a transaction may touch, set by `asUser`. Row-level security checks it. */
+const currentUser = sql`nullif(current_setting('app.user_id', true), '')::uuid`
+
+export const entries = pgTable(
+	'entries',
+	{
+		/** Chosen by the client, so a retried create can't make a duplicate. */
+		id: uuid().primaryKey(),
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		type: text().notNull(),
+		pillar: text().notNull(),
+		occurredAt: timestamp({ withTimezone: true }).notNull(),
+		/** Plain text, for entry types whose text isn't private. */
+		text: text(),
+		/** Encrypted text, for entry types whose text is about other people. */
+		textCt: text(),
+		details: jsonb().$type<Record<string, unknown>>().notNull(),
+		createdAt: createdAt(),
+		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		deletedAt: timestamp({ withTimezone: true }),
+	},
+	(t) => [
+		index().on(t.userId, t.occurredAt.desc()),
+		pgPolicy('own_entries', { for: 'all', using: sql`${t.userId} = ${currentUser}`, withCheck: sql`${t.userId} = ${currentUser}` }),
+	],
 )

@@ -15,6 +15,9 @@
     "invite": "pnpm --silent --filter @life-log-club/server invite"
   },
   "devDependencies": {
+    "@life-log-club/contract": "workspace:*",
+    "@orpc/client": "^1.16.2",
+    "@orpc/contract": "^1.16.2",
     "@playwright/test": "^1.65.0",
     "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",

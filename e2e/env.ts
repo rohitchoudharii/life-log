@@ -8,4 +8,6 @@ export const e2eEnv = {
 	DATABASE_OWNER_URL: 'postgres://peak:peak@localhost:5544/lifelog_e2e',
 	DATABASE_URL: 'postgres://lifelog_app:lifelog_app@localhost:5544/lifelog_e2e',
 	APP_ORIGIN: `http://localhost:${WEB_PORT}`,
+	// A fixed key for test data only.
+	ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
 }

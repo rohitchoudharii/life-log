@@ -20,11 +20,19 @@ You need Docker and Node 26 (`nvm install 26`, then `nvm use` in this folder) wi
 ```bash
 pnpm install
 pnpm db:up                                   # Postgres in Docker, on localhost:5544
-cp apps/server/.env.example apps/server/.env # first time only
+cp apps/server/.env.example apps/server/.env # first time only, then set ENCRYPTION_KEY
 pnpm dev                                     # API on :8787, web app on http://localhost:5173
 ```
 
-The API creates its database and account on first start.
+The API creates its database and account on first start. Set `ENCRYPTION_KEY` in `apps/server/.env` with `openssl rand -base64 32`, and keep a copy somewhere safe: notes about people are encrypted with it and can't be read without it.
+
+## Data
+
+Every log is an **entry**: a time, a type (such as a gym set, a meal or a meeting), its details, and optional text. Each type belongs to one pillar. The types and their details live in `packages/domain/src/entries.ts`.
+
+- Each member sees only their own entries. Postgres row-level security enforces this, not only the API code.
+- The text of entries about other people (meetings) is encrypted with AES-256-GCM before it is stored.
+- A removed entry can be restored for 30 days; a nightly job then deletes it for good.
 
 ## Members
 

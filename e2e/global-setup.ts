@@ -5,8 +5,8 @@ import { sql } from './db'
 export default async function globalSetup() {
 	try {
 		await sql(`do $$ begin
-			if to_regclass('public.users') is not null then
-				truncate users, invites, sessions, audit_log cascade;
+			if to_regclass('public.entries') is not null then
+				truncate users, invites, sessions, audit_log, entries cascade;
 			end if;
 		end $$`)
 	} catch (error) {
