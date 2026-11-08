@@ -1,96 +1,228 @@
 # Life Log Club: product vision
 
-**One line:** a personal operating system for growing in every part of life. You practise, you log it, the app helps you remember and reflect, and you can watch yourself grow, one ring at a time.
+**One line:** Life Log Club makes sure you don't forget what life teaches you, and lets you look back at how far you've come.
+
+Versions and order of work are decided later. This document describes the whole product.
+
+## Who it's for
+
+- Me first, then a small circle of close friends and family, by invite only.
+- It is not a public app. Nobody can reach it until I decide to roll it out.
+- Each person's log is private to them. Members don't share anything with each other for now.
+
+## Principles
+
+- **Simple:** logging or reading anything takes one or two clicks. Typing a value or a note doesn't count as a click.
+- **Smart defaults:** the app fills in what it can (last workout's numbers, today's date, the person you logged last), so most logs are just Save.
+- **One Log button:** a **+ Log** button on every screen, and a keyboard shortcut, open quick capture.
+- **Not tied to a schedule:** the app does not assume a daily routine or fixed times. It works whenever I open it.
+
+## Learning and doing
+
+Learning and doing matter most, so they sit at the heart of the app.
+
+- **Learning** is reading: books, articles and pages, split into sections.
+- **Doing** is recall: after reading, you work to bring back what you read, then review it at growing gaps. Recall is what turns reading into understanding.
+- **Later, doing grows into projects:** milestones and goal planning for the projects in life that help me grow, in the style of *Getting Things Done* (see Path).
 
 ## The idea
 
 A tree adds one ring every year. Each ring is a log of how that year went. Life Log Club does the same for a person, across four pillars that each grow at their own pace.
 
-The app already has a working loop for the mind: **read → recall → review at growing gaps**. The product grows by applying the same loop to the rest of life:
+## The loop
 
-1. **Do**: a workout, a conversation, an experiment, a career move
-2. **Log**: capture it in seconds, by text, voice, photo or a quick form
-3. **Reflect**: the AI asks one or two good questions and pulls out the lesson
-4. **Recall**: lessons come back on a spaced schedule, so they stick
-5. **Grow**: progress shows up as rings, streaks, milestones and a life timeline
+1. **Capture:** add one entry in a few seconds, as text, a photo, a link, or a short form.
+2. **Reflect:** the AI asks one good question and pulls out what matters.
+3. **Keep:** the app does one or more of three things with the entry (below).
+4. **Grow:** progress shows up as records, milestones and a history per pillar.
+
+### Three things the app does with an entry
+
+| | What it is | Examples | What the app does |
+| --- | --- | --- | --- |
+| **Remember** | Lessons and ideas | A concept from a book, a lesson from a hard conversation | Brings it back on a spaced schedule until it sticks |
+| **Relive** | Moments worth keeping | A trip, an achievement, a personal record, a good evening with friends | Brings it back when you look back, on this day, and on hard days |
+| **Track** | Numbers over time | Sets and weight, protein, sleep, reading time | Shows progress, records and trends |
+
+Remember keeps the mind sharp. Relive and Track keep motivation alive: when you are down, seeing the gym log, past achievements and past trips reminds you what you have already done.
+
+## Screens
+
+### Design direction: Pillar worlds
+
+Chosen from five design iterations. Each pillar is its own world with its own character, because each is a different part of life:
+
+- **Mind, the reading room:** warm cream paper, serif type for reading, a focused reader with recall built in, index-card review.
+- **Body, the training log:** dark, bold numbers, a set-by-set logger with steppers for weight and reps, a rest timer after each set, one-click meals.
+- **Heart, the journal:** warm cards for people, the last person already picked so a meeting is one line plus Save, a "before you meet" note, mood in one click.
+- **Home, the swallow's hub:** one card per pillar that previews its world and grows into it when clicked.
+
+The shared chrome stays the same everywhere, so it is still one app: the navy sidebar (a bottom tab bar on phone), the red **+ Log** button, search, and the shortcuts (L to log, / to search, 1 to 4 to switch worlds).
+
+Trade-off to manage: three visual styles cost more to build and keep consistent, so they share one set of components and tokens, and each world only changes colours, type and the main layout.
+
+### Home
+
+An overview of all four pillars on one screen. Each pillar shows a short summary of where it stands (for example ideas due for review, the last workout, the last person logged) and opens its own dashboard in one click.
+
+### Pillar dashboards
+
+Each pillar has its own dashboard, designed for what that part of life needs. The dashboards do not share one layout. The operation I use most in each pillar gets the most prominent place.
+
+| Pillar | Main operations |
+| --- | --- |
+| **Mind** | Reading and recall |
+| **Body** | Workout and meal |
+| **Heart** | Person log |
+| **Path** | Deferred |
+
+## Operations
+
+Each operation lists how many clicks it takes.
+
+### Mind
+
+| Operation | Clicks | Example |
+| --- | --- | --- |
+| Add a reading | 1 | Paste a link or drop a file, then click Add |
+| Continue a reading | 1 | Click the book; it opens where I stopped |
+| Recall after a section | 1 | Click Recall, write what I remember, then answer the questions |
+| Review due ideas | 1 | Click Review and answer each idea |
+| Save an idea | 2 | Select text, then click Save idea |
+| Finish a book | 1 | Click Finished |
+
+### Body
+
+| Operation | Clicks | Example |
+| --- | --- | --- |
+| Log a workout | 1 | Click Repeat last workout, change one weight, save |
+| Log one set | 1 | Bench 80 kg × 8, then Add |
+| Log protein or a meal | 1 | Click "Shake 30 g" |
+| Log sleep or body weight | 1 | Type the value, then Save |
+| See records | 1 | Click an exercise to see its records and chart |
+
+### Heart
+
+| Operation | Clicks | Example |
+| --- | --- | --- |
+| Log a meeting with a person | 2 | Pick the person, write one line, Save |
+| Add a person | 2 | Type a name and details, Save |
+| Log a moment | 2 | Add a photo and one line, Save |
+| Mood check-in | 1 | Click one of five faces |
+
+### Path
+
+Deferred. We decide its operations later.
+
+### Across all pillars
+
+- Edit or delete an entry
+- Search all entries
+- Look back: history and records per pillar
+- Sign in, manage devices, settings
+
+## Looking back for motivation
+
+On hard days, the app shows proof of what I have already done:
+
+- Personal records and how far the gym numbers have come
+- Past achievements and milestones, including books finished
+- Past trips and good moments, with photos
+- What happened on this day in earlier years
+- Wins and lessons I wrote on earlier hard days
 
 ## The four pillars
 
 | Pillar | Colour | Covers | Ring meaning |
 | --- | --- | --- | --- |
-| **Mind** | Indigo `#3B4A8C` | Intelligence, reading, skills, creativity | Ideas learned and remembered |
-| **Body** | Coral `#E85D50` | Workouts, sleep, food, health | Training done, health trends |
-| **Heart** | Amber `#F0A93B` | People, relationships, emotions, giving back | Time and care given to people, mood |
-| **Path** | Green `#2F6E3F` | Career, money, purpose, bucket list, achievements | Goals moved forward |
+| **Mind** | Indigo `#3B4A8C` | Reading, concepts, skills, creativity | Ideas learned and remembered |
+| **Body** | Coral `#E85D50` | Gym, sleep, food, health | Training done, health trends |
+| **Heart** | Amber `#F0A93B` | People, relationships, emotions, moments | Time and care given to people, mood |
+| **Path** | Green `#2F6E3F` | Work, money, purpose, trips, bucket list, achievements | Goals moved forward |
 
-Logging and tracking (days, experiments, journeys) are not a fifth pillar. They are the engine that runs under all four.
+Every entry belongs to a pillar. The engine below runs under all four.
 
-## Mind (built today, then extended)
+### Mind
 
-**Already built:** reading from links, files and the Chrome extension; sections; AI-generated recall checks; brain dump; spaced review after 1, 2 and 3 days, then at growing gaps; vocabulary; focus sessions; daily reminders.
+- **Reader:** import links and files (later, the Chrome extension); split into sections
+- **Books as goals and milestones:** a book I plan to read can be a goal ("finish *Peak* by March"), and finishing a book is a milestone, with the key lessons from it
+- **Recall check:** after a section, write what you remember (brain dump), then answer AI-written questions
+- **Spaced review:** ideas come back after 1, 2 and 3 days, then at growing gaps
+- **Vocabulary:** new words come back the same way
+- **Teach-back:** explain a topic in your own words; the AI checks it against the source
+- **Mental models:** save ideas as cards, linked to the readings they came from
+- **Skills:** pick a skill, set a practice goal, log deliberate-practice sessions (*Peak*)
 
-**Next:**
+### Body
 
-- **Skill tracks:** pick a skill (Rust, chess, public speaking), set a practice goal, and log deliberate-practice sessions with what you worked on and where you struggled (*Peak*)
-- **Mental models library:** save ideas as cards that come back in review, linked to the readings they came from
-- **Teach-back:** explain a topic in your own words and the AI grades it against the source (builds on the existing tutor and judge)
-- **Creativity log:** side projects, drafts, sketches, with a gallery view
+- **Gym log:** exercises, sets, reps, weight, time; templates; repeat last session
+- **Progress:** personal records, weekly volume, charts per exercise, progress photos
+- **Food (light):** protein and meals in one tap or one line; no calorie counting by default
+- **Sleep and rest:** bedtime, wake time, naps, energy (1 to 5)
+- **Health record:** doctor visits, tests, results and symptoms with dates
 
-## Body
+### Heart
 
-- **Workout log:** exercises, sets, reps, weight, time; templates for your usual routines; one tap to repeat last session
-- **Progress:** personal records, volume per week, charts per exercise, progress photos
-- **Recovery:** sleep, soreness, energy (1–5), resting heart rate; Apple Health and Google Fit import later
-- **Food (light):** meals as photos or one line, not calorie counting by default
-- **Health record:** doctor visits, tests, results, symptoms with dates, so you can answer "when did this start?"
-- **Embrace it:** a short post-workout note ("how did it feel, what did you learn") that goes into the same reflection loop
+- **People:** a profile per person (how you met, birthday, interests, things that matter to them)
+- **Interactions:** quick capture after meeting someone; "before you meet" card with the last conversation and open threads
+- **Mood check-in:** mood and energy in one tap, with an optional note
+- **Moments:** evenings out, the sky, small good things, with a photo
+- **Wins and gratitude:** a few lines, resurfaced on hard days
 
-## Heart
+### Path (deferred)
 
-### People
+Path's operations are not decided yet. These ideas stay as notes:
 
-- **Person profile:** how you met, birthday, family, interests, likes and dislikes, things they told you that matter
-- **Interaction log:** what happened, when, where, how you felt, what they did; quick capture right after a call or meeting
-- **Personality notes:** traits and patterns you notice over time, with the AI summarising "what you know about Priya" from all your logs
-- **Before you meet:** a briefing card: last conversation, open threads, things to ask about, upcoming dates
-- **Talk it through:** ask the AI how to approach a hard conversation, using what you've logged about the person
-- **Relationship map:** a graph of the people in your life, grouped by circle (family, close friends, work, community), sized by closeness, with "drifting" alerts when you haven't been in touch
+- **Work productivity:** do things faster, reduce friction, and learn better at work
+- **Projects and milestones (*Getting Things Done* style):** one inbox for open loops; projects across life with milestones and a clear next action; a weekly review
+- **Goals:** yearly themes, quarterly goals, weekly actions
+- **Trips:** places, dates, photos and stories
+- **Bucket list:** things to do, see and learn, with a photo and story when ticked off
+- **Achievements:** milestones from all four pillars
+- **Money (light):** money decisions and the lessons from them; savings goals
 
-This is a personal app, so notes about other people stay private to you. Notes sent to the AI coach go to your own LLM provider with your key; use nicknames if you prefer. If the API ever runs off your own machine, encrypt the people notes the same way the LLM key is encrypted with `ENCRYPTION_KEY`.
+## Later: context shared between pillars
 
-### Emotions
+In future, pillars will share context. For example, a finished book (Mind) becomes a milestone or achievement (Path), and a person (Heart) can appear on a moment or a trip. We don't design this yet, but the data model should not block it.
 
-- **Daily check-in:** mood and energy in one tap, with an optional note
-- **Patterns:** the AI links mood to sleep, workouts, people and work ("your energy is lower after weeks with no exercise")
-- **Gratitude and wins:** a few lines at night, resurfaced on hard days
+## The engine
 
-## Path
+- **Entry:** one data model for everything logged. Every entry has a time, a pillar, and optional people and photos.
+- **Lessons and spaced recall:** any entry can produce a lesson; lessons share one review scheduler with reading.
+- **Look back:** history, records, on this day, and the motivation view above.
+- **AI coach:** uses my own LLM key. Asks reflection questions, summarises weeks, spots patterns.
+- **Search:** across all entries, filterable by pillar and person.
 
-- **Career:** roles, projects, wins, feedback received, skills used; a "brag document" that writes itself for reviews and job changes
-- **Goals:** yearly themes broken into quarterly goals and weekly actions, each linked to a pillar
-- **Bucket list:** things to do, see and learn before you die, with categories, target year, and a photo and story when you tick one off
-- **Achievements:** a trophy shelf of milestones from all four pillars
-- **Parallel journeys:** several long-running journeys side by side (learning Japanese, training for a marathon, building a startup), each with its own timeline, so you can see how they overlap
-- **Money (light):** money decisions and the lessons from them, plus savings goals; not a full budgeting app
-- **Values:** write down your principles once, then check weekly reviews against them
+## Platforms
 
-## The engine (shared by every pillar)
+1. **Web app first**, served from my own server. Over time I want to use the phone less and the web more.
+2. **Phone app second**, for what a browser can't do well: an alarm (planned later), reliable notifications, quick capture on the go, and health data import.
+3. **Chrome extension** for capturing pages, using the same server.
 
-- **Universal log entry:** one capture screen for anything: text, voice note, photo, link, or a structured form per type. Every entry has a time, a pillar, optional people and optional journey.
-- **Day log:** a journal view of each day, built from everything you logged, plus a short "how was today" note
-- **Experiments:** "For 30 days I'll sleep by 11pm." A hypothesis, a measure, a daily check-off, and a conclusion at the end that becomes a lesson
-- **Lessons and spaced recall:** any entry can produce a lesson. Lessons go into the same review scheduler as reading (`packages/core`), so life lessons come back like flashcards
-- **AI coach:** uses your own key (`packages/llm`). Asks reflection questions, summarises weeks, spots patterns across pillars, answers "what did I learn about X?"
-- **Search and timeline:** one timeline of your whole life, filterable by pillar, person and journey; full-text and AI search over everything
-- **Reviews:** weekly (10 minutes), monthly and yearly. The yearly review draws your new ring.
+## Security and access
 
-## Signature screens
+Goal: as hard to get into as a banking app, but it never signs me out in the middle of reading, a test, or anything else.
 
-- **Today:** due reviews, today's check-in, planned workout, people to reach out to, active experiments
-- **Life rings:** a live chart. Each quadrant is a pillar; each ring is a month or year; thickness shows how much you invested. Tap a ring to open that period.
-- **Balance wheel:** a score from 1 to 10 for each pillar, updated in the weekly review, so neglected areas stand out
-- **People map:** the relationship graph
-- **Journeys:** parallel timelines side by side
+- **Hidden until rollout:** the whole site sits behind a private gate (for example a private network such as Tailscale, or an access proxy with an allowlist), so strangers can't even reach the sign-in page.
+- **Invite only:** no public sign-up. I add each member.
+- **Passkeys:** sign in with Face ID, Touch ID or a security key. No passwords. Backup codes for recovery.
+- **Trusted devices:** a new browser or device must be approved from a device that is already trusted. Each new device sends an alert.
+- **Stays signed in:** on a trusted device the session lasts a long time and renews while in use. No idle timeout. After 30 days away from a device, it asks for the passkey again.
+- **Remote sign-out:** a list of devices, with sign-out for a lost one.
+- **Data protection:** encrypted in transit and at rest; private fields (people notes, LLM keys) encrypted again with an app key; regular backups; a log of every sign-in.
+
+## How we build it
+
+Base frame first, then small incremental releases (agile). Each release adds one feature on top of the frame and is usable on its own.
+
+The base frame is what every later feature stands on:
+
+- **Server, database and web app shell**
+- **Security and access:** private gate, invite only, passkeys, trusted devices, 30-day passkey check, remote sign-out
+- **The entry:** one data model for everything logged
+- **The review scheduler:** one spaced schedule shared by reading ideas and life lessons
+- **Home and pillar dashboards:** the overview and an empty dashboard per pillar, ready for features
+- **Brand and theme:** logo, colours, pillar colours, type
 
 ## Brand
 
@@ -101,22 +233,18 @@ This is a personal app, so notes about other people stay private to you. Notes s
 - **Monochrome version:** needed for the favicon, the Android monochrome icon and dark mode.
 - **Voice:** calm, honest, a little warm. A training partner, not a cheerleader.
 
-## Roadmap
-
-| Phase | Focus | Builds on |
-| --- | --- | --- |
-| **1. Foundation** | Universal log entry, pillar tags, day log, Today screen showing all pillars, new logo and icons | Existing auth, API, theme |
-| **2. Body** | Workout log, templates, progress charts, recovery check-in | Focus sessions, reminders |
-| **3. Heart** | People profiles, interaction log, before-you-meet card, mood check-in | LLM tutor for "talk it through" |
-| **4. Engine** | Lessons from any entry into spaced review, experiments, weekly review | Review scheduler in `packages/core` |
-| **5. Path** | Goals, bucket list, achievements, parallel journeys, career log | Engine from phase 4 |
-| **6. Insight** | Life rings, balance wheel, people map, AI cross-pillar patterns, yearly review | Data from all phases |
-
 ## Open questions
 
-- [ ] Rename the app, or keep "Life Log Club"? "Club" suits a future group mode; for a personal app, "Life Log" alone also works.
-- [ ] Mobile-first only, or a web dashboard for the bigger views (people map, life rings)?
-- [ ] Import from other apps (Apple Health, Strava, Goodreads, Google Calendar)? Which first?
-- [ ] Voice capture: transcribe on the phone or through the LLM key?
-- [x] Which logo? The swallow.
-- [ ] Redraw the swallow as a vector (SVG) and make a simplified mark for 16 px favicons.
+- [x] Can members of the club share anything with each other? Not for now; everything is private.
+- [x] Should a trusted device ask for a passkey again after a long time away? Yes, after 30 days away.
+- [ ] Plan the alarm feature for the phone app.
+- [x] What should work productivity cover? Doing things faster, reducing friction, and learning better.
+- [x] Voice capture? Yes, but later, not in the base frame. Uses: a gym note between sets, a note while walking after meeting someone, a spoken brain dump after reading, teach-back out loud.
+- [x] Import from other apps? Not planned. Capture pages with the web extension for now; explore imports later.
+- [x] Keep the name "Life Log Club"? Yes.
+- [x] A simplified swallow for very small sizes? Yes. Redraw the swallow as SVG, plus a simpler SVG mark for the 16 px browser tab icon, where the detailed swallow blurs into a smudge.
+- [x] Versions? Design the base frame first, then release in small increments.
+- [x] Signature screens? Replaced by a Home overview and one dashboard per pillar, each with its own design.
+- [x] Design direction? Pillar worlds (iteration 5 of 5).
+- [ ] Path: which operations does it have?
+- [ ] Home: what exactly does each pillar's summary show?
