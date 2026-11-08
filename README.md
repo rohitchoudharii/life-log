@@ -18,14 +18,25 @@ Life Log Club makes sure you don't forget what life teaches you, and lets you lo
 
 You need Docker and Node 26 (`nvm install 26`, then `nvm use` in this folder) with pnpm (`npm install -g pnpm`).
 
+The first time only, copy the two settings files and fill them in:
+
 ```bash
-pnpm install
-pnpm db:up                                   # Postgres in Docker, on localhost:5544
-cp apps/server/.env.example apps/server/.env # first time only, then set ENCRYPTION_KEY
-pnpm dev                                     # API on :8787, web app on http://localhost:5173
+cp .env.example .env
+cp apps/server/.env.example apps/server/.env
 ```
 
-The API creates its database and account on first start. Set `ENCRYPTION_KEY` in `apps/server/.env` with `openssl rand -base64 32`, and keep a copy somewhere safe: notes about people are encrypted with it and can't be read without it.
+- In `.env`, set `POSTGRES_PASSWORD` to a new password from `openssl rand -hex 24`.
+- In `apps/server/.env`, put that same password in `DATABASE_OWNER_URL`, a second new password in `DATABASE_URL`, and set `ENCRYPTION_KEY` with `openssl rand -base64 32`. Keep a copy of the key somewhere safe: notes about people are encrypted with it and can't be read without it.
+
+Then:
+
+```bash
+pnpm install
+pnpm db:up   # Postgres in Docker, on localhost:5544 only
+pnpm dev     # API on :8787, web app on http://localhost:5173
+```
+
+The database has two accounts. `lifelog_owner` owns the tables and runs migrations. `lifelog_app` is the account the API uses, so row-level security applies to every request. The API creates the `lifelog_app` account and sets its password from `DATABASE_URL` on every start, so to change that password, edit `DATABASE_URL` and restart.
 
 ## Screens
 

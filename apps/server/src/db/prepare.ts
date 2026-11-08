@@ -24,8 +24,9 @@ export async function prepareDatabase() {
 		const db = await admin.query('select 1 from pg_database where datname = $1', [name])
 		if (!db.rowCount) await admin.query(`create database ${pg.escapeIdentifier(name)}`)
 		const r = await admin.query('select 1 from pg_roles where rolname = $1', [decodeURIComponent(app.username)])
-		if (!r.rowCount)
-			await admin.query(`create role ${role} login password ${pg.escapeLiteral(decodeURIComponent(app.password))}`)
+		// Setting the password on every start lets a new password in DATABASE_URL take effect.
+		const password = pg.escapeLiteral(decodeURIComponent(app.password))
+		await admin.query(`${r.rowCount ? 'alter' : 'create'} role ${role} login password ${password}`)
 	} finally {
 		await admin.end()
 	}

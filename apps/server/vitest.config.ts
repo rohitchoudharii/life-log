@@ -1,12 +1,18 @@
+import { readFileSync } from 'node:fs'
+import { parseEnv } from 'node:util'
 import { defineConfig } from 'vitest/config'
 
-// Integration tests use their own database, created on first run.
+// Integration tests use their own database, created on first run, with the database accounts
+// from .env, because accounts are shared by every database on the server.
+const local = parseEnv(readFileSync(new URL('.env', import.meta.url), 'utf8'))
+const onTestDatabase = (url: string | undefined) => Object.assign(new URL(url!), { pathname: '/lifelog_test' }).toString()
+
 export default defineConfig({
 	test: {
 		env: {
 			NODE_ENV: 'test',
-			DATABASE_OWNER_URL: 'postgres://peak:peak@localhost:5544/lifelog_test',
-			DATABASE_URL: 'postgres://lifelog_app:lifelog_app@localhost:5544/lifelog_test',
+			DATABASE_OWNER_URL: onTestDatabase(local.DATABASE_OWNER_URL),
+			DATABASE_URL: onTestDatabase(local.DATABASE_URL),
 			ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'),
 		},
 		fileParallelism: false,

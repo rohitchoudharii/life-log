@@ -1,13 +1,20 @@
+import { readFileSync } from 'node:fs'
+import { parseEnv } from 'node:util'
+
 // End-to-end tests run their own API and web servers on separate ports, against a separate
-// database, so they never touch development data.
+// database, so they never touch development data. They use the database accounts from
+// apps/server/.env, because accounts are shared by every database on the server.
+const local = parseEnv(readFileSync(new URL('../apps/server/.env', import.meta.url), 'utf8'))
+const onTestDatabase = (url: string | undefined) => Object.assign(new URL(url!), { pathname: '/lifelog_e2e' }).toString()
+
 export const API_PORT = 8788
 export const WEB_PORT = 5174
 export const FAKE_LLM_PORT = 8799
 export const e2eEnv = {
 	NODE_ENV: 'test',
 	PORT: String(API_PORT),
-	DATABASE_OWNER_URL: 'postgres://peak:peak@localhost:5544/lifelog_e2e',
-	DATABASE_URL: 'postgres://lifelog_app:lifelog_app@localhost:5544/lifelog_e2e',
+	DATABASE_OWNER_URL: onTestDatabase(local.DATABASE_OWNER_URL),
+	DATABASE_URL: onTestDatabase(local.DATABASE_URL),
 	APP_ORIGIN: `http://localhost:${WEB_PORT}`,
 	// A fixed key for test data only.
 	ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
