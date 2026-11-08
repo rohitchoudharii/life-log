@@ -10,8 +10,86 @@
 	--color-body: #e85d50;
 	--color-heart: #f0a93b;
 	--color-path: #2f6e3f;
+	--font-serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+	--font-rounded: ui-rounded, 'SF Pro Rounded', 'Nunito', 'Avenir Next', system-ui, sans-serif;
+}
+
+/*
+ * Each Pillar world sets the same few tokens, so every component works in every world.
+ * A world changes only colours and type; layout and behaviour stay shared.
+ */
+@theme inline {
+	--color-world: var(--world-bg);
+	--color-world-ink: var(--world-ink);
+	--color-world-muted: var(--world-muted);
+	--color-world-card: var(--world-card);
+	--color-world-line: var(--world-line);
+	--color-world-accent: var(--world-accent);
+	--color-world-on-accent: var(--world-on-accent);
+	--font-world: var(--world-font);
+}
+
+[data-world] {
+	--world-font: ui-sans-serif, system-ui, sans-serif;
+	--world-on-accent: #fff;
+	background: var(--world-bg);
+	color: var(--world-ink);
+	font-family: var(--world-font);
+}
+[data-world='home'] {
+	--world-bg: #f2e8d5;
+	--world-ink: #1f2a4a;
+	--world-muted: #6e6a66;
+	--world-card: #fcf8f0;
+	--world-line: #e4d9c2;
+	--world-accent: #1f2a4a;
+}
+/* Mind: the reading room. Warm paper and serif type. */
+[data-world='mind'] {
+	--world-bg: #f6efe1;
+	--world-ink: #272a38;
+	--world-muted: #716a5f;
+	--world-card: #fffcf6;
+	--world-line: #e2d4ba;
+	--world-accent: #3b4a8c;
+	--world-font: var(--font-serif);
+}
+/* Body: the training log. Dark, with bold numbers. */
+[data-world='body'] {
+	--world-bg: #161619;
+	--world-ink: #f3f0ea;
+	--world-muted: #9e9a92;
+	--world-card: #202025;
+	--world-line: #303037;
+	--world-accent: #e85d50;
+}
+/* Heart: the journal. Warm and rounded. */
+[data-world='heart'] {
+	--world-bg: #fbf3e8;
+	--world-ink: #3b2d20;
+	--world-muted: #87725c;
+	--world-card: #fffcf6;
+	--world-line: #eeddc4;
+	--world-accent: #b8741a;
+	--world-font: var(--font-rounded);
 }
 
 body {
 	@apply bg-paper text-ink antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	::before,
+	::after {
+		animation: none !important;
+		transition: none !important;
+	}
+}
+
+@keyframes toast-in {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
 }

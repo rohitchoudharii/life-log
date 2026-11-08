@@ -3,7 +3,7 @@ import { serialize } from 'hono/utils/cookie'
 import { db } from '../db/client'
 import { auditLog, sessions, users } from '../db/schema'
 import { env } from '../env'
-import { audit, type RequestInfo } from './audit'
+import type { RequestInfo } from './audit'
 import { deviceLabel } from './device-label'
 import { hashToken, newToken } from './tokens'
 
@@ -36,11 +36,9 @@ export async function loadSession(token: string | undefined, now = new Date()): 
 		.where(and(eq(sessions.tokenHash, hashToken(token)), isNull(sessions.revokedAt)))
 	if (!row || row.user.disabledAt) return { kind: 'none' }
 	const idle = now.getTime() - row.session.lastSeenAt.getTime()
-	if (idle > IDLE_LIMIT_MS) {
-		await db.update(sessions).set({ revokedAt: now }).where(eq(sessions.id, row.session.id))
-		await audit('session.expired', { userId: row.user.id, email: row.user.email }, null)
-		return { kind: 'expired' }
-	}
+	// An expired session stays as it is, so every request (even ones already in flight) gets the
+	// same answer. Signing in makes a new session; the nightly cleanup deletes the old one.
+	if (idle > IDLE_LIMIT_MS) return { kind: 'expired' }
 	// Each use moves the 30 days forward. Writing once a minute is enough.
 	if (idle > MINUTE) await db.update(sessions).set({ lastSeenAt: now }).where(eq(sessions.id, row.session.id))
 	return { kind: 'ok', session: row.session, user: row.user }

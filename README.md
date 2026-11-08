@@ -27,6 +27,14 @@ pnpm dev                                     # API on :8787, web app on http://l
 
 The API creates its database and account on first start. Set `ENCRYPTION_KEY` in `apps/server/.env` with `openssl rand -base64 32`, and keep a copy somewhere safe: notes about people are encrypted with it and can't be read without it.
 
+## Screens
+
+- **Home** is the hub: one card per pillar with its latest numbers, and the recent entries from every pillar.
+- Each pillar is its own world: **Mind** is a reading room, **Body** a training log and **Heart** a journal. **Path** is coming later.
+- **+ Log** opens one dialog for every type. It fills in the last values you used, so a repeat log is one click on Save.
+- Removing an entry shows **Undo** for a few seconds.
+- Shortcuts: `L` opens the log, `1`–`4` switch between Home and the worlds, `Esc` closes the dialog.
+
 ## Data
 
 Every log is an **entry**: a time, a type (such as a gym set, a meal or a meeting), its details, and optional text. Each type belongs to one pillar. The types and their details live in `packages/domain/src/entries.ts`.

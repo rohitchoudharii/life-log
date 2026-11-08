@@ -1,7 +1,9 @@
 import type { AiKey } from '@life-log-club/contract'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { errorMessage, orpc } from '../rpc'
+import { useSignOut } from '../shell'
 import { Button, ErrorText, Field } from '../ui'
 
 const PROVIDERS: { id: AiKey['provider']; name: string; hint: string }[] = [
@@ -25,6 +27,7 @@ export function Settings() {
 	)
 	const remove = useMutation(orpc.ai.removeKey.mutationOptions({ onSuccess: refresh }))
 	const current = key.data
+	const signOut = useSignOut()
 
 	return (
 		<section className="grid gap-4">
@@ -95,6 +98,18 @@ export function Settings() {
 						</Button>
 					</form>
 				)}
+			</div>
+			<div className="flex flex-wrap items-center gap-3 rounded-2xl bg-white p-5 ring-1 ring-ink/5">
+				<div className="mr-auto">
+					<h2 className="text-lg font-semibold">Account</h2>
+					<p className="text-sm text-ink/60">See where you are signed in, and sign out a lost device.</p>
+				</div>
+				<Link to="/devices" className="rounded-lg border border-ink/15 px-3 py-1.5 text-sm hover:bg-ink/5">
+					Signed-in devices
+				</Link>
+				<button type="button" onClick={() => signOut.mutate({})} className="rounded-lg border border-ink/15 px-3 py-1.5 text-sm hover:bg-red/10 hover:text-red">
+					Sign out
+				</button>
 			</div>
 		</section>
 	)

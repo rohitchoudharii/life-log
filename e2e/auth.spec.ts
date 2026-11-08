@@ -21,8 +21,10 @@ async function signIn(page: Page, email: string, password = PASSWORD) {
 }
 
 async function signOut(page: Page) {
-	await page.getByRole('banner').getByRole('button', { name: 'Sign out' }).click()
+	await page.goto('/settings')
+	await page.getByRole('main').getByRole('button', { name: 'Sign out' }).click()
 	await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+	await page.goto('/')
 }
 
 test('an invite link from `pnpm invite` sets a password and signs in, and the session survives a reload', async ({

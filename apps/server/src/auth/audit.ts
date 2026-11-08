@@ -8,7 +8,6 @@ export type AuditEvent =
 	| 'signin.failed'
 	| 'signin.locked'
 	| 'signout'
-	| 'session.expired'
 	| 'device.signed-out'
 
 export type RequestInfo = { ip: string | null; userAgent: string | null }

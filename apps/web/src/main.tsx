@@ -4,9 +4,12 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Devices } from './pages/devices'
 import { Settings } from './pages/settings'
-import { Home, SignedIn } from './pages/signed-in'
+import { Home } from './pages/home'
 import { Welcome } from './pages/welcome'
+import { Body, Heart, Mind } from './pages/worlds'
 import { isUnauthorized, orpc } from './rpc'
+import { SignedIn } from './shell'
+import { ToastProvider } from './toast'
 import './styles.css'
 
 // When any call finds the session gone (signed out from another device, or 30 days away),
@@ -25,10 +28,13 @@ const welcomeRoute = createRoute({ getParentRoute: () => rootRoute, path: '/welc
 const appRoute = createRoute({ getParentRoute: () => rootRoute, id: 'app', component: SignedIn })
 const homeRoute = createRoute({ getParentRoute: () => appRoute, path: '/', component: Home })
 const devicesRoute = createRoute({ getParentRoute: () => appRoute, path: '/devices', component: Devices })
+const mindRoute = createRoute({ getParentRoute: () => appRoute, path: '/mind', component: Mind })
+const bodyRoute = createRoute({ getParentRoute: () => appRoute, path: '/body', component: Body })
+const heartRoute = createRoute({ getParentRoute: () => appRoute, path: '/heart', component: Heart })
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: '/settings', component: Settings })
 
 const router = createRouter({
-	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, devicesRoute, settingsRoute])]),
+	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, mindRoute, bodyRoute, heartRoute, devicesRoute, settingsRoute])]),
 })
 
 declare module '@tanstack/react-router' {
@@ -40,7 +46,9 @@ declare module '@tanstack/react-router' {
 createRoot(document.getElementById('root')!).render(
 	<StrictMode>
 		<QueryClientProvider client={queryClient}>
-			<RouterProvider router={router} />
+			<ToastProvider>
+				<RouterProvider router={router} />
+			</ToastProvider>
 		</QueryClientProvider>
 	</StrictMode>,
 )

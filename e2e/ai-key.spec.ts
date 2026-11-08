@@ -10,7 +10,7 @@ async function joinAndOpenSettings(page: Page) {
 	await page.getByLabel('Type it again').fill('swallows come home')
 	await page.getByRole('button', { name: 'Set password and enter' }).click()
 	await expect(page.getByRole('heading', { name: 'Welcome, Rohit' })).toBeVisible()
-	await page.getByRole('link', { name: 'Settings' }).click()
+	await page.getByRole('link', { name: 'Account' }).click()
 	await expect(page.getByRole('heading', { name: 'Your AI key' })).toBeVisible()
 	return email
 }
