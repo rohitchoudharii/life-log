@@ -1,8 +1,7 @@
-import { contract } from '@life-log-club/contract'
-import { implement } from '@orpc/server'
 import { pool } from './db/client'
-
-const os = implement(contract)
+import { os } from './orpc'
+import { auth } from './routes/auth'
+import { devices } from './routes/devices'
 
 export const router = os.router({
 	system: {
@@ -15,4 +14,6 @@ export const router = os.router({
 			}
 		}),
 	},
+	auth,
+	devices,
 })

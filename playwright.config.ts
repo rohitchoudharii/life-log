@@ -1,21 +1,11 @@
 import { defineConfig, devices } from '@playwright/test'
-
-// End-to-end tests run their own API and web servers on separate ports, against a separate
-// database, so they never touch development data.
-const API_PORT = 8788
-const WEB_PORT = 5174
-export const e2eEnv = {
-	NODE_ENV: 'test',
-	PORT: String(API_PORT),
-	DATABASE_OWNER_URL: 'postgres://peak:peak@localhost:5544/lifelog_e2e',
-	DATABASE_URL: 'postgres://lifelog_app:lifelog_app@localhost:5544/lifelog_e2e',
-	APP_ORIGIN: `http://localhost:${WEB_PORT}`,
-}
+import { API_PORT, e2eEnv, WEB_PORT } from './e2e/env'
 
 export default defineConfig({
 	testDir: 'e2e',
 	fullyParallel: true,
 	reporter: 'list',
+	globalSetup: './e2e/global-setup.ts',
 	use: { baseURL: `http://localhost:${WEB_PORT}`, trace: 'retain-on-failure' },
 	projects: [
 		{ name: 'desktop', use: { ...devices['Desktop Chrome'] } },

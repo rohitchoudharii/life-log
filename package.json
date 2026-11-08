@@ -9,13 +9,16 @@
   "scripts": {
     "db:up": "docker compose up -d db",
     "dev": "pnpm --parallel --filter @life-log-club/server --filter @life-log-club/web dev",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm -r typecheck && tsc -p e2e",
     "test": "pnpm -r test",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "invite": "pnpm --silent --filter @life-log-club/server invite"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.0",
     "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1",
     "typescript": "~6.0.3",
     "vitest": "^5.1.0"
   }

@@ -26,6 +26,18 @@ pnpm dev                                     # API on :8787, web app on http://l
 
 The API creates its database and account on first start.
 
+## Members
+
+Life Log Club is invite only. To add someone, or to give a member a new password:
+
+```bash
+pnpm invite someone@example.com
+```
+
+This prints a link that is valid for 7 days and works once. Send it only to that person. Setting a password signs out every device that used the old one.
+
+Members stay signed in while they use a device. A device that is not used for 30 days must sign in again. **Devices** lists every signed-in device and can sign out a lost one. Five wrong passwords for one email lock it for 15 minutes.
+
 ## Checks
 
 ```bash
