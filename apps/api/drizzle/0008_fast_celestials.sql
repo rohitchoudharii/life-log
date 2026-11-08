@@ -1,1 +1,0 @@
-ALTER TABLE "users" ADD COLUMN "quality_check" boolean DEFAULT true NOT NULL;

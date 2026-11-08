@@ -1,5 +1,7 @@
 # Life Log Club
 
+<img src="apps/mobile/assets/logo.png" alt="Life Log Club logo: a swallow in flight" width="240" />
+
 A learning app built on deliberate practice (*Peak*) and retrieval practice: read a section, take a recall check on exactly what you read, and review it again after 1, 2, and 3 days, then at growing gaps.
 
 ## Layout
