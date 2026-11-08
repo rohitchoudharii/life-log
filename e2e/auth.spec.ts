@@ -5,8 +5,9 @@ import { e2eEnv } from './env'
 
 const PASSWORD = 'swallows come home'
 
-async function join(page: Page, link: string, name = 'Rohit', password = PASSWORD) {
+async function join(page: Page, link: string, email: string, name = 'Rohit', password = PASSWORD) {
 	await page.goto(link)
+	await expect(page.getByLabel('Email')).toHaveValue(email)
 	await page.getByLabel('Your name').fill(name)
 	await page.getByLabel('Choose a password').fill(password)
 	await page.getByLabel('Type it again').fill(password)
@@ -37,7 +38,7 @@ test('an invite link from `pnpm invite` sets a password and signs in, and the se
 	})
 	const link = out.match(/\/welcome#\S+/)?.[0]
 	expect(link, out).toBeTruthy()
-	await join(page, link!)
+	await join(page, link!, email)
 	await expect(page).toHaveURL('/')
 	await page.reload()
 	await expect(page.getByRole('heading', { name: 'Welcome, Rohit' })).toBeVisible()
@@ -45,7 +46,7 @@ test('an invite link from `pnpm invite` sets a password and signs in, and the se
 
 test('signing in needs the right password, and an unknown email gets the same answer', async ({ page }) => {
 	const email = newEmail()
-	await join(page, await invite(email))
+	await join(page, await invite(email), email)
 	await signOut(page)
 
 	await signIn(page, email, 'not my password')
@@ -59,7 +60,7 @@ test('signing in needs the right password, and an unknown email gets the same an
 
 test('five wrong passwords lock the account, even against the right one', async ({ page }) => {
 	const email = newEmail()
-	await join(page, await invite(email))
+	await join(page, await invite(email), email)
 	await signOut(page)
 	for (let i = 0; i < 5; i++) {
 		await signIn(page, email, `wrong guess ${i}`)
@@ -70,23 +71,19 @@ test('five wrong passwords lock the account, even against the right one', async 
 })
 
 test('an invite link works only once', async ({ page }) => {
-	const link = await invite(newEmail())
-	await join(page, link)
+	const email = newEmail()
+	const link = await invite(email)
+	await join(page, link, email)
 	await signOut(page)
 	await page.goto(link)
-	await page.getByLabel('Your name').fill('Someone else')
-	await page.getByLabel('Choose a password').fill('another password')
-	await page.getByLabel('Type it again').fill('another password')
-	await page.getByRole('button', { name: 'Set password and enter' }).click()
-	await expect(page.getByRole('alert')).toHaveText(
-		'This invite link has expired or was already used. Ask for a new one.',
-	)
+	await expect(page.getByText('This invite link has expired or was already used. Ask for a new one.')).toBeVisible()
+	await expect(page.getByLabel('Choose a password')).toHaveCount(0)
 })
 
 test('a device signed out from another device is asked to sign in again', async ({ browser }) => {
 	const email = newEmail()
 	const lost = await browser.newPage()
-	await join(lost, await invite(email))
+	await join(lost, await invite(email), email)
 
 	const other = await browser.newPage()
 	await other.goto('/devices')
@@ -105,7 +102,7 @@ test('a device signed out from another device is asked to sign in again', async 
 
 test('a device unused for 30 days must sign in again, and one used within 30 days stays in', async ({ page }) => {
 	const email = newEmail()
-	await join(page, await invite(email))
+	await join(page, await invite(email), email)
 
 	await ageSessions(email, 29)
 	await page.reload()

@@ -11,6 +11,7 @@ import { os } from '../orpc'
 const toUser = (u: typeof users.$inferSelect) => ({ id: u.id, email: u.email, name: u.name })
 
 const WRONG = 'Email or password is wrong.'
+const INVITE_USED = 'This invite link has expired or was already used. Ask for a new one.'
 
 export const auth = {
 	me: os.auth.me.handler(async ({ context }) => {
@@ -18,6 +19,17 @@ export const auth = {
 		if (check.kind === 'ok') return { user: toUser(check.user), reason: null }
 		if (context.token) context.resHeaders.append('set-cookie', sessionCookie(null))
 		return { user: null, reason: check.kind === 'expired' ? 'expired' : 'signed-out' }
+	}),
+
+	checkInvite: os.auth.checkInvite.handler(async ({ input }) => {
+		const [invite] = await db
+			.select({ email: invites.email })
+			.from(invites)
+			.where(
+				and(eq(invites.tokenHash, hashToken(input.token)), isNull(invites.usedAt), gt(invites.expiresAt, new Date())),
+			)
+		if (!invite) throw new ORPCError('BAD_REQUEST', { message: INVITE_USED })
+		return invite
 	}),
 
 	acceptInvite: os.auth.acceptInvite.handler(async ({ input, context }) => {
@@ -35,9 +47,7 @@ export const auth = {
 				)
 				.returning()
 			if (!invite)
-				throw new ORPCError('BAD_REQUEST', {
-					message: 'This invite link has expired or was already used. Ask for a new one.',
-				})
+				throw new ORPCError('BAD_REQUEST', { message: INVITE_USED })
 			const [user] = await tx
 				.insert(users)
 				.values({ email: invite.email, name: input.name, passwordHash })

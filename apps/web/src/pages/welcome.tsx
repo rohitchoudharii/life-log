@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { errorMessage, orpc } from '../rpc'
@@ -16,6 +16,7 @@ export function Welcome() {
 	const [password, setPassword] = useState('')
 	const [confirm, setConfirm] = useState('')
 	const [mismatch, setMismatch] = useState(false)
+	const invite = useQuery({ ...orpc.auth.checkInvite.queryOptions({ input: { token } }), enabled: !!token, retry: false })
 	const accept = useMutation(
 		orpc.auth.acceptInvite.mutationOptions({
 			onSuccess: async () => {
@@ -30,6 +31,13 @@ export function Welcome() {
 				<p className="text-sm">Open the whole invite link you were sent, or ask for a new one.</p>
 			</AuthCard>
 		)
+	// Check `data` first: after the invite is used, a refetch fails, but the page is leaving anyway.
+	if (!invite.data)
+		return (
+			<AuthCard title={invite.isError ? 'This link no longer works' : 'Welcome to the club'}>
+				<p className="text-sm">{invite.isError ? errorMessage(invite.error) : 'Checking your invite link…'}</p>
+			</AuthCard>
+		)
 	return (
 		<AuthCard title="Welcome to the club">
 			<form
@@ -40,6 +48,8 @@ export function Welcome() {
 					if (password === confirm) accept.mutate({ token, name, password })
 				}}
 			>
+				<Field label="Email" type="email" autoComplete="username" readOnly value={invite.data.email} />
+				<p className="-mt-2 text-xs text-ink/60">You sign in with this email.</p>
 				<Field label="Your name" autoComplete="name" required value={name} onChange={(e) => setName(e.target.value)} />
 				<Field
 					label="Choose a password"

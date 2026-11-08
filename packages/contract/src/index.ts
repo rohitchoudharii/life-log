@@ -56,6 +56,8 @@ export const contract = {
 		me: oc.output(
 			z.object({ user: User.nullable(), reason: z.enum(['signed-out', 'expired']).nullable() }),
 		),
+		/** The email an unused invite link is for, so the welcome page can show who signs in with it. */
+		checkInvite: oc.input(z.object({ token: z.string().min(1) })).output(z.object({ email: z.string() })),
 		acceptInvite: oc
 			.input(z.object({ token: z.string().min(1), name: z.string().trim().min(1).max(80), password: Password }))
 			.output(User),
