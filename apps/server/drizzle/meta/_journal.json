@@ -15,6 +15,13 @@
       "when": 1794152188361,
       "tag": "0001_entries",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794152621561,
+      "tag": "0002_review_and_ai",
+      "breakpoints": true
     }
   ]
 }

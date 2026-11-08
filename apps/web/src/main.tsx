@@ -3,6 +3,7 @@ import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } fr
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Devices } from './pages/devices'
+import { Settings } from './pages/settings'
 import { Home, SignedIn } from './pages/signed-in'
 import { Welcome } from './pages/welcome'
 import { isUnauthorized, orpc } from './rpc'
@@ -24,9 +25,10 @@ const welcomeRoute = createRoute({ getParentRoute: () => rootRoute, path: '/welc
 const appRoute = createRoute({ getParentRoute: () => rootRoute, id: 'app', component: SignedIn })
 const homeRoute = createRoute({ getParentRoute: () => appRoute, path: '/', component: Home })
 const devicesRoute = createRoute({ getParentRoute: () => appRoute, path: '/devices', component: Devices })
+const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: '/settings', component: Settings })
 
 const router = createRouter({
-	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, devicesRoute])]),
+	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, devicesRoute, settingsRoute])]),
 })
 
 declare module '@tanstack/react-router' {

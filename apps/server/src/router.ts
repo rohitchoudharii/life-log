@@ -1,8 +1,10 @@
 import { pool } from './db/client'
 import { os } from './orpc'
+import { aiRoutes } from './routes/ai'
 import { auth } from './routes/auth'
 import { devices } from './routes/devices'
 import { entriesRoutes } from './routes/entries'
+import { reviewRoutes } from './routes/review'
 
 export const router = os.router({
 	system: {
@@ -18,4 +20,6 @@ export const router = os.router({
 	auth,
 	devices,
 	entries: entriesRoutes,
+	review: reviewRoutes,
+	ai: aiRoutes,
 })

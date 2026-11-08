@@ -23,6 +23,9 @@ export function SignedIn() {
 					<Link to="/devices" className={nav}>
 						Devices
 					</Link>
+					<Link to="/settings" className={nav}>
+						Settings
+					</Link>
 					<button type="button" className={nav} onClick={() => signOut.mutate({})}>
 						Sign out
 					</button>

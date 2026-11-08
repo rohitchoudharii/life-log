@@ -205,6 +205,9 @@ importers:
       '@life-log-club/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@life-log-club/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
       '@orpc/server':
         specifier: ^1.16.2
         version: 1.16.2(@opentelemetry/api@1.10.0)
@@ -300,6 +303,8 @@ importers:
       zod:
         specifier: ^4.6.7
         version: 4.6.7
+
+  packages/llm: {}
 
 packages:
 

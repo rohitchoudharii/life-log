@@ -31,6 +31,19 @@ export const Entry = EntryData.and(
 )
 export type Entry = z.infer<typeof Entry>
 
+export const Card = z.object({
+	id: z.uuid(),
+	kind: z.enum(['idea', 'lesson']),
+	prompt: z.string(),
+	answer: z.string(),
+	entryId: z.uuid().nullable(),
+	dueAt: z.date(),
+})
+export type Card = z.infer<typeof Card>
+
+export const AiKey = z.object({ provider: z.enum(['anthropic', 'openai']), model: z.string(), last4: z.string() })
+export type AiKey = z.infer<typeof AiKey>
+
 const EntryId = z.object({ id: z.uuid() })
 const Ok = z.object({ ok: z.literal(true) })
 
@@ -83,6 +96,37 @@ export const contract = {
 		/** Hides the entry; `restore` brings it back (undo). Removed entries are deleted for good after 30 days. */
 		remove: oc.input(EntryId).output(Ok),
 		restore: oc.input(EntryId).output(Entry),
+	},
+	review: {
+		/** Adds an idea or a lesson to spaced review. It is due at once. The client picks the id. */
+		add: oc
+			.input(
+				z.object({
+					id: z.uuid(),
+					kind: z.enum(['idea', 'lesson']),
+					prompt: z.string().trim().min(1).max(1000),
+					answer: z.string().trim().min(1).max(5000),
+					entryId: z.uuid().optional(),
+				}),
+			)
+			.output(Card),
+		/** Cards due now, oldest first, and how many are due in total. */
+		due: oc
+			.input(z.object({ limit: z.int().min(1).max(100).default(20) }))
+			.output(z.object({ cards: z.array(Card), total: z.int() })),
+		/** Records how well a due card was remembered and returns when it comes back. */
+		answer: oc
+			.input(z.object({ id: z.uuid(), rating: z.enum(['again', 'hard', 'good', 'easy']) }))
+			.output(z.object({ dueAt: z.date() })),
+	},
+	ai: {
+		/** The member's own Anthropic or OpenAI key, never sent back in full. */
+		getKey: oc.output(AiKey.nullable()),
+		/** Checks the key with the provider, picks a low-cost model, and stores the key encrypted. */
+		saveKey: oc
+			.input(z.object({ provider: AiKey.shape.provider, apiKey: z.string().trim().min(10, 'Paste the whole key').max(500) }))
+			.output(AiKey),
+		removeKey: oc.output(Ok),
 	},
 }
 

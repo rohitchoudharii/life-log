@@ -9,7 +9,8 @@ Life Log Club makes sure you don't forget what life teaches you, and lets you lo
 - `apps/server`: the API. Hono and oRPC on Node, Postgres through Drizzle.
 - `apps/web`: the web app. React, Vite, TanStack Router and Query, Tailwind CSS.
 - `packages/contract`: the typed API contract that every client uses.
-- `packages/domain`: product rules shared by the server and the clients.
+- `packages/domain`: product rules shared by the server and the clients: entry types and the review schedule.
+- `packages/llm`: the Anthropic and OpenAI providers, used with each member's own key.
 - `apps/mobile/assets`, `apps/extension`: brand assets for the phone app and the Chrome extension, which come later.
 - `e2e`: end-to-end tests with Playwright.
 
@@ -33,6 +34,14 @@ Every log is an **entry**: a time, a type (such as a gym set, a meal or a meetin
 - Each member sees only their own entries. Postgres row-level security enforces this, not only the API code.
 - The text of entries about other people (meetings) is encrypted with AES-256-GCM before it is stored.
 - A removed entry can be restored for 30 days; a nightly job then deletes it for good.
+
+## Review
+
+Ideas from reading and lessons from life are **cards** in one review queue. A new card is due at once. Remembering it brings it back after 1, 2 and 3 days, then at gaps that grow with how easily you remember it, up to a year. Forgetting it brings it back in 10 minutes and starts the steps again. The rules are in `packages/domain/src/scheduler.ts`.
+
+## AI key
+
+Each member adds their own Anthropic or OpenAI key in **Settings**. The app checks it by listing the key's models, which costs nothing, picks a low-cost model, and stores the key encrypted. The e2e tests use a local fake provider (`e2e/fake-llm.ts`), so they never need a real key.
 
 ## Members
 

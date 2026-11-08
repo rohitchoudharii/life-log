@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
-import { API_PORT, e2eEnv, WEB_PORT } from './e2e/env'
+import { API_PORT, e2eEnv, FAKE_LLM_PORT, GOOD_ANTHROPIC_KEY, GOOD_OPENAI_KEY, WEB_PORT } from './e2e/env'
 
 export default defineConfig({
 	testDir: 'e2e',
@@ -12,6 +12,12 @@ export default defineConfig({
 		{ name: 'phone', use: { ...devices['Pixel 7'] } },
 	],
 	webServer: [
+		{
+			command: 'node e2e/fake-llm.ts',
+			url: `http://localhost:${FAKE_LLM_PORT}/health`,
+			env: { PORT: String(FAKE_LLM_PORT), GOOD_ANTHROPIC_KEY, GOOD_OPENAI_KEY },
+			reuseExistingServer: false,
+		},
 		{
 			command: 'pnpm --filter @life-log-club/server start',
 			url: `http://localhost:${API_PORT}/health`,

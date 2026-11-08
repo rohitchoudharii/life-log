@@ -10,6 +10,9 @@ const Env = z.object({
 	ENCRYPTION_KEY: z
 		.string()
 		.refine((v) => Buffer.from(v, 'base64').length === 32, '32 random bytes in base64: openssl rand -base64 32'),
+	/** Where the AI providers are reached. Only tests change these. */
+	ANTHROPIC_BASE_URL: z.url().default('https://api.anthropic.com'),
+	OPENAI_BASE_URL: z.url().default('https://api.openai.com'),
 })
 
 export const env = Env.parse(process.env)
