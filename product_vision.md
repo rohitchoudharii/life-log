@@ -203,26 +203,48 @@ In future, pillars will share context. For example, a finished book (Mind) becom
 
 Goal: as hard to get into as a banking app, but it never signs me out in the middle of reading, a test, or anything else.
 
-- **Hidden until rollout:** the whole site sits behind a private gate (for example a private network such as Tailscale, or an access proxy with an allowlist), so strangers can't even reach the sign-in page.
-- **Invite only:** no public sign-up. I add each member.
-- **Passkeys:** sign in with Face ID, Touch ID or a security key. No passwords. Backup codes for recovery.
-- **Trusted devices:** a new browser or device must be approved from a device that is already trusted. Each new device sends an alert.
-- **Stays signed in:** on a trusted device the session lasts a long time and renews while in use. No idle timeout. After 30 days away from a device, it asks for the passkey again.
-- **Remote sign-out:** a list of devices, with sign-out for a lost one.
-- **Data protection:** encrypted in transit and at rest; private fields (people notes, LLM keys) encrypted again with an app key; regular backups; a log of every sign-in.
+### Now (base frame)
+
+- **Allowed emails only:** only email addresses on an allowlist can create an account or sign in. Everyone else sees the same "can't sign in" message, so the app doesn't reveal who is on the list.
+- **Basic login:** email and password. Passwords are stored only as strong hashes (argon2id). Repeated failed attempts are slowed down and then locked for a while.
+- **No private network:** Tailscale is out, because members shouldn't have to install anything. The site is reachable on the internet, and the login is the gate.
+- **Stays signed in:** the session lasts a long time and renews while in use. No idle timeout. After 30 days away from a device, it asks for the password again.
+- **Remote sign-out:** a list of signed-in devices, with sign-out for a lost one.
+- **Data protection:** HTTPS only; encrypted at rest; private fields (people notes, LLM keys) encrypted again with an app key; regular backups; a log of every sign-in.
+
+### Later (once there is a domain)
+
+- **Passkeys:** sign in with Face ID, Touch ID or a security key, with backup codes. Passkeys are tied to a domain, so they wait until the domain is fixed.
+- **Trusted devices:** a new browser or device must be approved from a device that is already trusted, with an alert.
+- **Hidden until rollout:** an access proxy in front of the site (for example Cloudflare Access with an email allowlist), so strangers can't even reach the sign-in page. Members don't install anything.
 
 ## How we build it
 
 Base frame first, then small incremental releases (agile). Each release adds one feature on top of the frame and is usable on its own.
 
+The base frame runs on my own computer first. Hosting is decided in a later step.
+
 The base frame is what every later feature stands on:
 
 - **Server, database and web app shell**
-- **Security and access:** private gate, invite only, passkeys, trusted devices, 30-day passkey check, remote sign-out
+- **Security and access:** allowed-emails-only login with email and password, long sessions with the 30-day re-check, remote sign-out
 - **The entry:** one data model for everything logged
 - **The review scheduler:** one spaced schedule shared by reading ideas and life lessons
 - **Home and pillar dashboards:** the overview and an empty dashboard per pillar, ready for features
 - **Brand and theme:** logo, colours, pillar colours, type
+
+## Technical approach
+
+Chosen from four plans: **API plus clients**. One typed API service owns all data, login and background work. The web app, and later the phone app and the Chrome extension, are separate clients that talk to it only through a shared API contract.
+
+- **Language:** TypeScript everywhere.
+- **API:** Node.js with Hono and oRPC (a typed contract shared by every client).
+- **Web app:** React single-page app built with Vite; TanStack Router and TanStack Query for instant, optimistic updates with undo.
+- **Design:** Tailwind CSS with shared design tokens; each Pillar world switches its own colours and type.
+- **Data:** Postgres with Drizzle; background jobs in Postgres with pg-boss.
+- **Reused from the old app:** the review scheduler, page extraction, PDF and EPUB import, and the AI prompts, with their tests.
+- **Later:** an Expo phone app and a WXT Chrome extension, using the same API contract.
+- **Monitoring:** no extra tools in the base frame. Use the hosting platform's logs and a free uptime check; add SigNoz or PostHog only if a real need appears.
 
 ## Brand
 
@@ -248,3 +270,10 @@ The base frame is what every later feature stands on:
 - [x] Design direction? Pillar worlds (iteration 5 of 5).
 - [ ] Path: which operations does it have?
 - [ ] Home: what exactly does each pillar's summary show?
+- [x] Technical approach? API plus clients (approach 2 of 4).
+- [x] Tailscale? No; members shouldn't install anything.
+- [x] Passkeys now? No. Email and password for allowed emails only; passkeys once there is a domain.
+- [x] SigNoz and PostHog? Not in the base frame.
+- [x] Login type? Email and password (not emailed codes).
+- [ ] Hosting (deferred to a later step; the base frame runs on my computer first): AWS or self-hosted. Options: AWS Lightsail managed (containers + managed Postgres, about $41/month, least upkeep), one AWS Lightsail server I maintain (about $13/month), or a computer at home.
+- [ ] Domain: buy one now, or use the hosting platform's free address until later?
