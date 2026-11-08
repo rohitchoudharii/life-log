@@ -72,3 +72,30 @@ Today both a fresh test and a Review show every answer only after **Finish**. Th
 - Mockup: "Item 3: Review feedback, today and proposed" in this thread's artifacts.
 - Decided: vocabulary (`words.tsx`) does not get per-answer feedback or Guess first.
 - Files: `apps/mobile/src/practice.tsx` (a mode on `PracticeSession`), `apps/mobile/src/app/(tabs)/review.tsx`.
+
+## 4. How an article is split into sections
+
+**Status:** decided, not built. The new server has no import code yet. The old splitter is `splitSections` in `packages/core/src/content.ts` (`git show 4051df5^:packages/core/src/content.ts`), which cut every run without headings near 450 words. That was too small: a 1,100-word article became three recall steps.
+
+A section is the unit of recall: read one section, brain dump, then its questions. The rules:
+
+1. **The author's headings are the boundaries.** Each heading starts a section, and heading levels become section levels (at most three), as in the old splitter.
+2. **Cut only past 2,500 words.** A section with more than about 2,500 words of text is cut at a block boundary, never inside a paragraph. No AI and no topic detection for this cut: most sections cover few topics, so a word count is enough.
+3. **An article with no headings gets headings from the AI, with the text unchanged.** When the extracted article has no headings in its body and has 1,000 words or more, ask the LLM to add headings where the topic changes. Then split as in rule 1.
+
+### Rule 3: the LLM adds headings, it does not rewrite the article
+
+Don't ask the LLM to return the whole article as HTML. It can drop, merge or reword sentences even when told not to, and the output costs as many tokens as the article.
+
+Instead:
+
+- Send the blocks with a number on each, for example `[1] First paragraph…`, `[2] …`.
+- The LLM returns only where headings go and what they say: `[{ "before": 7, "title": "Why dead rows exist", "level": 2 }]`.
+- Code inserts those headings as `heading` blocks. Every word of the article stays as extracted, by construction, and the output is a few hundred tokens.
+- Check the reply: block numbers in range and in order, no empty titles, levels 2 or 3. If the reply is invalid, or the member has no AI key, keep the article as one section (rule 2 still applies).
+- Mark AI-written headings (for example `source: 'ai'` on the block) so the reader can show them a little differently from the author's headings.
+
+### Decided
+
+- An article with no headings and under about 1,000 words skips rule 3 and stays one section.
+- The LLM decides how many headings to add. There is no target count.

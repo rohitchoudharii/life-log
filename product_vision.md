@@ -145,6 +145,9 @@ Every entry belongs to a pillar. The engine below runs under all four.
 ### Mind
 
 - **Reader:** import links and files (later, the Chrome extension); split into sections
+- **One import pipeline:** every way of adding something to read (a link, a file, the extension, a forwarded email, a feed) is a small adapter that produces the same document: title, author, link, and ordered sections. Everything after that (sections, questions, recall, review) works the same whatever the source, and the same link or file added twice is one reading.
+- **Sources:** a newsletter, an engineering blog, a release feed or a podcast is a source that keeps producing new items. I follow a source once and its new items arrive on their own. Proposed, not decided: they land in an Inbox where I click Add or Skip, unless I let that source add straight to the library.
+- **Sections:** a section is what one recall covers. The author's headings set the sections, and a section longer than about 2,500 words is cut at a paragraph. An article of 1,000 words or more with no headings gets headings from the AI, which only says where they go; it never rewrites the text. See task.md, item 4.
 - **Books as goals and milestones:** a book I plan to read can be a goal ("finish *Peak* by March"), and finishing a book is a milestone, with the key lessons from it
 - **Recall check:** after a section, write what you remember (brain dump), then answer AI-written questions
 - **Spaced review:** ideas come back after 1, 2 and 3 days, then at growing gaps
@@ -262,7 +265,8 @@ Chosen from four plans: **API plus clients**. One typed API service owns all dat
 - [ ] Plan the alarm feature for the phone app.
 - [x] What should work productivity cover? Doing things faster, reducing friction, and learning better.
 - [x] Voice capture? Yes, but later, not in the base frame. Uses: a gym note between sets, a note while walking after meeting someone, a spoken brain dump after reading, teach-back out loud.
-- [x] Import from other apps? Not planned. Capture pages with the web extension for now; explore imports later.
+- [x] Import from other apps? Capture pages with the web extension first. Other sources (newsletters by email, feeds, engineering blogs, highlights from Kindle and Readwise) come later through the same import pipeline.
+- [ ] Do new items from followed sources go to an Inbox first, or straight to the library?
 - [x] Keep the name "Life Log Club"? Yes.
 - [x] A simplified swallow for very small sizes? Yes. Redraw the swallow as SVG, plus a simpler SVG mark for the 16 px browser tab icon, where the detailed swallow blurs into a smudge.
 - [x] Versions? Design the base frame first, then release in small increments.
