@@ -1,10 +1,22 @@
 {
   "name": "life-log-club",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@12.16.1",
+  "engines": {
+    "node": ">=26"
+  },
   "scripts": {
     "db:up": "docker compose up -d db",
+    "dev": "pnpm --parallel --filter @life-log-club/server --filter @life-log-club/web dev",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@types/node": "^26.6.6",
+    "typescript": "~6.0.3",
+    "vitest": "^5.1.0"
   }
 }

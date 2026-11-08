@@ -8,3 +8,5 @@ ios/
 android/
 web-build/
 .media/
+test-results/
+playwright-report/

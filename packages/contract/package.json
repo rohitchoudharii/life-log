@@ -1,0 +1,18 @@
+{
+  "name": "@life-log-club/contract",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@life-log-club/domain": "workspace:*",
+    "@orpc/contract": "^1.16.2",
+    "zod": "^4.6.7"
+  }
+}
