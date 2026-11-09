@@ -1,4 +1,4 @@
-import { Block, EntryData, EntryText, Note, PILLARS, WRITE_STATUSES } from '@life-log-club/domain'
+import { Block, EntryData, EntryText, Note, PILLARS, RECALL_STATUSES, WRITE_STATUSES } from '@life-log-club/domain'
 import { oc } from '@orpc/contract'
 import { z } from 'zod'
 
@@ -63,6 +63,37 @@ export const Preferences = z.object({
 	aiMonthlyBudgetUsd: z.number().min(0, 'The budget can’t be below $0.').max(1000, 'Choose a budget of $1,000 or less.'),
 })
 export type Preferences = z.infer<typeof Preferences>
+
+/** A recall check: the brain dump after reading, and how it covered each key idea. */
+export const RecallAttempt = z.object({
+	id: z.uuid(),
+	readingId: z.uuid(),
+	readingTitle: z.string(),
+	sections: z.array(z.object({ id: z.uuid(), title: z.string() })),
+	/**
+	 * `open` until the dump is sent; `waiting` while the key ideas are written; `grading`; then
+	 * `graded`, `self` when there is no AI key to check it, or `failed`.
+	 */
+	status: z.enum(RECALL_STATUSES),
+	/** The dump as written; empty for Nothing comes to mind, null before it is sent. */
+	text: z.string().nullable(),
+	feedback: z.string().nullable(),
+	/** The recall map, once graded: every key idea with its mark and when it comes back. */
+	ideas: z
+		.array(
+			z.object({
+				cardId: z.uuid(),
+				idea: z.string(),
+				quote: z.string().nullable(),
+				status: z.enum(['covered', 'vague', 'missing']),
+				dueAt: z.date(),
+			}),
+		)
+		.nullable(),
+	/** The section after the last one recalled, where Done goes on reading; null at the end. */
+	nextSectionId: z.uuid().nullable(),
+})
+export type RecallAttempt = z.infer<typeof RecallAttempt>
 
 export const Reading = z.object({
 	id: z.uuid(),
@@ -359,6 +390,32 @@ export const contract = {
 		usage: oc.output(
 			z.object({ calls: z.int(), tokens: z.int(), costUsd: z.number().nullable(), budgetUsd: z.number(), reached: z.boolean() }),
 		),
+	},
+	recall: {
+		/**
+		 * Starts a recall check on sections of a reading (Recall this section). Sections whose key
+		 * ideas aren't written yet are written now, ahead of other work and past the budget, while the
+		 * member writes the dump. The client picks the id, so a retry starts one attempt.
+		 */
+		start: oc.input(z.object({ id: z.uuid(), readingId: z.uuid(), sectionIds: z.array(z.uuid()).min(1).max(100) })).output(RecallAttempt),
+		/**
+		 * Sends the brain dump, which is then graded in the background against the sections' key
+		 * ideas. An empty dump is "Nothing comes to mind": every idea counts as missed. Sending again
+		 * changes nothing.
+		 */
+		submit: oc
+			.input(
+				z.object({
+					id: z.uuid(),
+					text: z.string().trim().max(20_000, 'That’s longer than a brain dump needs.'),
+					source: z.enum(['typed', 'voice']).default('typed'),
+				}),
+			)
+			.output(RecallAttempt),
+		/** One attempt. Its ideas and their marks come only once it is graded. */
+		get: oc.input(EntryId).output(RecallAttempt),
+		/** Grades a failed attempt again. */
+		retry: oc.input(EntryId).output(RecallAttempt),
 	},
 	preferences: {
 		get: oc.output(Preferences),

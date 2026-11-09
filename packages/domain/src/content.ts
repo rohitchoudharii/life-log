@@ -252,3 +252,7 @@ export function insertHeadings(blocks: readonly Block[], headings: readonly Head
 /** Where writing a section's key ideas and questions stands. */
 export const WRITE_STATUSES = ['none', 'queued', 'writing', 'ready', 'failed', 'needs_key', 'paused'] as const
 export type WriteStatus = (typeof WRITE_STATUSES)[number]
+
+/** Where a recall check stands: see `recall_attempts.status`. */
+export const RECALL_STATUSES = ['open', 'waiting', 'grading', 'graded', 'self', 'failed'] as const
+export type RecallStatus = (typeof RECALL_STATUSES)[number]

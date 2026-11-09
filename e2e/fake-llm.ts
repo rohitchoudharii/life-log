@@ -65,7 +65,25 @@ function writeSection(user: string) {
 /** Keeps every question for "Task: check-questions". */
 const checkQuestions = (user: string) => ({ checks: [...user.matchAll(/"id": (\d+)/g)].map((m) => ({ id: Number(m[1]), verdict: 'keep' })) })
 
+const longWords = (text: string) => [...new Set(text.toLowerCase().match(/[a-z]{5,}/g) ?? [])]
+
+/**
+ * Marks each idea for "Task: grade-recall" by the long words the dump shares with it: most of
+ * them is covered, two or more is vague, fewer is missing. A test picks a mark by what it types.
+ */
+function gradeRecall(user: string) {
+	const ideas = [...(user.split('<dump>')[0] ?? '').matchAll(/^\d+\. (.+)$/gm)].map((m) => m[1]!)
+	const dump = new Set(longWords(user.split('<dump>')[1] ?? ''))
+	const marks = ideas.map((idea) => {
+		const words = longWords(idea)
+		const shared = words.filter((w) => dump.has(w)).length
+		return shared >= Math.max(2, words.length * 0.6) ? 'covered' : shared >= 2 ? 'vague' : 'missing'
+	})
+	return { ideas: marks, feedback: 'You brought back the main point. Look again at what you missed.' }
+}
+
 function answer(system: string, user: string) {
+	if (system.startsWith('Task: grade-recall')) return JSON.stringify(gradeRecall(user))
 	if (system.startsWith('Task: headings')) return JSON.stringify(headings(user))
 	if (system.startsWith('Task: write-section')) return JSON.stringify(writeSection(user))
 	if (system.startsWith('Task: check-questions')) return JSON.stringify(checkQuestions(user))
@@ -81,6 +99,8 @@ const server = createServer(async (req, res) => {
 	if (req.method === 'POST' && req.url === '/v1/messages') {
 		if (req.headers['x-api-key'] !== GOOD_ANTHROPIC_KEY) return json(401, { error: { message: 'invalid x-api-key' } })
 		const body = await readJson(req)
+		// Writing takes a moment, as it does for real, so a waiting member sees the waiting line.
+		if (body.system.startsWith('Task: write-section')) await new Promise((r) => setTimeout(r, 1500))
 		const text = answer(body.system, body.messages[0].content)
 		return json(200, { content: [{ type: 'text', text }], usage: { input_tokens: 1000, output_tokens: 50 } })
 	}

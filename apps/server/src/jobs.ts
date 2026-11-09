@@ -1,10 +1,11 @@
 import type { WriteStatus } from '@life-log-club/domain'
-import { and, eq, inArray, isNotNull, lt, or } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm'
 import { type Job, type JobWithMetadata, PgBoss } from 'pg-boss'
 import { asUser, ownerDb } from './db/client'
-import { books, entries, invites, readings, sections, sessions } from './db/schema'
+import { books, entries, invites, readings, recallAttempts, sections, sessions } from './db/schema'
 import { env } from './env'
 import { addChapterHeadings, importReading } from './import/reading'
+import { type GradeJob, gradeAttempt } from './learning/recall'
 import { type WriteJob, writeKeyIdeas } from './learning/write-section'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -61,6 +62,36 @@ const WRITE = 'write-section'
  */
 export const enqueueWriteSection = (job: WriteJob) => boss.send(WRITE, job, { singletonKey: job.sectionId, priority: job.recall ? 10 : 0 })
 
+/** True when the section's writing has ended, one way or another. */
+const sectionDone = ({ userId, sectionId }: WriteJob) =>
+	asUser(userId, (tx) => tx.select({ writeStatus: sections.writeStatus }).from(sections).where(eq(sections.id, sectionId))).then(
+		([s]) => !s || !['queued', 'writing'].includes(s.writeStatus),
+	)
+
+const GRADE = 'grade-recall'
+
+/** Queues the grading of a brain dump. At most one waits and one runs per attempt. */
+export const enqueueGrade = (job: GradeJob) => boss.send(GRADE, job, { singletonKey: job.attemptId, priority: 10 })
+
+/**
+ * Queues the grading of the attempts in this section's reading that wait on key ideas, once its
+ * writing ends. The whole reading, because a short section is written with the next one.
+ */
+async function gradeWaitingOn(userId: string, sectionId: string) {
+	const waiting = await asUser(userId, (tx) =>
+		tx
+			.select({ id: recallAttempts.id })
+			.from(recallAttempts)
+			.where(
+				and(
+					inArray(recallAttempts.status, ['waiting', 'grading']),
+					sql`${recallAttempts.readingId} = (select ${sections.readingId} from ${sections} where ${sections.id} = ${sectionId})`,
+				),
+			),
+	)
+	await Promise.all(waiting.map((a) => enqueueGrade({ userId, attemptId: a.id })))
+}
+
 /**
  * Queues again the member's sections that wait in one of `statuses`: after they add a key
  * (`needs_key`) or raise the budget (`paused`).
@@ -102,7 +133,20 @@ export async function startJobs() {
 	if (await boss.getQueue(WRITE)) await boss.updateQueue(WRITE, writeOptions)
 	else await boss.createQueue(WRITE, { policy: 'stately', ...writeOptions })
 	await boss.work(WRITE, { localConcurrency: 3, includeMetadata: true }, async ([job]: JobWithMetadata<WriteJob>[]) => {
-		if (job) await writeKeyIdeas(job.data, job.retryCount >= job.retryLimit)
+		if (!job) return
+		const lastTry = job.retryCount >= job.retryLimit
+		try {
+			await writeKeyIdeas(job.data, lastTry)
+		} finally {
+			// A dump may be waiting on these ideas, whether they were written or not.
+			if (lastTry || (await sectionDone(job.data))) await gradeWaitingOn(job.data.userId, job.data.sectionId)
+		}
+	})
+	const gradeOptions = { retryLimit: 2, retryDelay: 5, retryBackoff: true, expireInSeconds: 10 * 60 }
+	if (await boss.getQueue(GRADE)) await boss.updateQueue(GRADE, gradeOptions)
+	else await boss.createQueue(GRADE, { policy: 'stately', ...gradeOptions })
+	await boss.work(GRADE, { localConcurrency: 4, includeMetadata: true }, async ([job]: JobWithMetadata<GradeJob>[]) => {
+		if (job) await gradeAttempt(job.data, job.retryCount >= job.retryLimit)
 	})
 	// Readings left importing by a stop before their job was queued. The singleton key keeps a
 	// reading whose job is still queued from getting a second one.

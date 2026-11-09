@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { parseRecallVerdict } from './recall'
 import { type Complete, MAX_IDEAS, writeSection } from './write-section'
 
 const section = {
@@ -88,5 +89,15 @@ describe('writeSection', () => {
 	it('refuses a reply that is not JSON', async () => {
 		const complete: Complete = async () => 'Sorry, I cannot help with that.'
 		await expect(writeSection(complete, [section], { amount: 'standard', qualityCheck: false })).rejects.toThrow(/key ideas/)
+	})
+})
+
+describe('parseRecallVerdict', () => {
+	it('counts an idea with no readable mark as missing, and refuses a reply with no marks', () => {
+		expect(parseRecallVerdict('{"ideas": ["covered", "great", "vague"], "feedback": " Good. "}', 4)).toEqual({
+			ideas: ['covered', 'missing', 'vague', 'missing'],
+			feedback: 'Good.',
+		})
+		expect(parseRecallVerdict('I think you did well.', 2)).toBeNull()
 	})
 })

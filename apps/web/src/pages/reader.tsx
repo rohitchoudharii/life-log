@@ -179,6 +179,50 @@ function EndMark({ onEnd }: { onEnd: () => void }) {
 	return <div ref={mark} aria-hidden className="h-px" />
 }
 
+/**
+ * The index card at the end of a section: Recall this section opens the brain dump at once, while
+ * any key ideas not written yet are written. The R key does the same.
+ */
+function RecallCard({ readingId, sectionId }: { readingId: string; sectionId: string }) {
+	const navigate = useNavigate()
+	const start = useMutation({
+		mutationFn: () => client.recall.start({ id: crypto.randomUUID(), readingId, sectionIds: [sectionId] }),
+		onSuccess: (attempt) => navigate({ to: '/mind/recall/$attemptId', params: { attemptId: attempt.id } }),
+	})
+	const go = useRef(start.mutate)
+	go.current = start.mutate
+	useEffect(() => {
+		function onKey(e: KeyboardEvent) {
+			if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || (e.key !== 'r' && e.key !== 'R')) return
+			if ((e.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"], dialog')) return
+			e.preventDefault()
+			go.current()
+		}
+		window.addEventListener('keydown', onKey)
+		return () => window.removeEventListener('keydown', onKey)
+	}, [])
+	return (
+		<div className="grid gap-3 rounded-2xl border border-world-line bg-world-card p-5 shadow-sm">
+			<p className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">End of section</p>
+			<p className="text-lg">Close the text and write down what you remember.</p>
+			<div className="flex items-center gap-3">
+				<button
+					type="button"
+					disabled={start.isPending}
+					onClick={() => start.mutate()}
+					className="rounded-xl bg-world-accent px-5 py-2 font-sans text-sm font-semibold text-world-on-accent transition hover:opacity-90 disabled:opacity-60"
+				>
+					Recall this section
+				</button>
+				<span className="hidden font-sans text-xs text-world-muted md:inline">
+					or press <kbd>R</kbd>
+				</span>
+			</div>
+			{start.error && <p role="alert" className="font-sans text-sm text-red">{errorMessage(start.error)}</p>}
+		</div>
+	)
+}
+
 /** How far below the top of the window the text starts, under the sticky header. */
 const TOP = 80
 
@@ -504,6 +548,7 @@ export function Reader({ readingId }: { readingId: string }) {
 						onEnd={!section.readAt && !markRead.isPending ? () => markRead.mutate({ id: r.id, sectionId: section.id }) : undefined}
 					/>
 				)}
+				{section && section.kind === 'body' && section.wordCount > 0 && <RecallCard readingId={r.id} sectionId={section.id} />}
 				<div className="flex justify-between gap-2">
 					{current > 0 ? (
 						<button type="button" className={step} onClick={() => pick(current - 1)}>

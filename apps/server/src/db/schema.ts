@@ -1,4 +1,4 @@
-import type { Block, Confidence, Note, QuestionLevel, Rating, ReviewState, SectionKind, WriteStatus } from '@life-log-club/domain'
+import type { Block, Confidence, Note, PointStatus, QuestionLevel, Rating, RecallStatus, ReviewState, SectionKind, WriteStatus } from '@life-log-club/domain'
 import { type AnyColumn, sql } from 'drizzle-orm'
 import {
 	type AnyPgColumn,
@@ -454,6 +454,8 @@ export const sections = pgTable(
 		writeError: text(),
 		/** The prompt version that wrote its key ideas. */
 		promptVersion: text(),
+		/** The first time the member finished a recall check on this section. */
+		recalledAt: timestamp({ withTimezone: true }),
 		/** Key ideas past the most a section keeps, which the member can add from the recall results. */
 		spareIdeas: jsonb().$type<{ idea: string; cue: string; quote: string }[]>().notNull().default([]),
 		createdAt: createdAt(),
@@ -519,4 +521,38 @@ export const preferences = pgTable(
 		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [ownRows(t.userId)],
+)
+
+/**
+ * One recall check: the member's brain dump after reading one or more sections, and how it
+ * covered their key ideas. The dump can be personal, so it is stored encrypted.
+ */
+export const recallAttempts = pgTable(
+	'recall_attempts',
+	{
+		/** Chosen by the client, so a retried start can't make a second attempt. */
+		id: uuid().primaryKey(),
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		readingId: uuid()
+			.notNull()
+			.references(() => readings.id, { onDelete: 'cascade' }),
+		sectionIds: uuid().array().notNull(),
+		/** The dump, encrypted; null until it is submitted. An empty dump is "Nothing comes to mind". */
+		textCt: text(),
+		source: text().$type<'typed' | 'voice'>().notNull().default('typed'),
+		/**
+		 * `open` until the dump is submitted; `waiting` while the key ideas are still written;
+		 * `grading`; then `graded`, or `self` when the member has no AI key, or `failed`.
+		 */
+		status: text().$type<RecallStatus>().notNull().default('open'),
+		/** One mark per key idea, once graded. */
+		results: jsonb().$type<{ cardId: string; status: PointStatus }[]>(),
+		feedback: text(),
+		gradedBy: text().$type<'code' | 'ai' | 'self'>(),
+		submittedAt: timestamp({ withTimezone: true }),
+		createdAt: createdAt(),
+	},
+	(t) => [index().on(t.userId, t.createdAt.desc()), ownRows(t.userId)],
 )
