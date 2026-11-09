@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 import { encrypt } from '../crypto'
 import { asUser } from '../db/client'
 import { aiKeys } from '../db/schema'
-import { keyContext, providers } from '../learning/ai'
+import { keyContext, monthUsage, providers } from '../learning/ai'
 import { authed } from '../orpc'
 
 /** Proves the key works by listing its models, which costs nothing, and picks a low-cost one. */
@@ -59,4 +59,6 @@ export const aiRoutes = {
 		await asUser(context.user.id, (tx) => tx.delete(aiKeys).where(eq(aiKeys.userId, context.user.id)))
 		return { ok: true as const }
 	}),
+
+	usage: authed.ai.usage.handler(({ context }) => asUser(context.user.id, (tx) => monthUsage(tx, context.user.id))),
 }

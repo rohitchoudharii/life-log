@@ -99,6 +99,7 @@ export function Settings() {
 					</form>
 				)}
 			</div>
+			<AiUsage />
 			<div className="flex flex-wrap items-center gap-3 rounded-2xl bg-white p-5 ring-1 ring-ink/5">
 				<div className="mr-auto">
 					<h2 className="text-lg font-semibold">Account</h2>
@@ -112,5 +113,63 @@ export function Settings() {
 				</button>
 			</div>
 		</section>
+	)
+}
+
+const dollars = (n: number) => `$${n.toFixed(2).replace(/\.00$/, '')}`
+
+/** The usage line, "This month: 46 calls · about $0.31 of $5", and the monthly budget. */
+function usageLine(u: { calls: number; tokens: number; costUsd: number | null; budgetUsd: number }) {
+	const calls = `${u.calls} ${u.calls === 1 ? 'call' : 'calls'}`
+	const spend = u.costUsd === null ? `${u.tokens.toLocaleString('en')} tokens` : `about ${dollars(u.costUsd)} of ${dollars(u.budgetUsd)}`
+	return `This month: ${calls} · ${spend}`
+}
+
+function AiUsage() {
+	const queryClient = useQueryClient()
+	const usage = useQuery(orpc.ai.usage.queryOptions())
+	const [budget, setBudget] = useState('')
+	const save = useMutation(
+		orpc.preferences.update.mutationOptions({
+			onSuccess: async () => {
+				setBudget('')
+				await Promise.all([queryClient.invalidateQueries({ queryKey: orpc.ai.key() }), queryClient.invalidateQueries({ queryKey: orpc.preferences.key() })])
+			},
+		}),
+	)
+	const u = usage.data
+	return (
+		<div className="grid gap-4 rounded-2xl bg-white p-5 ring-1 ring-ink/5">
+			<div>
+				<h2 className="text-lg font-semibold">AI usage</h2>
+				<p className="text-sm text-ink/60" data-testid="ai-usage">
+					{u ? usageLine(u) : '…'}
+				</p>
+				{u?.reached && <p className="mt-1 text-sm text-red">This month’s budget is used, so questions are not written in the background.</p>}
+			</div>
+			<form
+				className="flex flex-wrap items-end gap-3"
+				onSubmit={(e) => {
+					e.preventDefault()
+					save.mutate({ aiMonthlyBudgetUsd: Number(budget) })
+				}}
+			>
+				<Field
+					label="Monthly budget in US dollars"
+					type="number"
+					min={0}
+					step="0.5"
+					inputMode="decimal"
+					required
+					placeholder={u ? String(u.budgetUsd) : ''}
+					value={budget}
+					onChange={(e) => setBudget(e.target.value)}
+				/>
+				<Button type="submit" disabled={save.isPending}>
+					{save.isPending ? 'Saving…' : 'Save budget'}
+				</Button>
+			</form>
+			<ErrorText>{save.error && errorMessage(save.error)}</ErrorText>
+		</div>
 	)
 }

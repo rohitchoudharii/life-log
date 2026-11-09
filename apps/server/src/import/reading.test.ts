@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { encrypt } from '../crypto'
 import { asUser, ownerDb, ownerPool, pool } from '../db/client'
 import { prepareDatabase } from '../db/prepare'
-import { aiCalls, aiKeys, media, readingFiles, readings, sections, users, webBookPages } from '../db/schema'
+import { aiCalls, aiKeys, media, preferences, readingFiles, readings, sections, users, webBookPages } from '../db/schema'
 import { keyContext } from '../learning/ai'
 import { addChapterHeadings, BOOK_MOSTLY_FAILED, BOOK_TOO_LONG, importReading, normaliseUrl, ROBOTS_REFUSED } from './reading'
 import { blankPdf, testEpub } from './test-books'
@@ -185,6 +185,13 @@ describe('AI headings for an article with no headings (issue #1, rule 3)', () =>
 		const noKey = await member()
 		expect(await oneSection(noKey)).toEqual([['Dead rows', false, 16]])
 		expect(await calls(noKey)).toEqual([])
+
+		// Past this month's budget, background work doesn't spend: no call is made at all.
+		const broke = await memberWithKey()
+		await asUser(broke, (tx) => tx.insert(preferences).values({ userId: broke, aiMonthlyBudgetUsd: 0 }))
+		aiReply(good)
+		expect(await oneSection(broke)).toEqual([['Dead rows', false, 16]])
+		expect(await calls(broke)).toEqual([])
 	})
 
 	it('does not ask the AI about an article under 1,000 words or one with its own headings', async () => {

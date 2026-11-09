@@ -9,6 +9,7 @@ import {
 	index,
 	integer,
 	jsonb,
+	numeric,
 	pgPolicy,
 	pgTable,
 	primaryKey,
@@ -483,4 +484,28 @@ export const aiCalls = pgTable(
 		at: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [index().on(t.userId, t.at), ownRows(t.userId)],
+)
+
+/**
+ * One row per member: how the app should work for them. The row is written with the column
+ * defaults the first time it is read. Kept off `users`, which has no row-level security by design.
+ */
+export const preferences = pgTable(
+	'preferences',
+	{
+		userId: uuid()
+			.primaryKey()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		timezone: text().notNull().default('UTC'),
+		questionAmount: text().$type<'quick' | 'standard' | 'thorough'>().notNull().default('standard'),
+		questionStyle: text().$type<'mixed' | 'written' | 'choice'>().notNull().default('mixed'),
+		qualityCheck: boolean().notNull().default(true),
+		guessFirst: boolean().notNull().default(true),
+		desiredRetention: real().notNull().default(0.9),
+		/** Background AI work pauses once this month's estimated spend reaches it. */
+		aiMonthlyBudgetUsd: numeric({ precision: 8, scale: 2, mode: 'number' }).notNull().default(5),
+		reviewBatch: integer().notNull().default(20),
+		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [ownRows(t.userId)],
 )

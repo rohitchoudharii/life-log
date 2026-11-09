@@ -1,5 +1,6 @@
 import type { EntryType } from '@life-log-club/domain'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { useLogEntry } from '../entry-actions'
 import { EntryList } from '../entry-list'
@@ -53,6 +54,7 @@ function Stat({ label, value, sub, testId }: { label: string; value: ReactNode; 
 export function Mind() {
 	const due = useQuery(orpc.review.due.queryOptions({ input: { limit: 3 } }))
 	const lessons = useQuery(orpc.entries.list.queryOptions({ input: { pillar: 'mind', limit: 50 } }))
+	const usage = useQuery(orpc.ai.usage.queryOptions())
 	const drop = useFileDrop()
 	return (
 		<div className="relative grid gap-8" {...drop.handlers}>
@@ -64,6 +66,15 @@ export function Mind() {
 			<Hero title="The reading room" sub="Read, then recall. Ideas and lessons come back until they stick.">
 				<LogButton type="lesson">Log a lesson</LogButton>
 			</Hero>
+			{usage.data?.reached && (
+				<p role="status" className="rounded-2xl border border-world-line bg-world-card px-4 py-3 font-sans text-sm">
+					Paused writing questions: this month’s AI budget is used. Change it in{' '}
+					<Link to="/settings" className="underline underline-offset-2">
+						Settings
+					</Link>
+					.
+				</p>
+			)}
 			<AddReading />
 			<div className="grid gap-4 md:grid-cols-[16rem_1fr]">
 				<Stat label="Due for review" value={due.data?.total ?? 0} sub="cards" testId="mind-due" />

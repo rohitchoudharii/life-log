@@ -57,6 +57,13 @@ export type ReadingPosition = z.infer<typeof ReadingPosition>
  */
 export const SEEN_SECONDS = 30
 
+/** How the app works for one member. Every field has a default, so a new member has them all. */
+export const Preferences = z.object({
+	/** Background AI work pauses once this month's estimated spend reaches it, in US dollars. */
+	aiMonthlyBudgetUsd: z.number().min(0, 'The budget can’t be below $0.').max(1000, 'Choose a budget of $1,000 or less.'),
+})
+export type Preferences = z.infer<typeof Preferences>
+
 export const Reading = z.object({
 	id: z.uuid(),
 	title: z.string(),
@@ -337,6 +344,19 @@ export const contract = {
 			.input(z.object({ provider: AiKey.shape.provider, apiKey: z.string().trim().min(10, 'Paste the whole key').max(500) }))
 			.output(AiKey),
 		removeKey: oc.output(Ok),
+		/**
+		 * This month's AI calls (calendar month, UTC) and their estimated cost against the member's
+		 * budget. `costUsd` is null when no call was to a model with a known price. Once `reached`,
+		 * background AI work pauses until next month or a higher budget.
+		 */
+		usage: oc.output(
+			z.object({ calls: z.int(), tokens: z.int(), costUsd: z.number().nullable(), budgetUsd: z.number(), reached: z.boolean() }),
+		),
+	},
+	preferences: {
+		get: oc.output(Preferences),
+		/** Changes the preferences given and returns them all. */
+		update: oc.input(Preferences.partial()).output(Preferences),
 	},
 }
 

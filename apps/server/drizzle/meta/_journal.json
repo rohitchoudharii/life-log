@@ -92,6 +92,13 @@
       "when": 1794229322069,
       "tag": "0012_reading_position",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794230022572,
+      "tag": "0013_preferences",
+      "breakpoints": true
     }
   ]
 }
