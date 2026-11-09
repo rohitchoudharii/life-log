@@ -328,6 +328,8 @@ export const ReadingWithContents = Reading.extend({
 			aiTitle: z.boolean(),
 			wordCount: z.int(),
 			kind: SectionKind,
+			/** The chapter of a book the section is in, counting from 0; 0 for every section of an article. */
+			chapter: z.int(),
 			/** When the end of the section was first on the member's screen. */
 			readAt: z.date().nullable(),
 		}),

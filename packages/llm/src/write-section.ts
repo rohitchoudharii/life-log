@@ -33,9 +33,9 @@ export type WrittenQuestion = { type: QuestionType; level: QuestionLevel; conten
 /** One key idea: `section` indexes the sections written together, and is the one its quote is in. */
 export type WrittenIdea = { section: number; idea: string; cue: string; quote: string; questions: WrittenQuestion[] }
 export type Written = {
-	/** At most MAX_IDEAS, most important first. */
+	/** At most MAX_IDEAS per section, most important first. */
 	ideas: WrittenIdea[]
-	/** Ideas past MAX_IDEAS, kept so the member can add them. */
+	/** Ideas past MAX_IDEAS in their section, kept so the member can add them. */
 	spare: WrittenIdea[]
 	/** What the checks threw out, and why. */
 	rejected: { what: string; reasons: string[] }[]
@@ -194,7 +194,15 @@ export async function writeSection(complete: Complete, sections: SectionText[], 
 		ranked.push({ section: section!, idea, cue, quote, questions: [], rank: Number.isFinite(rank) ? rank : i + 1, raw: Array.isArray(raw.questions) ? raw.questions : [] })
 	}
 	ranked.sort((a, b) => a.rank - b.rank)
-	const ideas = ranked.slice(0, MAX_IDEAS)
+	// The limit is per section, so a chapter written in one call keeps as many ideas as section by section.
+	const perSection = new Map<number, number>()
+	const ideas: typeof ranked = []
+	const spare: typeof ranked = []
+	for (const idea of ranked) {
+		const n = perSection.get(idea.section) ?? 0
+		perSection.set(idea.section, n + 1)
+		;(n < MAX_IDEAS ? ideas : spare).push(idea)
+	}
 
 	// First the rules in code, then the model's own check, then one rewrite for what failed or is missing.
 	const pending: Pending[] = []
@@ -251,5 +259,5 @@ export async function writeSection(complete: Complete, sections: SectionText[], 
 	for (const p of pending) rejected.push({ what: `question on: ${p.idea.idea}`, reasons: p.reasons })
 
 	const strip = ({ rank: _rank, raw: _raw, ...idea }: (typeof ranked)[number]): WrittenIdea => idea
-	return { ideas: ideas.map(strip), spare: ranked.slice(MAX_IDEAS).map(strip), rejected }
+	return { ideas: ideas.map(strip), spare: spare.map(strip), rejected }
 }

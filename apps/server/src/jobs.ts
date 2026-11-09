@@ -65,7 +65,10 @@ const WRITE = 'write-section'
  * Queues the writing of a section's key ideas and questions. At most one waits and one runs per
  * section. Recall goes ahead of sections that were only seen, because the member is waiting.
  */
-export const enqueueWriteSection = (job: WriteJob) => boss.send(WRITE, job, { singletonKey: job.sectionId, priority: job.recall ? 10 : 0 })
+// A chapter batch has its own key, so a job already waiting for its first section can't swallow
+// it and leave the rest unwritten. If both run, the section lock lets only one store ideas.
+export const enqueueWriteSection = (job: WriteJob) =>
+	boss.send(WRITE, job, { singletonKey: job.with?.length ? `batch:${job.sectionId}` : job.sectionId, priority: job.recall ? 10 : 0 })
 
 /** True when the section's writing has ended, one way or another. */
 const sectionDone = ({ userId, sectionId }: WriteJob) =>

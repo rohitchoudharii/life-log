@@ -181,12 +181,13 @@ function EndMark({ onEnd }: { onEnd: () => void }) {
 
 /**
  * The index card at the end of a section: Recall this section opens the brain dump at once, while
- * any key ideas not written yet are written. The R key does the same.
+ * any key ideas not written yet are written. The R key does the same. At the last section of a
+ * chapter with more than one, Recall chapter does the same for all of `chapter`.
  */
-function RecallCard({ readingId, sectionId }: { readingId: string; sectionId: string }) {
+function RecallCard({ readingId, sectionId, chapter }: { readingId: string; sectionId: string; chapter: string[] | null }) {
 	const navigate = useNavigate()
 	const start = useMutation({
-		mutationFn: () => client.recall.start({ id: crypto.randomUUID(), readingId, sectionIds: [sectionId] }),
+		mutationFn: (sectionIds: string[]) => client.recall.start({ id: crypto.randomUUID(), readingId, sectionIds }),
 		onSuccess: (attempt) => navigate({ to: '/mind/recall/$attemptId', params: { attemptId: attempt.id } }),
 	})
 	const go = useRef(start.mutate)
@@ -196,24 +197,34 @@ function RecallCard({ readingId, sectionId }: { readingId: string; sectionId: st
 			if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || (e.key !== 'r' && e.key !== 'R')) return
 			if ((e.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"], dialog')) return
 			e.preventDefault()
-			go.current()
+			go.current([sectionId])
 		}
 		window.addEventListener('keydown', onKey)
 		return () => window.removeEventListener('keydown', onKey)
-	}, [])
+	}, [sectionId])
 	return (
 		<div className="grid gap-3 rounded-2xl border border-world-line bg-world-card p-5 shadow-sm">
-			<p className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">End of section</p>
+			<p className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">{chapter ? 'End of chapter' : 'End of section'}</p>
 			<p className="text-lg">Close the text and write down what you remember.</p>
-			<div className="flex items-center gap-3">
+			<div className="flex flex-wrap items-center gap-3">
 				<button
 					type="button"
 					disabled={start.isPending}
-					onClick={() => start.mutate()}
+					onClick={() => start.mutate([sectionId])}
 					className="rounded-xl bg-world-accent px-5 py-2 font-sans text-sm font-semibold text-world-on-accent transition hover:opacity-90 disabled:opacity-60"
 				>
 					Recall this section
 				</button>
+				{chapter && (
+					<button
+						type="button"
+						disabled={start.isPending}
+						onClick={() => start.mutate(chapter)}
+						className="rounded-xl border border-world-line px-5 py-2 font-sans text-sm font-semibold transition hover:bg-world disabled:opacity-60"
+					>
+						Recall chapter
+					</button>
+				)}
 				<span className="hidden font-sans text-xs text-world-muted md:inline">
 					or press <kbd>R</kbd>
 				</span>
@@ -221,6 +232,16 @@ function RecallCard({ readingId, sectionId }: { readingId: string; sectionId: st
 			{start.error && <p role="alert" className="font-sans text-sm text-red">{errorMessage(start.error)}</p>}
 		</div>
 	)
+}
+
+/**
+ * The sections to recall together when `sectionId` is the last one with words in its chapter and
+ * the chapter has more than one; otherwise null.
+ */
+function chapterToRecall(contents: ReadingWithContents['contents'], sectionId: string) {
+	const here = contents.find((s) => s.id === sectionId)
+	const chapter = contents.filter((s) => s.chapter === here?.chapter && s.kind === 'body' && s.wordCount > 0)
+	return chapter.length > 1 && chapter.at(-1)?.id === sectionId ? chapter.map((s) => s.id) : null
 }
 
 /** How far below the top of the window the text starts, under the sticky header. */
@@ -566,7 +587,7 @@ export function Reader({ readingId }: { readingId: string }) {
 						onEnd={!section.readAt && !markRead.isPending ? () => markRead.mutate({ id: r.id, sectionId: section.id }) : undefined}
 					/>
 				)}
-				{section && section.kind === 'body' && section.wordCount > 0 && <RecallCard readingId={r.id} sectionId={section.id} />}
+				{section && section.kind === 'body' && section.wordCount > 0 && <RecallCard readingId={r.id} sectionId={section.id} chapter={chapterToRecall(r.contents, section.id)} />}
 				<div className="flex justify-between gap-2">
 					{current > 0 ? (
 						<button type="button" className={step} onClick={() => pick(current - 1)}>

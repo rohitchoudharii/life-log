@@ -228,6 +228,8 @@ function Results({ attempt }: { attempt: RecallAttempt }) {
 	const ideas = attempt.ideas ?? []
 	const covered = ideas.filter((i) => i.status === 'covered').length
 	const right = ideas.filter((i) => i.answer?.correct).length
+	// A chapter asks about at most 10 of its ideas; the rest start from the dump alone.
+	const asked = ideas.filter((i) => i.answer).length
 	// Sure but wrong first: the errors most worth fixing (hypercorrection).
 	const sureWrong = ideas.filter((i) => i.answer && !i.answer.correct && i.answer.confidence === 'sure')
 	const retryLeft = (attempt.retry ?? []).some((i) => !i.answered)
@@ -237,7 +239,7 @@ function Results({ attempt }: { attempt: RecallAttempt }) {
 		<div className="grid gap-6">
 			<div className="grid gap-1">
 				<p className="font-sans text-sm text-world-muted">
-					You brought back {covered} of {ideas.length} key {ideas.length === 1 ? 'idea' : 'ideas'}, and answered {right} of {ideas.length} questions right.
+					You brought back {covered} of {ideas.length} key {ideas.length === 1 ? 'idea' : 'ideas'}, and answered {right} of {asked} {asked === 1 ? 'question' : 'questions'} right.
 				</p>
 				{attempt.feedback && <p className="text-lg">{attempt.feedback}</p>}
 			</div>
@@ -314,7 +316,7 @@ export function Recall({ attemptId }: { attemptId: string }) {
 					← {a.readingTitle}
 				</Link>
 				<p className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">Recall</p>
-				<h1 className="text-3xl font-semibold tracking-tight">{a.sections.map((s) => s.title).join(' · ')}</h1>
+				<h1 className="text-3xl font-semibold tracking-tight">{a.sections.length > 1 ? `${a.sections[0]!.title}: the whole chapter` : a.sections[0]?.title}</h1>
 			</header>
 			{a.status === 'open' && <Dump attempt={a} />}
 			{(a.status === 'waiting' || a.status === 'grading') && (

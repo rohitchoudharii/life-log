@@ -1,6 +1,7 @@
 import { expect, type Page, test } from '@playwright/test'
 import { graduate, sql } from './db'
 import { FAKE_SITE, GOOD_ANTHROPIC_KEY } from './env'
+import { testEpub } from '../apps/server/src/import/test-books'
 import { proof } from './proof'
 import { joinAs } from './session'
 
@@ -527,7 +528,7 @@ test('Report a problem on a question in Review retires it, and the answer to it 
 
 test('Review without a key: self-rated cards, 20 at a time with Keep going, filters, and answer keys that never switch worlds', async ({ page }, testInfo) => {
 	const desktop = testInfo.project.name === 'desktop'
-	await joinAs(page)
+	const email = await joinAs(page)
 	for (let i = 1; i <= 21; i++) {
 		const res = await api(page, 'review/add', { id: crypto.randomUUID(), kind: 'lesson', prompt: `Lesson ${i}: what did it teach?`, answer: `The answer to lesson ${i}.` })
 		expect(res.ok()).toBe(true)
@@ -580,7 +581,8 @@ test('Review without a key: self-rated cards, 20 at a time with Keep going, filt
 	await expect(page.getByRole('button', { name: 'Keep going' })).toHaveCount(0)
 
 	const log = await sql<{ prompt: string; ask: string; rating: string; graded_by: string }>(
-		"select c.prompt, l.ask, l.rating, l.graded_by from review_log l join cards c on c.id = l.card_id where c.prompt like 'Lesson %' and l.user_id = (select user_id from cards where prompt = 'Lesson 1: what did it teach?' order by created_at desc limit 1) order by l.id",
+		"select c.prompt, l.ask, l.rating, l.graded_by from review_log l join cards c on c.id = l.card_id where l.user_id = (select id from users where email = $1) order by l.id",
+		[email],
 	)
 	expect(log).toHaveLength(21)
 	expect(log[0]).toEqual({ prompt: 'Lesson 1: what did it teach?', ask: 'self', rating: 'again', graded_by: 'self' })
@@ -784,4 +786,89 @@ test('Progress counts recall at review only from 20 reviews, Fading brings an id
 	await page.goto('/mind/progress')
 	await expect(page.getByTestId('recall-at-review')).toHaveText('70% of 20 right')
 	await proof(page, testInfo, 'progress')
+})
+
+/** An EPUB whose chapter one has four parts, each with three plain sentences the fake AI makes key ideas of. */
+const chapterBook = () =>
+	Buffer.from(
+		testEpub({
+			'OEBPS/text/a.xhtml': `<html><body><h2 id="c1">Chapter One</h2>
+				<p>Memory researchers study how people keep what they learn. Forgetting begins within minutes of finishing a lesson. Ebbinghaus measured forgetting with lists of nonsense syllables.</p>
+				<h3>Sleep</h3><p>Deep sleep moves fresh memories into lasting storage. A tired brain absorbs new material poorly. Students who sleep after studying remember considerably more.</p>
+				<h3>Spacing</h3><p>Spaced practice beats cramming for durable retention. Each delayed review strengthens the memory trace further. Gaps between sessions should grow as knowledge firms up.</p>
+				<h3>Testing</h3><p>Retrieval practice teaches more than rereading does. Quizzing yourself reveals gaps that rereading hides. Effortful recall builds stronger connections than recognition.</p>
+				<h2 id="c2">Chapter Two</h2><p>The second chapter is short and stands on its own here.</p></body></html>`,
+		}),
+	)
+const SLEEP = ['Deep sleep moves fresh memories into lasting storage.', 'A tired brain absorbs new material poorly.', 'Students who sleep after studying remember considerably more.']
+
+test('Recall chapter at the end of an EPUB chapter is graded against every key idea in it, asks at most 10 questions, missed first, and starts every idea', async ({ page }, testInfo) => {
+	const email = await joinAs(page)
+	expect((await api(page, 'ai/saveKey', { provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })).ok()).toBe(true)
+	await page.goto('/mind')
+	await page.getByLabel('EPUB or PDF file').setInputFiles({ name: 'Memory.epub', mimeType: 'application/epub+zip', buffer: chapterBook() })
+	await page.getByTestId('reading').getByRole('link', { name: /Test Book/ }).click({ timeout: 30_000 })
+	const contents = page.getByRole('navigation', { name: 'Contents' })
+	const open = async (name: string) => {
+		if (testInfo.project.name === 'phone') await page.getByRole('button', { name: /^Contents/ }).click()
+		await contents.getByRole('button', { name, exact: true }).click()
+		await expect(page.getByRole('heading', { level: 2, name })).toBeVisible()
+	}
+
+	// Inside the chapter, only the section can be recalled; at its last part, the whole chapter too.
+	await open('Sleep')
+	await expect(page.getByRole('button', { name: 'Recall this section' })).toBeVisible()
+	await expect(page.getByRole('button', { name: 'Recall chapter' })).toHaveCount(0)
+	await open('Testing')
+	const recall = page.getByRole('button', { name: 'Recall chapter' })
+	await recall.scrollIntoViewIfNeeded()
+	await proof(page, testInfo, 'recall-chapter-card')
+	await recall.click()
+	await expect(page.getByRole('heading', { level: 1, name: 'Chapter One: the whole chapter' })).toBeVisible()
+	await page.getByLabel('What you remember').fill(SLEEP.join(' '))
+	await page.getByRole('button', { name: 'Done' }).click()
+
+	// Twelve key ideas; nine missed come first, through their cues, then one covered one: ten in all.
+	await expect(page.getByText('Question 1 of 10')).toBeVisible({ timeout: 20_000 })
+	await proof(page, testInfo, 'recall-chapter-question')
+	const [user] = await sql<{ id: string }>('select id from users where email = $1', [email])
+	const ideas = await sql<IdeaRow & { section: string }>(
+		`select c.id, c.answer, c.prompt, c.level, c.due_at, c.started_at, s.title as section from cards c join sections s on s.id = c.section_id
+		 where c.user_id = $1 and c.origin = 'ai' order by s.position, c.position`,
+		[user!.id],
+	)
+	expect(ideas.map((i) => i.section)).toEqual(['Chapter One', 'Chapter One', 'Chapter One', 'Sleep', 'Sleep', 'Sleep', 'Spacing', 'Spacing', 'Spacing', 'Testing', 'Testing', 'Testing'])
+	// The chapter's four sections were written in one call, not four.
+	expect(await sql("select 1 from ai_calls where user_id = $1 and purpose = 'write-section'", [user!.id])).toHaveLength(1)
+	for (let k = 1; k <= 9; k++) {
+		await expect(page.getByText(`Question ${k} of 10`)).toBeVisible()
+		const text = await page.getByTestId('question').innerText()
+		expect(text, 'a missed idea is asked its cue').toMatch(/^Which point number/)
+		// Each part's cues read the same here, so the next question is told by its number.
+		await page.getByRole('button', { name: 'I don’t know' }).click()
+		await expect(page.getByText(`Question ${k + 1} of 10`)).toBeVisible({ timeout: 15_000 })
+	}
+	await expect(page.getByText('Question 10 of 10')).toBeVisible()
+	await expect(page.getByTestId('question')).toHaveText(/^Why does point \d of this part matter/)
+	const n = Number((await page.getByTestId('question').innerText()).match(/point (\d)/)![1])
+	await answerShown(page, SLEEP[n - 1]!, 'Sure')
+
+	// The results list every idea in the chapter.
+	const map = page.getByRole('list', { name: 'Recall map' })
+	await expect(map.locator(':scope > li')).toHaveCount(12)
+	for (const idea of ideas) await expect(map).toContainText(idea.answer)
+	await expect(page.getByText('You brought back 3 of 12 key ideas, and answered 1 of 10 questions right.')).toBeVisible()
+	await proof(page, testInfo, 'recall-chapter-results')
+
+	// Every idea started; the two covered ones not asked start from the dump and are back in a day.
+	const after = await sql<IdeaRow>('select id, answer, prompt, level, due_at, started_at from cards where id = any($1)', [ideas.map((i) => i.id)])
+	expect(after.every((i) => i.started_at)).toBe(true)
+	const unasked = SLEEP.filter((_, k) => k !== n - 1).map((s) => after.find((i) => i.answer === s)!)
+	for (const idea of unasked) expect(Math.abs(minutesUntil(idea.due_at) - DAY_MINUTES)).toBeLessThanOrEqual(1)
+	const attemptId = attemptIdOf(page)
+	const log = await recallLog(attemptId)
+	expect(log).toHaveLength(12)
+	expect(log.filter((l) => l.ask === 'self').map((l) => [l.card_id, l.rating, l.mode])).toEqual(
+		expect.arrayContaining(unasked.map((i) => [i.id, 'good', 'recall'])),
+	)
 })

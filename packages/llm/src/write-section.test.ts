@@ -65,6 +65,17 @@ describe('writeSection', () => {
 		expect(written.ideas.every((i) => i.questions.length === 0)).toBe(true)
 	})
 
+	it('keeps up to 20 ideas in each section of a chapter written in one call, not 20 in all', async () => {
+		const other = { title: 'Sleep', wordCount: 120, text: 'Sleep after study moves new memories into long-term storage overnight.' }
+		const inOther = (n: number) => idea(n, { section: 2, idea: `Sleep idea ${n}.`, cue: `Which sleep point ${n}?`, quote: other.text })
+		const first = Array.from({ length: MAX_IDEAS + 1 }, (_, i) => idea(i + 1))
+		const { complete } = scripted({ 'write-section': { ideas: [...first, inOther(30), inOther(31)] } })
+		const written = await writeSection(complete, [section, other], { amount: 'quick', qualityCheck: false })
+		expect(written.ideas.filter((i) => i.section === 0)).toHaveLength(MAX_IDEAS)
+		expect(written.ideas.filter((i) => i.section === 1).map((i) => i.idea)).toEqual(['Sleep idea 30.', 'Sleep idea 31.'])
+		expect(written.spare.map((i) => i.idea)).toEqual(['Idea number 21 about memory.'])
+	})
+
 	it('sends a question that breaks the rules or fails the check back once, and keeps a good replacement', async () => {
 		const { complete, calls } = scripted({
 			'write-section': { ideas: [idea(1, { questions: [question('What is spacing?')] }), idea(2)] },

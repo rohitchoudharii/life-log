@@ -338,6 +338,7 @@ export const readingsRoutes = {
 					aiTitle: sections.aiTitle,
 					wordCount: sections.wordCount,
 					kind: sections.kind,
+					chapter: sections.chapter,
 					readAt: sections.readAt,
 				})
 				.from(sections)

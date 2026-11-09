@@ -1,9 +1,10 @@
 import { ORPCError } from '@orpc/server'
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
 import { asUser, type Tx } from '../db/client'
 import { readings, recallAttempts, sections } from '../db/schema'
 import { enqueueGrade, enqueueWriteSection } from '../jobs'
 import { attemptView, sealDump, selfMark } from '../learning/recall'
+import { chapterBatches } from '../learning/write-section'
 import { authed } from '../orpc'
 
 const NOT_FOUND = 'That recall check does not exist. Start it again from the reading.'
@@ -22,9 +23,10 @@ export const recallRoutes = {
 			if (!reading) throw new ORPCError('NOT_FOUND', { message: 'That reading does not exist. It may have been removed.' })
 			// Only this member's own sections of this reading, with words to recall.
 			const shown = await tx
-				.select({ id: sections.id, writeStatus: sections.writeStatus })
+				.select({ id: sections.id, writeStatus: sections.writeStatus, wordCount: sections.wordCount })
 				.from(sections)
 				.where(and(inArray(sections.id, input.sectionIds), eq(sections.readingId, reading.id), eq(sections.kind, 'body')))
+				.orderBy(asc(sections.position))
 			if (shown.length !== new Set(input.sectionIds).size)
 				throw new ORPCError('NOT_FOUND', { message: 'That section does not exist. It may have been removed.' })
 			const [created] = await tx
@@ -34,11 +36,23 @@ export const recallRoutes = {
 				.returning({ id: recallAttempts.id })
 			if (!created) return []
 			// Ideas not written yet are written now, while the member writes the dump.
-			const waiting = shown.filter((s) => s.writeStatus === 'none' || s.writeStatus === 'paused' || s.writeStatus === 'failed').map((s) => s.id)
-			if (waiting.length) await tx.update(sections).set({ writeStatus: 'queued', writeError: null }).where(inArray(sections.id, waiting))
-			return waiting
+			const waiting = shown.filter((s) => s.writeStatus === 'none' || s.writeStatus === 'paused' || s.writeStatus === 'failed')
+			if (waiting.length)
+				await tx
+					.update(sections)
+					.set({ writeStatus: 'queued', writeError: null })
+					.where(
+						inArray(
+							sections.id,
+							waiting.map((s) => s.id),
+						),
+					)
+			// A whole chapter is written a few sections to a call, rather than one call per section.
+			return shown.length > 1 ? chapterBatches(waiting) : waiting.map((s) => [s])
 		})
-		await Promise.all(toWrite.map((sectionId) => enqueueWriteSection({ userId, sectionId, recall: true })))
+		await Promise.all(
+			toWrite.map(([first, ...rest]) => enqueueWriteSection({ userId, sectionId: first!.id, recall: true, ...(rest.length ? { with: rest.map((s) => s.id) } : {}) })),
+		)
 		return asUser(userId, (tx) => view(tx, input.id))
 	}),
 

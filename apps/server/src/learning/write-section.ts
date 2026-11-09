@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { blockText, defaultScheduler, type WriteStatus } from '@life-log-club/domain'
 import { type Complete, type SectionText, WRITE_SECTION_PROMPT_VERSION, type Written, writeSection } from '@life-log-club/llm'
-import { and, asc, eq, gt } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray } from 'drizzle-orm'
 import { asUser, type Tx } from '../db/client'
 import { aiKeys, cards, questions, sections } from '../db/schema'
 import { callAi, withinBudget } from './ai'
@@ -10,8 +10,32 @@ import { preferencesOf } from './preferences'
 /** A section shorter than this is written together with the next one; each keeps the ideas it quotes. */
 export const MERGE_UNDER_WORDS = 80
 
-/** `recall`: the member pressed Recall on the section and is waiting, so the budget doesn't stop it. */
-export type WriteJob = { userId: string; sectionId: string; recall?: boolean }
+/** A chapter recalled whole is written in batches of sections up to about this many words, one call each. */
+export const CHAPTER_BATCH_WORDS = 4000
+
+/**
+ * `recall`: the member pressed Recall on the section and is waiting, so the budget doesn't stop
+ * it. `with`: more sections of the same chapter to write in the same call (Recall chapter).
+ */
+export type WriteJob = { userId: string; sectionId: string; recall?: boolean; with?: string[] }
+
+/**
+ * Splits a chapter's sections, in reading order, into batches of up to CHAPTER_BATCH_WORDS each.
+ * A section longer than that is a batch of its own.
+ */
+export function chapterBatches<S extends { wordCount: number }>(list: S[]): S[][] {
+	const batches: S[][] = []
+	let words = Number.POSITIVE_INFINITY
+	for (const s of list) {
+		if (words + s.wordCount > CHAPTER_BATCH_WORDS) {
+			batches.push([])
+			words = 0
+		}
+		batches.at(-1)!.push(s)
+		words += s.wordCount
+	}
+	return batches
+}
 
 export const WRITE_FAILED = 'Writing questions for this section failed. Try again in a few minutes.'
 const NO_IDEAS = 'No key ideas could be found in this section. Try again, or save ideas yourself.'
@@ -27,14 +51,31 @@ const hasIdeas = async (tx: Tx, sectionId: string) =>
 type Row = typeof sections.$inferSelect
 const toText = (s: Row): SectionText => ({ title: s.title, text: s.blocks.map(blockText).filter(Boolean).join('\n\n'), wordCount: s.wordCount })
 
+const writable = (s: Row) => s.kind === 'body' && s.wordCount > 0
+
 /**
- * The sections to write together: this one, and the next when this one is under
- * MERGE_UNDER_WORDS. Null when there is nothing to write: a reference section, one with no
+ * The sections to write together: this one and `more` (a chapter batch) when given, else this one
+ * and the next when this one is under MERGE_UNDER_WORDS. Sections with ideas already are marked
+ * ready and left out. Null when there is nothing to write: a reference section, one with no
  * words, or one whose ideas exist already.
  */
-async function batchFor(tx: Tx, sectionId: string): Promise<Row[] | null> {
+async function batchFor(tx: Tx, sectionId: string, more: string[] = []): Promise<Row[] | null> {
 	const [section] = await tx.select().from(sections).where(eq(sections.id, sectionId)).for('update')
-	if (!section || section.kind === 'reference' || section.wordCount === 0) return null
+	if (!section || !writable(section)) return null
+	if (more.length) {
+		const rows = await tx
+			.select()
+			.from(sections)
+			.where(and(eq(sections.readingId, section.readingId), inArray(sections.id, [sectionId, ...more])))
+			.orderBy(asc(sections.position))
+			.for('update')
+		const batch: Row[] = []
+		for (const row of rows.filter(writable)) {
+			if (await hasIdeas(tx, row.id)) await setStatus(tx, [row.id], 'ready')
+			else batch.push(row)
+		}
+		return batch.length ? batch : null
+	}
 	if (await hasIdeas(tx, sectionId)) {
 		await setStatus(tx, [sectionId], 'ready')
 		return null
@@ -109,11 +150,12 @@ async function store(userId: string, batch: Row[], written: Written) {
 export async function writeKeyIdeas(job: WriteJob, lastTry = true): Promise<WriteStatus> {
 	const { userId, sectionId } = job
 	const batch = await asUser(userId, async (tx) => {
-		const rows = await batchFor(tx, sectionId)
+		const rows = await batchFor(tx, sectionId, job.with)
 		if (!rows) return null
 		const [key] = await tx.select({ userId: aiKeys.userId }).from(aiKeys)
 		if (!key) {
-			await setStatus(tx, [sectionId], 'needs_key')
+			// A chapter's sections all stop waiting, so its recall check can go on without them.
+			await setStatus(tx, job.with ? rows.map((s) => s.id) : [sectionId], 'needs_key')
 			return 'needs_key' as const
 		}
 		return rows

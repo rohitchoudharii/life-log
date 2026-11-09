@@ -7,7 +7,7 @@ import { prepareDatabase } from '../db/prepare'
 import { aiCalls, aiKeys, cards, questions, readings, sections, users } from '../db/schema'
 import { testSite } from '../import/test-site'
 import { keyContext } from './ai'
-import { writeKeyIdeas } from './write-section'
+import { CHAPTER_BATCH_WORDS, chapterBatches, writeKeyIdeas } from './write-section'
 
 const site = testSite()
 beforeAll(async () => {
@@ -94,10 +94,14 @@ it('writes a short section with the next one, and each section keeps the ideas i
 	expect(await writeKeyIdeas({ userId, sectionId: short!.id })).toBe('ready')
 	const after = await stored(userId)
 	expect(after.sections.map((s) => s.writeStatus)).toEqual(['ready', 'ready'])
-	expect(after.cards.map((c) => [c.sectionId, c.answer, c.origin, c.startedAt])).toEqual([
-		[short!.id, 'Idea 1 about memory.', 'ai', null],
-		[long!.id, 'Idea 2 about memory.', 'ai', null],
-	])
+	// Each card is first in its own section, so both have position 0 and come back in either order.
+	expect(after.cards).toHaveLength(2)
+	expect(after.cards.map((c) => [c.sectionId, c.answer, c.origin, c.startedAt])).toEqual(
+		expect.arrayContaining([
+			[short!.id, 'Idea 1 about memory.', 'ai', null],
+			[long!.id, 'Idea 2 about memory.', 'ai', null],
+		]),
+	)
 	expect(after.questions.map((q) => q.cardId).sort()).toEqual(after.cards.map((c) => c.id).sort())
 })
 
@@ -122,4 +126,15 @@ it('waits for a key without one, and makes no AI call', async () => {
 	const [row] = await asUser(userId, (tx) => tx.select({ writeStatus: sections.writeStatus }).from(sections).where(eq(sections.id, long!.id)))
 	expect(row!.writeStatus).toBe('needs_key')
 	expect(await asUser(userId, (tx) => tx.select().from(aiCalls))).toEqual([])
+})
+
+it('splits a chapter into batches of up to 4,000 words, in order, with a longer section on its own', () => {
+	const words = (...counts: number[]) => counts.map((wordCount, i) => ({ id: i, wordCount }))
+	const ids = (list: { id: number }[][]) => list.map((b) => b.map((s) => s.id))
+	expect(CHAPTER_BATCH_WORDS).toBe(4000)
+	// 1,500 + 2,500 fills a batch exactly; the next section starts a new one.
+	expect(ids(chapterBatches(words(1500, 2500, 100)))).toEqual([[0, 1], [2]])
+	expect(ids(chapterBatches(words(1500, 2501, 100)))).toEqual([[0], [1, 2]])
+	expect(ids(chapterBatches(words(5000, 200, 300)))).toEqual([[0], [1, 2]])
+	expect(chapterBatches([])).toEqual([])
 })

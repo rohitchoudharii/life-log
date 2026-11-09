@@ -1,10 +1,12 @@
-import { isQuestionType, levelIndex, orderForTest, type PointStatus, type QuestionType, type RecallStatus } from '@life-log-club/domain'
+import { randomUUID } from 'node:crypto'
+import { answerIdea, isQuestionType, levelIndex, orderForTest, type PointStatus, type QuestionType, type RecallStatus, schedulerFor } from '@life-log-club/domain'
 import { gradeRecallRequest, parseRecallVerdict } from '@life-log-club/llm'
 import { and, asc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 import { decrypt, encrypt } from '../crypto'
 import { asUser, type Tx } from '../db/client'
 import { aiKeys, cards, questions, type RecallItem, readings, recallAttempts, reviewLog, sections } from '../db/schema'
 import { callAi } from './ai'
+import { preferencesOf } from './preferences'
 
 export type GradeJob = { userId: string; attemptId: string }
 
@@ -33,13 +35,17 @@ async function ideasOf(tx: Tx, sectionIds: string[]) {
 		.then((rows) => rows.map((r) => r.card))
 }
 
+/** A recall check over a whole chapter asks at most this many questions. */
+export const CHAPTER_QUESTIONS = 10
+
 /**
  * Picks what to ask on each key idea after the dump, and sets the level a card not started yet
  * starts at. A missed idea is asked its cue; a vague one its lowest stored question; a covered one
  * its highest, so it is asked something harder than the dump already gave. Missed ideas first.
- * The cards start from their first answer.
+ * The cards start from their first answer. At most `max` are asked, missed ideas picked first;
+ * the rest come back as `unasked`.
  */
-async function prepareItems(tx: Tx, marks: { cardId: string; status: PointStatus }[]): Promise<RecallItem[]> {
+async function prepareItems(tx: Tx, marks: { cardId: string; status: PointStatus }[], max: number): Promise<{ items: RecallItem[]; unasked: string[] }> {
 	const ids = marks.map((m) => m.cardId)
 	const rows = await tx.select().from(cards).where(inArray(cards.id, ids)).for('update')
 	const stored = await tx
@@ -55,7 +61,61 @@ async function prepareItems(tx: Tx, marks: { cardId: string; status: PointStatus
 		if (!card.startedAt) await tx.update(cards).set({ level: startLevel(status, own.length ? levelIndex(own.at(-1)!.level) : undefined) }).where(eq(cards.id, cardId))
 		items.push({ cardId, questionId: question?.id ?? null, type: question && isQuestionType(question.type) ? question.type : null })
 	}
-	return orderForTest(items, new Map(marks.map((m) => [m.cardId, m.status]))).map(({ cardId, questionId }) => ({ cardId, questionId }))
+	const byMark = new Map(marks.map((m) => [m.cardId, m.status]))
+	// Picked by mark alone (missed, vague, then covered), so a missed idea with a choice question
+	// isn't left out for a covered one with a written question; then put in test order.
+	const picked = new Set(
+		orderForTest(
+			items.map((i) => ({ ...i, type: null })),
+			byMark,
+		)
+			.slice(0, max)
+			.map((i) => i.cardId),
+	)
+	return {
+		items: orderForTest(
+			items.filter((i) => picked.has(i.cardId)),
+			byMark,
+		).map(({ cardId, questionId }) => ({ cardId, questionId })),
+		unasked: items.filter((i) => !picked.has(i.cardId)).map((i) => i.cardId),
+	}
+}
+
+const MARK_RATING = { covered: 'good', vague: 'hard', missing: 'again' } as const
+
+/**
+ * Starts the cards of ideas the session doesn't ask about, from their dump mark alone: covered as
+ * Got it, vague as Hard, missed as Forgot. Each start is logged as a recall answer of the attempt,
+ * so the schedule can be worked out again from the log. Cards already started are left alone.
+ */
+async function startFromMarks(tx: Tx, attempt: typeof recallAttempts.$inferSelect, marks: { cardId: string; status: PointStatus }[], gradedBy: 'ai' | 'code' | 'self') {
+	if (!marks.length) return
+	const now = new Date()
+	const scheduler = schedulerFor((await preferencesOf(tx, attempt.userId)).desiredRetention)
+	const rows = await tx.select().from(cards).where(inArray(cards.id, marks.map((m) => m.cardId))).for('update')
+	for (const { cardId, status } of marks) {
+		const card = rows.find((c) => c.id === cardId)
+		if (!card || card.startedAt) continue
+		const rating = MARK_RATING[status]
+		const next = answerIdea({ state: card.state, level: card.level, dueAt: card.dueAt }, { correct: status === 'covered', rating }, now, scheduler)
+		await tx.update(cards).set({ state: next.state, level: next.level, dueAt: next.dueAt, startedAt: now }).where(eq(cards.id, cardId))
+		await tx.insert(reviewLog).values({
+			userId: attempt.userId,
+			cardId,
+			answerId: randomUUID(),
+			attemptId: attempt.id,
+			ask: 'self',
+			mode: 'recall',
+			rating,
+			correct: status === 'covered',
+			gradedBy,
+			prev: { state: card.state, level: card.level, dueAt: card.dueAt.toISOString() },
+			scheduler: scheduler.id,
+			predictedRecall: scheduler.retrievability(card.state, now),
+			reviewedAt: now,
+			nextDueAt: next.dueAt,
+		})
+	}
 }
 
 /**
@@ -121,7 +181,14 @@ async function finish(
 	feedback: string,
 	gradedBy: 'ai' | 'code' | 'self',
 ) {
-	const items = await prepareItems(tx, results)
+	// A chapter asks at most CHAPTER_QUESTIONS; a section asks about every idea.
+	const { items, unasked } = await prepareItems(tx, results, attempt.sectionIds.length > 1 ? CHAPTER_QUESTIONS : Number.POSITIVE_INFINITY)
+	await startFromMarks(
+		tx,
+		attempt,
+		results.filter((r) => unasked.includes(r.cardId)),
+		gradedBy,
+	)
 	await tx.update(recallAttempts).set({ status: 'graded', results, items, feedback: feedback || null, gradedBy }).where(eq(recallAttempts.id, attempt.id))
 	await tx
 		.update(sections)
