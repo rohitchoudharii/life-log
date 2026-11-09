@@ -3,6 +3,7 @@ import type { Block, Note, NoteRef, Link as TextLink } from '@life-log-club/doma
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { importingText } from '../readings'
 import { errorMessage, orpc } from '../rpc'
 
 type NoteMarks = { notes: Map<string, Note>; open: (note: Note) => void }
@@ -197,6 +198,9 @@ export function Reader({ readingId }: { readingId: string }) {
 	})
 	const [current, setCurrent] = useState(0)
 	const [contentsOpen, setContentsOpen] = useState(false)
+	// The same query SectionView makes: a web book's section opens the page it came from.
+	const sectionId = reading.data?.status === 'ready' ? reading.data.contents[current]?.id : undefined
+	const shown = useQuery({ ...orpc.readings.section.queryOptions({ input: { id: sectionId ?? '' } }), enabled: Boolean(sectionId) })
 
 	// A link that turned out to be a page the member already has opens that reading.
 	const keptId = reading.data?.id
@@ -213,12 +217,13 @@ export function Reader({ readingId }: { readingId: string }) {
 				<Link to="/mind" className="font-sans text-sm text-world-muted">
 					← Reading room
 				</Link>
-				<h1 className="text-2xl">{r.requestedUrl}</h1>
-				{r.status === 'importing' ? <p className="animate-pulse text-world-muted">Importing…</p> : <p role="alert">{r.error}</p>}
+				<h1 className="text-2xl">{r.progress ? r.title : r.requestedUrl}</h1>
+				{r.status === 'importing' ? <p className="animate-pulse text-world-muted">{importingText(r)}</p> : <p role="alert">{r.error}</p>}
 			</div>
 		)
 
 	const section = r.contents[current]
+	const original = shown.data?.sourceUrl ?? r.sourceUrl
 	const pick = (i: number) => {
 		setCurrent(i)
 		setContentsOpen(false)
@@ -241,9 +246,9 @@ export function Reader({ readingId }: { readingId: string }) {
 					</Link>
 					<h1 className="text-3xl font-semibold tracking-tight md:text-4xl">{r.title}</h1>
 					<p className="font-sans text-sm text-world-muted">
-						{r.author && `${r.author}${r.sourceUrl ? ' · ' : ''}`}
-						{r.sourceUrl && (
-							<a href={r.sourceUrl} target="_blank" rel="noopener noreferrer nofollow" className="underline underline-offset-2">
+						{r.author && `${r.author}${original ? ' · ' : ''}`}
+						{original && (
+							<a href={original} target="_blank" rel="noopener noreferrer nofollow" className="underline underline-offset-2">
 								Open original
 							</a>
 						)}

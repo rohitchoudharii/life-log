@@ -40,11 +40,15 @@ const NOT_PUBLIC = 'Life Log Club can only open public web pages.'
 const NO_ANSWER = "The site didn't answer. Try again in a minute."
 export const TOO_LARGE = 'This page is too large to add.'
 
-/** A fetch that failed, with a message for the member. `retry` is true when trying again later may work. */
+/**
+ * A fetch that failed, with a message for the member. `retry` is true when trying again later may
+ * work; `retryAfterMs` is how long the site asked to wait first, when it said.
+ */
 export class FetchError extends Error {
 	constructor(
 		message: string,
 		readonly retry = false,
+		readonly retryAfterMs?: number,
 	) {
 		super(message)
 	}
@@ -132,7 +136,11 @@ function refused(res: Fetched): FetchError {
 		return new FetchError('This site blocks automatic reading. The Chrome extension will capture it later.')
 	if (status === 401 || status === 403) return new FetchError('This page needs you to be signed in. The Chrome extension will capture it later.')
 	if (status === 404 || status === 410) return new FetchError(`The site says this page doesn't exist (${status}). Check the link.`)
-	if (status === 429 || status >= 500) return new FetchError(NO_ANSWER, true)
+	if (status === 429 || status >= 500) {
+		const after = String(res.headers['retry-after'] ?? '')
+		const ms = /^\d+$/.test(after) ? Number(after) * 1000 : after ? Date.parse(after) - Date.now() : Number.NaN
+		return new FetchError(NO_ANSWER, true, Number.isFinite(ms) ? Math.max(0, ms) : undefined)
+	}
 	return new FetchError(`The site refused to send this page (${status}). Try again later.`)
 }
 

@@ -17,6 +17,8 @@ const Env = z.object({
 	 * Origins on this machine that link imports may fetch, comma-separated, such as the e2e test
 	 * site. Every other private address is refused. Only tests set this.
 	 */
+	/** How long to wait between two pages of a web book, so a whole book doesn't load the site. Tests set 0. */
+	IMPORT_PAGE_DELAY_MS: z.coerce.number().int().min(0).default(1000),
 	IMPORT_ALLOWED_ORIGINS: z
 		.string()
 		.default('')

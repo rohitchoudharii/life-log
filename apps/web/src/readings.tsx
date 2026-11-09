@@ -7,6 +7,10 @@ import { useToast } from './toast'
 
 const listKey = orpc.readings.list.queryKey()
 
+/** What an importing reading shows; a web book counts its pages as they arrive. */
+export const importingText = ({ progress }: Pick<Reading, 'progress'>) =>
+	progress ? `Importing… ${progress.done} of ${progress.total} pages` : 'Importing…'
+
 /** The member's readings, asked for again every 1.5 seconds while one is importing. */
 export const useReadings = () =>
 	useQuery({
@@ -36,6 +40,7 @@ function useAddReading() {
 				error: null,
 				wordCount: 0,
 				sectionCount: 0,
+				progress: null,
 				createdAt: new Date(),
 			}
 			const before = queryClient.getQueryData<Reading[]>(listKey)
@@ -79,6 +84,7 @@ export function useAddFile() {
 				error: null,
 				wordCount: 0,
 				sectionCount: 0,
+				progress: null,
 				createdAt: new Date(),
 			}
 			queryClient.setQueryData<Reading[]>(listKey, (list) => [placeholder, ...(list ?? [])])
@@ -225,10 +231,10 @@ function ReadingItem({ reading }: { reading: Reading }) {
 	return (
 		<li data-testid="reading" className="rounded-2xl border border-dashed border-world-line p-4">
 			<p className="truncate text-lg leading-snug">
-				{reading.status === 'importing' ? host(reading.requestedUrl) || reading.title : (reading.requestedUrl ?? reading.title)}
+				{reading.status !== 'importing' ? (reading.requestedUrl ?? reading.title) : reading.progress ? reading.title : host(reading.requestedUrl) || reading.title}
 			</p>
 			{reading.status === 'importing' ? (
-				<p className="mt-1 animate-pulse font-sans text-sm text-world-muted">Importing…</p>
+				<p className="mt-1 animate-pulse font-sans text-sm text-world-muted">{importingText(reading)}</p>
 			) : (
 				<>
 					<p role="alert" className="mt-1 font-sans text-sm text-red">

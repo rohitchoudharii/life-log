@@ -61,6 +61,8 @@ export const Reading = z.object({
 	wordCount: z.int(),
 	/** Sections to read and recall; reference sections are not counted. */
 	sectionCount: z.int(),
+	/** While a web book is imported: how many of its pages are done. Null for everything else. */
+	progress: z.object({ done: z.int(), total: z.int() }).nullable(),
 	createdAt: z.date(),
 })
 export type Reading = z.infer<typeof Reading>
@@ -99,6 +101,8 @@ export const Section = z.object({
 	blocks: z.array(Block),
 	/** The footnotes and endnotes the blocks' note markers open. */
 	notes: z.array(Note),
+	/** The page this section came from, for a web book; null when it is the reading's own page or file. */
+	sourceUrl: z.string().nullable(),
 })
 export type Section = z.infer<typeof Section>
 

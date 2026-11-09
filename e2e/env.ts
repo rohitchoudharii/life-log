@@ -24,6 +24,8 @@ export const e2eEnv = {
 	ANTHROPIC_BASE_URL: `http://localhost:${FAKE_LLM_PORT}`,
 	OPENAI_BASE_URL: `http://localhost:${FAKE_LLM_PORT}`,
 	IMPORT_ALLOWED_ORIGINS: FAKE_SITE,
+	// Short, but long enough to see a web book's progress.
+	IMPORT_PAGE_DELAY_MS: '400',
 }
 
 /** The only keys the fake AI provider (e2e/fake-llm.ts) accepts. */

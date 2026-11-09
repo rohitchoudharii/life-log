@@ -6,9 +6,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { encrypt } from '../crypto'
 import { asUser, ownerDb, ownerPool, pool } from '../db/client'
 import { prepareDatabase } from '../db/prepare'
-import { aiCalls, aiKeys, media, readingFiles, readings, sections, users } from '../db/schema'
+import { aiCalls, aiKeys, media, readingFiles, readings, sections, users, webBookPages } from '../db/schema'
 import { keyContext } from '../learning/ai'
-import { addChapterHeadings, importReading, normaliseUrl } from './reading'
+import { addChapterHeadings, BOOK_MOSTLY_FAILED, BOOK_TOO_LONG, importReading, normaliseUrl, ROBOTS_REFUSED } from './reading'
 import { blankPdf, testEpub } from './test-books'
 import { fixture, TEST_SITE, testSite } from './test-site'
 
@@ -347,5 +347,108 @@ describe('uploaded books', () => {
 		)
 		expect(await failure(blankPdf(), 'scan.pdf')).toBe("This PDF is scanned pages without text, so Life Log Club can't read it yet.")
 		expect(await failure(new TextEncoder().encode('just some notes'), 'notes.epub')).toBe('Life Log Club reads EPUB and PDF files. Choose one of those.')
+	})
+})
+
+describe('web books (issue #3)', () => {
+	const html = { 'content-type': 'text/html; charset=utf-8' }
+	const words = (n: number) =>
+		Array.from({ length: 8 }, (_, i) => `<p>Paragraph ${i} of chapter ${n}, on how a ring of servers shares keys when one of them leaves.</p>`).join('')
+
+	/** A book on the test site: a contents page at `dir/` and one page per chapter, except the `missing` ones. */
+	function webBook(dir: string, count: number, missing: number[] = []) {
+		const links = Array.from({ length: count }, (_, i) => `<li><a href="ch${i + 1}.html">Chapter ${i + 1}</a></li>`).join('')
+		for (let n = 1; n <= count; n++)
+			if (!missing.includes(n))
+				site.serve(`${dir}/ch${n}.html`, {
+					body: `<html><head><title>Chapter ${n} · Ring Book</title></head><body><article><h1>Chapter ${n}</h1><p>Opening of chapter ${n}.</p><h2>Idea ${n}</h2>${words(n)}</article></body></html>`,
+					headers: html,
+				})
+		return site.serve(`${dir}/`, {
+			body: `<html><head><title>Contents · Ring Book</title></head><body><h1>Ring Book</h1><h2>Contents</h2><ol class="toc">${links}</ol></body></html>`,
+			headers: html,
+		})
+	}
+
+	const pages = (userId: string, id: string) => asUser(userId, (tx) => tx.select().from(webBookPages).where(eq(webBookPages.readingId, id)))
+	const chapterHits = () => [...site.takeHits()].filter(([path]) => /\/ch\d+\.html$/.test(path))
+
+	it('adds a whole book from its contents page, each chapter from its own page', async () => {
+		const userId = await member()
+		const url = webBook('/ring-book', 4, [3])
+		site.takeHits()
+		const id = await add(userId, url)
+		const { reading, sections: stored } = await load(userId, id)
+		expect(reading).toMatchObject({ status: 'ready', source: 'web_book', title: 'Ring Book', sourceUrl: url })
+		expect(stored.map((s) => [s.level, s.title])).toEqual([
+			[1, 'Chapter 1'],
+			[2, 'Idea 1'],
+			[1, 'Chapter 2'],
+			[2, 'Idea 2'],
+			[1, 'Chapter 3'],
+			[1, 'Chapter 4'],
+			[2, 'Idea 4'],
+		])
+		expect(stored.find((s) => s.title === 'Idea 2')!.sourceUrl).toBe(`${TEST_SITE}/ring-book/ch2.html`)
+		// The page that couldn't be added says why, links to it, and asks for no recall.
+		const missing = stored.find((s) => s.title === 'Chapter 3')!
+		expect(missing).toMatchObject({ kind: 'reference', sourceUrl: `${TEST_SITE}/ring-book/ch3.html` })
+		const text = "This page couldn't be added: The site says this page doesn't exist (404). Check the link. Read it on the original page."
+		const at = text.indexOf('the original page')
+		expect(missing.blocks).toEqual([{ type: 'paragraph', text, links: [{ start: at, end: at + 17, href: `${TEST_SITE}/ring-book/ch3.html` }] }])
+		expect(chapterHits().map(([, n]) => n)).toEqual([1, 1, 1, 1])
+		expect(await pages(userId, id)).toEqual([])
+	})
+
+	it('fetches a long book a batch at a time, stops when it is removed, and goes on where it stopped', async () => {
+		const userId = await member()
+		const id = randomUUID()
+		await asUser(userId, (tx) => tx.insert(readings).values({ id, userId, title: 'x', source: 'url', requestedUrl: webBook('/long-book', 23) }))
+		site.takeHits()
+		expect(await importReading({ readingId: id, userId })).toBe('more')
+		expect((await pages(userId, id)).filter((p) => p.blocks).length).toBe(20)
+		expect(chapterHits()).toHaveLength(20)
+
+		const removed = (deletedAt: Date | null) => asUser(userId, (tx) => tx.update(readings).set({ deletedAt }).where(eq(readings.id, id)))
+		await removed(new Date())
+		expect(await importReading({ readingId: id, userId })).toBeUndefined()
+		expect(chapterHits()).toEqual([])
+		expect((await load(userId, id)).reading.status).toBe('importing')
+
+		await removed(null)
+		expect(await importReading({ readingId: id, userId })).toBeUndefined()
+		const { reading, sections: stored } = await load(userId, id)
+		expect(reading.status).toBe('ready')
+		expect(stored.filter((s) => s.level === 1)).toHaveLength(23)
+		// Only the three pages left were fetched: none twice.
+		expect(chapterHits().map(([path, n]) => [path, n])).toEqual([
+			['/long-book/ch21.html', 1],
+			['/long-book/ch22.html', 1],
+			['/long-book/ch23.html', 1],
+		])
+	})
+
+	it("refuses a book whose site asks apps not to copy it, and a book longer than 200 pages", async () => {
+		const userId = await member()
+		site.serve('/robots.txt', { body: 'User-agent: *\nDisallow: /blocked-book/ch\n', headers: { 'content-type': 'text/plain' } })
+		const blocked = webBook('/blocked-book', 3)
+		site.takeHits()
+		expect((await load(userId, await add(userId, blocked))).reading).toMatchObject({ status: 'failed', error: ROBOTS_REFUSED })
+		expect(chapterHits()).toEqual([])
+		expect((await load(userId, await add(userId, webBook('/huge-book', 201)))).reading).toMatchObject({ status: 'failed', error: BOOK_TOO_LONG })
+	})
+
+	it('fails a book when most of its pages could not be added, and starts afresh when it is added again', async () => {
+		const userId = await member()
+		const id = await add(userId, webBook('/gone-book', 3, [1, 2]))
+		expect((await load(userId, id)).reading).toMatchObject({ status: 'failed', error: BOOK_MOSTLY_FAILED })
+		expect(await pages(userId, id)).toEqual([])
+		webBook('/gone-book', 3)
+		// What adding the same link again does.
+		await asUser(userId, (tx) => tx.update(readings).set({ status: 'importing', error: null }).where(eq(readings.id, id)))
+		await importReading({ readingId: id, userId })
+		const { reading, sections: stored } = await load(userId, id)
+		expect(reading.status).toBe('ready')
+		expect(stored.filter((s) => s.kind === 'reference')).toEqual([])
 	})
 })

@@ -56,6 +56,7 @@ test('links the server must not or cannot open fail with a message saying what t
 		[`${FAKE_SITE}/to-private`, 'Life Log Club can only open public web pages.'],
 		[`${FAKE_SITE}/members-only`, 'This page needs you to be signed in. The Chrome extension will capture it later.'],
 		[`${FAKE_SITE}/gone`, "The site says this page doesn't exist (404). Check the link."],
+		[`${FAKE_SITE}/books/private/`, "This site asks apps not to copy its pages, so the whole book can't be added. Add one chapter's link instead."],
 	]) {
 		await addLink(page, url)
 		await expect(readings(page).filter({ hasText: url }).getByRole('alert')).toHaveText(message, { timeout: 15_000 })
@@ -64,11 +65,11 @@ test('links the server must not or cannot open fail with a message saying what t
 	const gone = readings(page).filter({ hasText: `${FAKE_SITE}/gone` })
 	await gone.getByRole('button', { name: 'Remove' }).click()
 	await expect(gone).toHaveCount(0)
-	await expect(readings(page)).toHaveCount(3)
+	await expect(readings(page)).toHaveCount(4)
 
 	await addLink(page, 'hello world')
 	await expect(page.getByRole('status')).toContainText("That isn't a web address. Check the link and try again.")
-	await expect(readings(page)).toHaveCount(3)
+	await expect(readings(page)).toHaveCount(4)
 })
 
 test("a member can't see another member's reading, by id or in their list", async ({}, info) => {
@@ -213,6 +214,37 @@ test('a link to a PDF is read as a book', async ({ page }) => {
 	await readings(page).getByRole('link').click()
 	await expect(page.getByText('p. 1', { exact: true })).toBeVisible()
 	await expect(page.getByText(/Section 3 of the Fourteenth Amendment/).first()).toBeVisible()
+})
+
+test("a link to a web book's contents page adds every chapter page, a batch at a time", async ({ page, isMobile }) => {
+	await joinAs(page)
+	await page.goto('/mind')
+	await addLink(page, `${FAKE_SITE}/books/rings/`)
+	// The fake site's 22 pages come 0.4 seconds apart, so the count is there to see.
+	await expect(readings(page)).toContainText(/Importing… \d+ of 22 pages/, { timeout: 15_000 })
+	await expect(readings(page)).toContainText('The Ring Book')
+	await expect(readings(page).getByRole('link', { name: /The Ring Book/ })).toBeVisible({ timeout: 30_000 })
+	// Two sections for each of the 21 chapters that came; the missing chapter is not counted.
+	await expect(readings(page)).toContainText('42 sections')
+
+	await readings(page).getByRole('link').click()
+	await expect(page.getByRole('heading', { level: 1, name: 'The Ring Book' })).toBeVisible()
+	await expect(page.getByText('Chapter 1 opens here.', { exact: false })).toBeVisible()
+	const contents = page.getByRole('navigation', { name: 'Contents' })
+	const open = async (title: string | RegExp) => {
+		if (isMobile) await page.getByRole('button', { name: /^Contents/ }).click()
+		await contents.getByRole('button', { name: title }).click()
+	}
+	// Open original goes to the page the section came from.
+	await open('2. Hashing keys')
+	await expect(page.getByText('Chapter 2 opens here.', { exact: false })).toBeVisible()
+	await expect(page.getByRole('link', { name: 'Open original' })).toHaveAttribute('href', `${FAKE_SITE}/books/rings/2.html`)
+	await open(/^7\. Replication/)
+	await expect(page.getByText("This page couldn't be added: The site says this page doesn't exist (404). Check the link.", { exact: false })).toBeVisible()
+	await expect(page.getByRole('link', { name: 'the original page' })).toHaveAttribute('href', `${FAKE_SITE}/books/rings/7.html`)
+	await expect(page.getByText('Kept to read. No recall.')).toBeVisible()
+	if (isMobile) await page.getByRole('button', { name: /^Contents/ }).click()
+	await expect(contents.getByRole('button', { name: '22. What to read next' })).toBeVisible()
 })
 
 test("a book's images are stored and shown in the reader", async ({ page, isMobile }) => {

@@ -10,6 +10,7 @@ import {
 	jsonb,
 	pgPolicy,
 	pgTable,
+	primaryKey,
 	smallint,
 	text,
 	timestamp,
@@ -182,8 +183,11 @@ export const readings = pgTable(
 			.references(() => users.id, { onDelete: 'cascade' }),
 		title: text().notNull(),
 		author: text(),
-		/** `pdf_url` is a link that turned out to be a PDF. */
-		source: text().$type<'url' | 'pdf_url' | 'epub' | 'pdf_upload'>().notNull(),
+		/**
+		 * `pdf_url` is a link that turned out to be a PDF; `web_book` a link to the contents page of
+		 * a book whose chapters are each their own page.
+		 */
+		source: text().$type<'url' | 'pdf_url' | 'web_book' | 'epub' | 'pdf_upload'>().notNull(),
 		/** The link as the member added it, normalised. The same link always finds the same reading. */
 		requestedUrl: text(),
 		/** The page's canonical address, or where the link ended after redirects. */
@@ -232,6 +236,32 @@ export const readingFiles = pgTable(
 		createdAt: createdAt(),
 	},
 	(t) => [ownRows(t.userId)],
+)
+
+/**
+ * The pages of a web book while it is imported, one row per page its contents list names. Each
+ * page's blocks, or why it couldn't be added, are kept as they arrive, so an import that stops
+ * goes on where it was. The rows are deleted when the book is stored as sections.
+ */
+export const webBookPages = pgTable(
+	'web_book_pages',
+	{
+		readingId: uuid()
+			.notNull()
+			.references(() => readings.id, { onDelete: 'cascade' }),
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		position: integer().notNull(),
+		url: text().notNull(),
+		title: text().notNull(),
+		level: smallint().notNull(),
+		kind: text().$type<SectionKind>().notNull(),
+		blocks: jsonb().$type<Block[]>(),
+		/** Why the page couldn't be added, written for the member. */
+		error: text(),
+	},
+	(t) => [primaryKey({ columns: [t.readingId, t.position] }), ownRows(t.userId)],
 )
 
 /** An image from a reading, re-encoded as WebP. Kept in Postgres for now, so backups include it. */
@@ -284,6 +314,8 @@ export const sections = pgTable(
 		headingsPending: boolean().notNull().default(false),
 		/** The footnotes and endnotes this section's note markers open. */
 		notes: jsonb().$type<Note[]>().notNull().default([]),
+		/** For a web book, the page the section came from; null when it is the reading's own page or file. */
+		sourceUrl: text(),
 		createdAt: createdAt(),
 	},
 	(t) => [uniqueIndex().on(t.readingId, t.position), index().on(t.readingId, t.chapter), ownRows(t.userId)],

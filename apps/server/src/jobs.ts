@@ -59,12 +59,14 @@ export async function startJobs() {
 
 	// Retries wait 10, 20 seconds: long enough for a site that didn't answer to come back. A
 	// worker that dies mid-import (a restart) stops sending heartbeats, so its job is retried.
-	// A big book takes up to 2 minutes to parse, plus its images.
-	const options = { retryLimit: 2, retryDelay: 10, retryBackoff: true, expireInSeconds: 15 * 60, heartbeatSeconds: 30 }
+	// A big book takes up to 2 minutes to parse, plus its images; a web book's batch of pages,
+	// fetched with a pause between them, can take longer.
+	const options = { retryLimit: 2, retryDelay: 10, retryBackoff: true, expireInSeconds: 30 * 60, heartbeatSeconds: 30 }
 	if (await boss.getQueue(IMPORT)) await boss.updateQueue(IMPORT, options)
 	else await boss.createQueue(IMPORT, { policy: 'stately', ...options })
 	await boss.work(IMPORT, { localConcurrency: 4, includeMetadata: true }, async ([job]: JobWithMetadata<ImportJob>[]) => {
-		if (job) await importReading(job.data, job.retryCount >= job.retryLimit)
+		// A web book with pages left goes on in a new job, which the stately queue takes while this one is active.
+		if (job && (await importReading(job.data, job.retryCount >= job.retryLimit)) === 'more') await enqueueImport(job.data)
 	})
 	// A chapter whose job fails keeps its length cut; the member can open it again to retry.
 	if (!(await boss.getQueue(HEADINGS))) await boss.createQueue(HEADINGS, { policy: 'stately', retryLimit: 1, expireInSeconds: 5 * 60 })

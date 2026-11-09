@@ -11,10 +11,14 @@ import { authed } from '../orpc'
 // Written out in full: inside a subquery Drizzle leaves column names unqualified, and `id` would
 // then mean the section's own id.
 const sectionCount = sql<number>`(select count(*)::int from sections where sections.reading_id = readings.id and sections.kind = 'body')`
-const columns = { reading: readings, sectionCount }
-type Row = { reading: typeof readings.$inferSelect; sectionCount: number }
+// A web book has page rows only while it is imported.
+const progress = sql<{ done: number; total: number } | null>`(select case when count(*) = 0 then null else json_build_object(
+	'done', count(*) filter (where web_book_pages.blocks is not null or web_book_pages.error is not null), 'total', count(*)) end
+	from web_book_pages where web_book_pages.reading_id = readings.id)`
+const columns = { reading: readings, sectionCount, progress }
+type Row = { reading: typeof readings.$inferSelect; sectionCount: number; progress: { done: number; total: number } | null }
 
-const toReading = ({ reading: r, sectionCount }: Row) => ({
+const toReading = ({ reading: r, sectionCount, progress }: Row) => ({
 	id: r.id,
 	title: r.title,
 	author: r.author,
@@ -24,6 +28,7 @@ const toReading = ({ reading: r, sectionCount }: Row) => ({
 	error: r.error,
 	wordCount: r.wordCount,
 	sectionCount,
+	progress: r.status === 'importing' ? progress : null,
 	createdAt: r.createdAt,
 })
 
@@ -54,7 +59,7 @@ async function addReading(userId: string, values: NewReading, same: SQL, created
 		const [inserted] = await tx.insert(readings).values(values).onConflictDoNothing().returning()
 		if (inserted) {
 			await created?.(tx)
-			return { row: { reading: inserted, sectionCount: 0 }, queue: true }
+			return { row: { reading: inserted, sectionCount: 0, progress: null }, queue: true }
 		}
 		// An id that belongs to someone else is invisible here, so it can't be read or overwritten.
 		const [found] = await tx
@@ -72,7 +77,7 @@ async function addReading(userId: string, values: NewReading, same: SQL, created
 			.set({ deletedAt: null, ...(retry && { status: 'importing' as const, error: null }) })
 			.where(eq(readings.id, reading.id))
 			.returning()
-		return { row: { reading: updated!, sectionCount: existing.sectionCount }, queue: retry }
+		return { row: { ...existing, reading: updated! }, queue: retry }
 	})
 	if (queue) await enqueueImport({ readingId: row.reading.id, userId })
 	return toReading(row)
@@ -157,6 +162,7 @@ export const readingsRoutes = {
 					chapter: sections.chapter,
 					blocks: sections.blocks,
 					notes: sections.notes,
+					sourceUrl: sections.sourceUrl,
 				})
 					.from(sections)
 					.innerJoin(readings, eq(readings.id, sections.readingId))
@@ -181,12 +187,16 @@ export const readingsRoutes = {
 		}),
 	),
 
-	restore: authed.readings.restore.handler(({ input, context }) =>
-		asUser(context.user.id, async (tx) => {
+	restore: authed.readings.restore.handler(async ({ input, context }) => {
+		const userId = context.user.id
+		const row = await asUser(userId, async (tx) => {
 			const row = await resolve(tx, input.id)
 			if (!row?.reading.deletedAt) throw notFound()
 			await tx.update(readings).set({ deletedAt: null }).where(eq(readings.id, row.reading.id))
-			return toReading({ ...row, reading: { ...row.reading, deletedAt: null } })
-		}),
-	),
+			return row
+		})
+		// A web book stops fetching pages once it is removed; restoring it goes on from there.
+		if (row.reading.status === 'importing') await enqueueImport({ readingId: row.reading.id, userId })
+		return toReading({ ...row, reading: { ...row.reading, deletedAt: null } })
+	}),
 }

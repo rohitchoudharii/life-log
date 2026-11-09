@@ -13,20 +13,30 @@ import {
 } from '@life-log-club/domain'
 import { and, asc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
 import { asUser } from '../db/client'
-import { media, readingFiles, readings, sections } from '../db/schema'
+import { media, readingFiles, readings, sections, webBookPages } from '../db/schema'
+import { env } from '../env'
 import { type Book, bookKind, parseBook } from './book'
 import { decodeHtml, ExtractError, extractArticle, SIGN_IN } from './extract'
 import { FetchError, safeFetch, TOO_LARGE } from './fetch'
 import { addAiHeadings } from './headings'
 import { type PreparedImage, prepareImage } from './media'
+import { robotsFor } from './robots'
+import { findBook, MAX_BOOK_PAGES, type WebBook } from './web-book'
 
 /** Sent when no other message fits, such as a bug; the member can only try again. */
 export const UNEXPECTED = 'Something went wrong while adding this page. Try again in a minute.'
 
 export const NOT_A_LINK = "That isn't a web address. Check the link and try again."
 export const NOT_A_BOOK = 'Life Log Club reads EPUB and PDF files. Choose one of those.'
+export const ROBOTS_REFUSED = "This site asks apps not to copy its pages, so the whole book can't be added. Add one chapter's link instead."
+export const BOOK_TOO_LONG = `This book has more than ${MAX_BOOK_PAGES} pages, more than Life Log Club adds from the web. Add the chapters you want one at a time.`
+export const BOOK_MOSTLY_FAILED = "Most pages of this book couldn't be added. Try again later."
 const MAX_SECTIONS = 2000
 const MAX_HTML_BYTES = 5 * 1024 * 1024
+/** Pages of a web book fetched by one run of the import job, so one book doesn't hold a worker for long. */
+const PAGES_PER_RUN = 20
+const MAX_PAGE_DELAY_MS = 10_000
+const MAX_RETRY_AFTER_MS = 60_000
 const TRACKING = /^(utm_\w+|fbclid|gclid|mc_cid|mc_eid)$/i
 
 /**
@@ -61,9 +71,20 @@ async function arxivHtml(url: string) {
 	return safeFetch(`https://arxiv.org/html/${m[1]}`, { accept: 'text/html' }).catch(() => null)
 }
 
+const isHtml = (contentType: string) => {
+	const type = contentType.split(';')[0]!.trim().toLowerCase()
+	return !type || type === 'text/html' || type === 'application/xhtml+xml'
+}
+
+async function fetchHtml(url: string) {
+	const page = await safeFetch(url, { accept: 'text/html,application/xhtml+xml' })
+	if (!isHtml(page.contentType)) throw new ExtractError("This link isn't a web page. Check the link and try again.")
+	return { url: page.url, html: decodeHtml(page.body, page.contentType) }
+}
+
 /**
- * Fetches the page and finds its article, or the PDF the link points at. Throws FetchError or
- * ExtractError with a message for the member.
+ * Fetches the page and finds its article, the PDF the link points at, or the web book whose
+ * contents page it is. Throws FetchError or ExtractError with a message for the member.
  */
 async function readPage(url: string) {
 	// A PDF can be as large as an uploaded file, and takes longer to arrive than a page.
@@ -74,10 +95,12 @@ async function readPage(url: string) {
 	const type = page.contentType.split(';')[0]!.trim().toLowerCase()
 	const finalUrl = normaliseUrl(page.url) ?? page.url
 	if (type === 'application/pdf' || bookKind(page.body) === 'pdf') return { pdf: new Uint8Array(page.body), sourceUrl: finalUrl } as const
-	if (type && type !== 'text/html' && type !== 'application/xhtml+xml')
-		throw new ExtractError("This link isn't a web page. Check the link and try again.")
+	if (!isHtml(type)) throw new ExtractError("This link isn't a web page. Check the link and try again.")
 	if (page.body.length > MAX_HTML_BYTES) throw new ExtractError(TOO_LARGE)
-	const article = extractArticle(decodeHtml(page.body, page.contentType), page.url)
+	const html = decodeHtml(page.body, page.contentType)
+	const book = await findBook(html, page.url, async (u) => (await fetchHtml(u)).html)
+	if (book?.isContents) return { book, sourceUrl: finalUrl } as const
+	const article = extractArticle(html, page.url)
 	return { article, sourceUrl: article.canonicalUrl ?? finalUrl } as const
 }
 
@@ -106,8 +129,18 @@ const asArticle = (blocks: Block[], title: string): BookSection[] =>
 const bookSections = (book: Pick<Book, 'chapters' | 'article' | 'notes'>) =>
 	splitBook(book.chapters, { notes: book.notes, ...(book.article && { headingsFrom: ARTICLE_HEADINGS_MIN_WORDS }) })
 
-async function readLink(userId: string, url: string): Promise<Imported> {
+/**
+ * What one run of the import job got to: the reading to store, `more` when a web book has pages
+ * left for the next run, or null when the reading was removed while its pages were fetched.
+ */
+type Step = Imported | 'more' | null
+
+async function readLink(userId: string, readingId: string, url: string): Promise<Step> {
 	const page = await readPage(url)
+	if (page.book) {
+		await startWebBook(userId, readingId, page.book, page.sourceUrl)
+		return readWebBook(userId, readingId)
+	}
 	if (page.pdf) {
 		const name = decodeURIComponent(new URL(page.sourceUrl).pathname.split('/').pop() ?? '').replace(/\.pdf$/i, '') || new URL(page.sourceUrl).hostname
 		const book = await parseBook('pdf', page.pdf, name)
@@ -117,6 +150,97 @@ async function readLink(userId: string, url: string): Promise<Imported> {
 	const words = article.blocks.reduce((n, b) => n + countWords(blockText(b)), 0)
 	const blocks = !hasHeadings(article.blocks) && words >= ARTICLE_HEADINGS_MIN_WORDS ? await addAiHeadings(userId, article.blocks) : article.blocks
 	return { ...article, sourceUrl, sections: asArticle(blocks, article.title), images: new Map() }
+}
+
+/**
+ * Turns a link reading into a web book: one page row per page of its contents list, and the
+ * book's title. Refuses a book longer than MAX_BOOK_PAGES, and a site whose robots.txt asks
+ * apps not to fetch the book's pages.
+ */
+async function startWebBook(userId: string, readingId: string, book: WebBook, contentsUrl: string) {
+	if (book.pages.length > MAX_BOOK_PAGES) throw new ExtractError(BOOK_TOO_LONG)
+	const robots = await robotsFor(new URL(contentsUrl).origin)
+	if (!book.pages.every((p) => robots.allows(p.url))) throw new ExtractError(ROBOTS_REFUSED)
+	await asUser(userId, async (tx) => {
+		await tx
+			.insert(webBookPages)
+			.values(book.pages.map((p, position) => ({ readingId, userId, position, url: p.url, title: p.title, level: p.level, kind: p.kind })))
+			.onConflictDoNothing()
+		await tx
+			.update(readings)
+			.set({ source: 'web_book', title: book.title, sourceUrl: contentsUrl })
+			.where(and(eq(readings.id, readingId), eq(readings.status, 'importing')))
+	})
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** One page of a web book as blocks. A site that asks to wait (429 or 503 with Retry-After) is waited for once. */
+async function readBookPage(url: string): Promise<Block[]> {
+	const page = await fetchHtml(url).catch(async (error) => {
+		const wait = error instanceof FetchError ? error.retryAfterMs : undefined
+		if (wait === undefined || wait > MAX_RETRY_AFTER_MS) throw error
+		await sleep(wait)
+		return fetchHtml(url)
+	})
+	return extractArticle(page.html, page.url).blocks
+}
+
+/**
+ * Fetches the next pages of a web book, one at a time with a pause between them, and keeps each
+ * page's blocks or why it couldn't be added. Pages already kept are never fetched again, so a
+ * run that stops (a restart) loses nothing. Once every page is kept, returns the book: a page
+ * that couldn't be added is a short reference section that says why and links to it, unless more
+ * than half the pages failed, which fails the book.
+ */
+async function readWebBook(userId: string, readingId: string): Promise<Step> {
+	const pages = await asUser(userId, (tx) =>
+		tx.select().from(webBookPages).where(eq(webBookPages.readingId, readingId)).orderBy(asc(webBookPages.position)),
+	)
+	const pending = pages.filter((p) => !p.blocks && !p.error)
+	if (pending.length) {
+		const robots = await robotsFor(new URL(pending[0]!.url).origin)
+		const delay = Math.min(MAX_PAGE_DELAY_MS, Math.max(env.IMPORT_PAGE_DELAY_MS, robots.crawlDelayMs))
+		for (const [k, page] of pending.slice(0, PAGES_PER_RUN).entries()) {
+			const [reading] = await asUser(userId, (tx) =>
+				tx.select({ status: readings.status, deletedAt: readings.deletedAt }).from(readings).where(eq(readings.id, readingId)),
+			)
+			if (reading?.status !== 'importing' || reading.deletedAt) return null
+			if (k > 0 || pending.length < pages.length) await sleep(delay)
+			let saved: { blocks: Block[] } | { error: string }
+			try {
+				saved = { blocks: await readBookPage(page.url) }
+			} catch (error) {
+				const known = error instanceof FetchError || error instanceof ExtractError
+				if (!known) console.error('[import-reading] page', page.url, error)
+				saved = { error: known ? error.message : UNEXPECTED }
+			}
+			Object.assign(page, saved)
+			await asUser(userId, (tx) =>
+				tx
+					.update(webBookPages)
+					.set(saved)
+					.where(and(eq(webBookPages.readingId, readingId), eq(webBookPages.position, page.position))),
+			)
+		}
+		if (pending.length > PAGES_PER_RUN) return 'more'
+	}
+	if (pages.filter((p) => p.error).length > pages.length / 2) throw new ExtractError(BOOK_MOSTLY_FAILED)
+	const [reading] = await asUser(userId, (tx) => tx.select().from(readings).where(eq(readings.id, readingId)))
+	if (!reading) return null
+	const chapters: Chapter[] = pages.map((p) => {
+		if (p.blocks) return { title: p.title, level: p.level, kind: p.kind, blocks: p.blocks, sourceUrl: p.url }
+		const text = `This page couldn't be added: ${p.error} Read it on the original page.`
+		const at = text.lastIndexOf('the original page')
+		return {
+			title: p.title,
+			level: p.level,
+			kind: 'reference',
+			blocks: [{ type: 'paragraph', text, links: [{ start: at, end: at + 'the original page'.length, href: p.url }] }],
+			sourceUrl: p.url,
+		}
+	})
+	return { title: reading.title, author: null, publishedAt: null, sourceUrl: reading.sourceUrl, sections: splitBook(chapters), images: new Map() }
 }
 
 const IMAGE_BATCH = 4
@@ -157,16 +281,28 @@ async function readFile(userId: string, readingId: string): Promise<Imported> {
  * the same transaction that sets it ready. When a link turns out to be a page the member already
  * has under another link, this reading is merged into that one instead of storing a copy.
  *
+ * A link to a web book's contents page imports the book's pages a batch at a time: the job
+ * returns `more` until every page is kept, and is queued again for the next batch.
+ *
  * A failure the site may get over (no answer, a 5xx) is thrown so the job is retried, until
  * `lastTry`; every other failure marks the reading failed with its message.
  */
-export async function importReading({ readingId, userId }: { readingId: string; userId: string }, lastTry = true) {
+export async function importReading({ readingId, userId }: { readingId: string; userId: string }, lastTry = true): Promise<'more' | undefined> {
 	const [reading] = await asUser(userId, (tx) => tx.select().from(readings).where(eq(readings.id, readingId)))
 	if (reading?.status !== 'importing') return
 
 	let imported: Imported
 	try {
-		imported = reading.requestedUrl ? await readLink(userId, reading.requestedUrl) : await readFile(userId, readingId)
+		const [started] = await asUser(userId, (tx) =>
+			tx.select({ position: webBookPages.position }).from(webBookPages).where(eq(webBookPages.readingId, readingId)).limit(1),
+		)
+		const step = started
+			? await readWebBook(userId, readingId)
+			: reading.requestedUrl
+				? await readLink(userId, readingId, reading.requestedUrl)
+				: await readFile(userId, readingId)
+		if (step === 'more' || !step) return step ?? undefined
+		imported = step
 		if (imported.sections.length > MAX_SECTIONS) throw new ExtractError(TOO_LARGE)
 	} catch (error) {
 		const known = error instanceof FetchError || error instanceof ExtractError
@@ -180,6 +316,7 @@ export async function importReading({ readingId, userId }: { readingId: string; 
 	await asUser(userId, async (tx) => {
 		const [current] = await tx.select().from(readings).where(eq(readings.id, readingId)).for('update')
 		if (current?.status !== 'importing') return
+		await tx.delete(webBookPages).where(eq(webBookPages.readingId, readingId))
 		const [same] = sourceUrl
 			? await tx
 					.select({ id: readings.id })
@@ -250,7 +387,9 @@ export async function addChapterHeadings({ userId, readingId, chapter }: { userI
 	const replaced =
 		withHeadings === blocks
 			? null
-			: splitBook([{ title: first.title, level: first.level, kind: 'body', blocks: withHeadings }], { notes: parts.flatMap((p) => p.notes) }).map((s) => ({
+			: splitBook([{ title: first.title, level: first.level, kind: 'body', blocks: withHeadings, sourceUrl: first.sourceUrl ?? undefined }], {
+					notes: parts.flatMap((p) => p.notes),
+				}).map((s) => ({
 					...s,
 					chapter,
 					headingsPending: false,
@@ -297,13 +436,17 @@ const sectionRow = (userId: string, readingId: string, position: number, s: Book
 	chapter: s.chapter,
 	headingsPending: s.headingsPending,
 	notes: s.notes,
+	sourceUrl: s.sourceUrl ?? null,
 })
 
+/** Marks the reading failed. A web book's pages go too, so adding it again starts afresh. */
 function fail(userId: string, readingId: string, error: string) {
-	return asUser(userId, (tx) =>
-		tx
+	return asUser(userId, async (tx) => {
+		const failed = await tx
 			.update(readings)
 			.set({ status: 'failed', error })
-			.where(and(eq(readings.id, readingId), eq(readings.status, 'importing'))),
-	)
+			.where(and(eq(readings.id, readingId), eq(readings.status, 'importing')))
+			.returning({ id: readings.id })
+		if (failed.length) await tx.delete(webBookPages).where(eq(webBookPages.readingId, readingId))
+	})
 }

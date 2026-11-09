@@ -130,15 +130,16 @@ export function splitSections(blocks: Block[], fallbackTitle: string): SectionDr
 /**
  * A part of a book as its own table of contents or outline lists it. `level` is its depth in
  * that outline (1 for a part or a top-level chapter); its blocks may hold the author's headings.
+ * `sourceUrl` is the page a web book's chapter came from.
  */
-export type Chapter = { title: string; level: number; kind: SectionKind; blocks: Block[] }
+export type Chapter = { title: string; level: number; kind: SectionKind; blocks: Block[]; sourceUrl?: string }
 
 /**
  * `chapter` is the index of the chapter a section came from. `headingsPending` marks every
  * section of a chapter that has no headings and was cut by length alone, so the AI can add
  * headings when the member opens it.
  */
-export type BookSection = SectionDraft & { chapter: number; headingsPending: boolean; notes: Note[] }
+export type BookSection = SectionDraft & { chapter: number; headingsPending: boolean; notes: Note[]; sourceUrl?: string }
 
 /**
  * Splits a book chapter by chapter: each chapter is split like an article (issue #1), under a
@@ -174,6 +175,7 @@ export function splitBook(
 			chapter: index,
 			headingsPending,
 			notes: notesOf(s.blocks),
+			...(chapter.sourceUrl && { sourceUrl: chapter.sourceUrl }),
 		}))
 	})
 }

@@ -57,6 +57,13 @@
       "when": 1794201786037,
       "tag": "0007_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794208275817,
+      "tag": "0008_web_books",
+      "breakpoints": true
     }
   ]
 }

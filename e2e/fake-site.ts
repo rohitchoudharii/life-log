@@ -13,7 +13,53 @@ const essay = `<html><head><title>Notes on attention</title></head><body><articl
 	(_, i) => `<p>Paragraph ${i + 1}. ${'Attention is where the mind chooses to spend itself, and what we read with it stays. '.repeat(5)}</p>`,
 ).join('')}</article></body></html>`
 
+/**
+ * A web book with one page per chapter, as mdBook or Sphinx write them: a contents page at
+ * `/books/rings/` and 22 chapter pages, one more than the import job fetches in one run. Chapter 7
+ * is missing (404). The same book under `/books/private/` is one robots.txt asks apps not to copy.
+ */
+const CHAPTERS = [
+	'Why rings',
+	'Hashing keys',
+	'Placing servers',
+	'Virtual nodes',
+	'Adding a server',
+	'Removing a server',
+	'Replication',
+	'Hot spots',
+	'Bounded loads',
+	'Rendezvous hashing',
+	'Jump hashing',
+	'Maglev',
+	'Membership',
+	'Gossip',
+	'Failure detection',
+	'Read repair',
+	'Hinted handoff',
+	'Anti-entropy',
+	'Merkle trees',
+	'Operating a ring',
+	'Measuring balance',
+	'What to read next',
+]
+const contents = (dir: string) =>
+	`<!doctype html><html><head><title>Contents · The Ring Book</title></head><body><h1>The Ring Book</h1><h2>Contents</h2><ol class="toc">${CHAPTERS.map(
+		(title, i) => `<li><a href="/books/${dir}/${i + 1}.html">${i + 1}. ${title}</a></li>`,
+	).join('')}</ol></body></html>`
+const chapter = (n: number) =>
+	`<!doctype html><html><head><title>${CHAPTERS[n - 1]} · The Ring Book</title></head><body><nav><a href="/books/rings/">Contents</a></nav><article><h1>${n}. ${CHAPTERS[n - 1]}</h1>${Array.from(
+		{ length: 6 },
+		(_, i) => `<p>${i ? '' : `Chapter ${n} opens here. `}A ring of servers shares its keys so that adding or removing one server moves only a few of them, and paragraph ${i + 1} of this chapter says how.</p>`,
+	).join('')}<h2>In practice</h2>${'<p>Each server owns the keys between it and the server before it on the ring, so a lookup walks to the next server clockwise.</p>'.repeat(3)}</article></body></html>`
+const book: Record<string, () => { headers: Record<string, string>; body: string }> = {
+	'/robots.txt': () => ({ headers: { 'content-type': 'text/plain' }, body: 'User-agent: *\nDisallow: /books/private/\n' }),
+	'/books/rings/': () => ({ headers: html, body: contents('rings') }),
+	'/books/private/': () => ({ headers: html, body: contents('private') }),
+	...Object.fromEntries(CHAPTERS.flatMap((_, i) => (i + 1 === 7 ? [] : [[`/books/rings/${i + 1}.html`, () => ({ headers: html, body: chapter(i + 1) })]]))),
+}
+
 const pages: Record<string, () => { status?: number; headers: Record<string, string>; body?: Buffer | string; delayMs?: number }> = {
+	...book,
 	'/health': () => ({ headers: {}, body: 'ok' }),
 	'/articles/spaced-repetition': () => ({ headers: html, body: fixture('wikipedia-spaced-repetition.html'), delayMs: 1500 }),
 	'/articles/execution-model': () => ({ headers: html, body: fixture('mdn-execution-model.html') }),
