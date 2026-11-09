@@ -1,10 +1,11 @@
 import { Worker } from 'node:worker_threads'
-import type { Block } from '@life-log-club/domain'
+import type { Chapter } from '@life-log-club/domain'
 import { BOOK_TOO_LARGE } from './epub'
 import { ExtractError } from './extract'
 
 export type BookKind = 'epub' | 'pdf'
-export type Book = { title: string; author: string | null; blocks: Block[]; images: [src: string, bytes: Uint8Array][] }
+/** `article` is true for a PDF with no outline and no headings, which is split like an article. */
+export type Book = { title: string; author: string | null; chapters: Chapter[]; article: boolean; images: [src: string, bytes: Uint8Array][] }
 
 const TIME_LIMIT = 2 * 60 * 1000
 

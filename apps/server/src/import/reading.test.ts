@@ -8,7 +8,7 @@ import { asUser, ownerDb, ownerPool, pool } from '../db/client'
 import { prepareDatabase } from '../db/prepare'
 import { aiCalls, aiKeys, media, readingFiles, readings, sections, users } from '../db/schema'
 import { keyContext } from '../learning/ai'
-import { importReading, normaliseUrl } from './reading'
+import { addChapterHeadings, importReading, normaliseUrl } from './reading'
 import { blankPdf, testEpub } from './test-books'
 import { fixture, TEST_SITE, testSite } from './test-site'
 
@@ -98,8 +98,8 @@ describe('importReading', () => {
 		})
 		site.serve('/login', { body: '<form><input type="password"></form>', headers: { 'content-type': 'text/html' } })
 		expect(await failure(`${TEST_SITE}/redirect?to=/login`)).toMatchObject({ error: expect.stringContaining('signed in') })
-		site.serve('/paper.pdf', { body: '%PDF-1.7 …', headers: { 'content-type': 'application/pdf' } })
-		expect(await failure(`${TEST_SITE}/paper.pdf`)).toMatchObject({ error: expect.stringContaining('This link is a PDF') })
+		site.serve('/broken.pdf', { body: '%PDF-1.7 …', headers: { 'content-type': 'application/pdf' } })
+		expect(await failure(`${TEST_SITE}/broken.pdf`)).toMatchObject({ error: expect.stringContaining("isn't a readable PDF") })
 	})
 
 	it('leaves a reading importing and throws, so the job retries, when the site did not answer and tries remain', async () => {
@@ -196,6 +196,74 @@ describe('AI headings for an article with no headings (issue #1, rule 3)', () =>
 		expect(site.takeHits().get('/v1/messages')).toBeUndefined()
 		expect(await calls(userId)).toEqual([])
 	})
+
+	describe('for a long book chapter, when the member opens it (issue #2, rule 4)', () => {
+		// Chapter One: 30 paragraphs of 100 words and no headings, so it is cut in two by length.
+		const long = Array.from({ length: 30 }, (_, i) => `<p>Part ${i} ${Array(99).fill('word').join(' ')}</p>`).join('')
+		const book = testEpub({ 'OEBPS/text/a.xhtml': `<html><body><h2 id="c1">Chapter One</h2>${long}<h2 id="c2">Chapter Two</h2><p>${Array(80).fill('short').join(' ')}</p></body></html>` })
+		async function addBook(userId: string) {
+			const id = randomUUID()
+			await asUser(userId, async (tx) => {
+				await tx.insert(readings).values({ id, userId, title: 'long.epub', source: 'epub' })
+				await tx.insert(readingFiles).values({ readingId: id, userId, name: 'long.epub', contentType: 'x', size: book.length, data: Buffer.from(book) })
+			})
+			await importReading({ readingId: id, userId })
+			return id
+		}
+		const outline = async (userId: string, id: string) =>
+			(await load(userId, id)).sections.map((s) => [s.position, s.title, s.level, s.aiTitle, s.headingsPending])
+
+		it('asks no AI at import, then replaces the length cut with sections at the AI headings', async () => {
+			const userId = await memberWithKey()
+			site.takeHits()
+			const id = await addBook(userId)
+			expect(site.takeHits().get('/v1/messages')).toBeUndefined()
+			const before = await load(userId, id)
+			expect(await outline(userId, id)).toEqual([
+				[0, 'Chapter One', 1, false, true],
+				[1, 'Chapter One (part 2)', 2, false, true],
+				[2, 'Chapter Two', 1, false, false],
+				[3, 'Chapter Three', 1, false, false],
+			])
+
+			// A heading at the very start is left out: the chapter's title already names it.
+			aiReply([
+				{ before: 1, title: 'The opening', level: 2 },
+				{ before: 11, title: 'The middle', level: 2 },
+				{ before: 21, title: 'The end', level: 2 },
+			])
+			await addChapterHeadings({ userId, readingId: id, chapter: 0 })
+			const after = await load(userId, id)
+			expect(await outline(userId, id)).toEqual([
+				[0, 'Chapter One', 1, false, false],
+				[1, 'The middle', 2, true, false],
+				[2, 'The end', 2, true, false],
+				[3, 'Chapter Two', 1, false, false],
+				[4, 'Chapter Three', 1, false, false],
+			])
+			// A reader with the first part open keeps its place; the later chapters only move along.
+			expect(after.sections[0]!.id).toBe(before.sections[0]!.id)
+			expect(after.sections.slice(3).map((s) => s.id)).toEqual(before.sections.slice(2).map((s) => s.id))
+			expect(after.sections.flatMap((s) => s.blocks)).toEqual(before.sections.flatMap((s) => s.blocks))
+			expect(after.sections.slice(0, 3).map((s) => s.blocks.length)).toEqual([10, 10, 10])
+
+			// Done once: running the job again asks the AI nothing.
+			site.takeHits()
+			await addChapterHeadings({ userId, readingId: id, chapter: 0 })
+			expect(site.takeHits().get('/v1/messages')).toBeUndefined()
+		})
+
+		it('keeps the length cut when the AI fails', async () => {
+			const userId = await memberWithKey()
+			const id = await addBook(userId)
+			aiReply(null, 529)
+			await addChapterHeadings({ userId, readingId: id, chapter: 0 })
+			expect((await outline(userId, id)).slice(0, 2)).toEqual([
+				[0, 'Chapter One', 1, false, false],
+				[1, 'Chapter One (part 2)', 2, false, false],
+			])
+		})
+	})
 })
 
 describe('uploaded books', () => {
@@ -218,7 +286,12 @@ describe('uploaded books', () => {
 		const id = await addFile(userId, testEpub({ 'OEBPS/images/fig.png': png }), 'test.epub')
 		const { reading, sections: stored } = await load(userId, id)
 		expect(reading).toMatchObject({ status: 'ready', title: 'Test Book' })
-		expect(stored.map((s) => s.title)).toEqual(['Chapter One', 'A part', 'Chapter Two', 'Chapter Three'])
+		expect(stored.map((s) => [s.title, s.level, s.chapter])).toEqual([
+			['Chapter One', 1, 0],
+			['A part', 2, 0],
+			['Chapter Two', 1, 1],
+			['Chapter Three', 1, 2],
+		])
 		const image = stored.flatMap((s) => s.blocks).find((b) => b.type === 'image')
 		expect(image).toEqual({ type: 'image', mediaId: expect.any(String), alt: 'Figure', width: 120, height: 80 })
 		const [saved] = await asUser(userId, (tx) => tx.select().from(media).where(eq(media.readingId, id)))
@@ -241,9 +314,20 @@ describe('uploaded books', () => {
 		const prince = await load(userId, await addFile(userId, book('the-prince.epub'), 'the-prince.epub'))
 		expect(prince.reading).toMatchObject({ status: 'ready', title: 'The Prince', author: 'Niccolò Machiavelli' })
 		expect(prince.sections.map((s) => s.title)).toContain('XIX: That One Should Avoid Being Despised and Hated')
+		expect(prince.sections.filter((s) => s.kind === 'reference').map((s) => s.title)).toEqual(['The Man and His Works'])
 		const pdf = await load(userId, await addFile(userId, book('trump-v-anderson.pdf'), 'opinion.pdf'))
 		expect(pdf.reading.status).toBe('ready')
 		expect(pdf.sections.flatMap((s) => s.blocks).filter((b) => b.type === 'page')[0]).toEqual({ type: 'page', number: 1 })
+	})
+
+	it('adds a link to a PDF as a book, read the same way as an uploaded PDF', async () => {
+		const userId = await member()
+		const url = site.serve('/opinions/23-719.pdf', { body: Buffer.from(book('trump-v-anderson.pdf')), headers: { 'content-type': 'application/pdf' } })
+		const { reading, sections: stored } = await load(userId, await add(userId, url))
+		expect(reading).toMatchObject({ status: 'ready', source: 'pdf_url', title: '23-719 Trump v. Anderson (03/04/2024)', sourceUrl: url })
+		expect(stored[0]!.blocks[0]).toEqual({ type: 'page', number: 1 })
+		// It reads as one long article, so the AI is asked for headings when it is opened.
+		expect(stored.every((s) => s.headingsPending && s.kind === 'body')).toBe(true)
 	})
 
 	it('fails a protected, scanned or unknown file with a message the member can act on', async () => {

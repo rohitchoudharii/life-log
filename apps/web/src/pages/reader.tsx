@@ -1,8 +1,8 @@
 import type { ReadingWithContents } from '@life-log-club/contract'
 import type { Block, Link as TextLink } from '@life-log-club/domain'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { type ReactNode, useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { errorMessage, orpc } from '../rpc'
 
 /** Text with its link ranges as links that open the original page in a new tab. */
@@ -63,15 +63,35 @@ function BlockView({ block }: { block: Block }) {
 	}
 }
 
-function SectionView({ id }: { id: string }) {
-	const section = useQuery(orpc.readings.section.queryOptions({ input: { id } }))
+function SectionView({ id, readingId }: { id: string; readingId: string }) {
+	const queryClient = useQueryClient()
+	const section = useQuery({
+		...orpc.readings.section.queryOptions({ input: { id } }),
+		refetchInterval: (query) => (query.state.data?.headingsPending ? 2000 : false),
+	})
+	// Once the AI's headings are in, the chapter is split differently, so the contents change too.
+	const pending = section.data?.headingsPending
+	const wasPending = useRef(false)
+	useEffect(() => {
+		if (wasPending.current && pending === false)
+			void queryClient.invalidateQueries({ queryKey: orpc.readings.get.queryKey({ input: { id: readingId } }) })
+		wasPending.current = pending === true
+	}, [pending, queryClient, readingId])
+
 	if (section.isError) return <p role="alert">{errorMessage(section.error)}</p>
 	if (!section.data) return <p className="text-world-muted">Loading…</p>
+	const note = section.data.headingsPending
+		? 'Adding headings to this long chapter…'
+		: section.data.kind === 'reference'
+			? 'Kept to read. No recall.'
+			: section.data.aiTitle
+				? "Heading added by AI. The text is the author's."
+				: null
 	return (
 		<article className="grid gap-4 text-lg leading-relaxed">
 			<header>
 				<h2 className="text-2xl font-semibold tracking-tight">{section.data.title}</h2>
-				{section.data.aiTitle && <p className="font-sans text-xs text-world-muted">Heading added by AI. The text is the author's.</p>}
+				{note && <p className={`font-sans text-xs text-world-muted ${section.data.headingsPending ? 'animate-pulse' : ''}`}>{note}</p>}
 			</header>
 			{section.data.blocks.map((b, i) => (
 				<BlockView key={i} block={b} />
@@ -92,6 +112,7 @@ function Contents({ reading, current, onPick }: { reading: ReadingWithContents; 
 						className="w-full rounded-md px-2 py-1 text-left text-world-muted hover:bg-world-card hover:text-world-ink aria-[current]:bg-world-card aria-[current]:font-semibold aria-[current]:text-world-ink"
 					>
 						<span className={s.aiTitle ? 'italic' : undefined}>{s.title}</span>
+						{s.kind === 'reference' && <span className="ml-1.5 text-xs text-world-muted">· Reference</span>}
 					</button>
 				</li>
 			))}
@@ -170,7 +191,7 @@ export function Reader({ readingId }: { readingId: string }) {
 						</nav>
 					)}
 				</div>
-				{section && <SectionView id={section.id} />}
+				{section && <SectionView id={section.id} readingId={r.id} />}
 				<div className="flex justify-between gap-2">
 					{current > 0 ? (
 						<button type="button" className={step} onClick={() => pick(current - 1)}>

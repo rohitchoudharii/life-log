@@ -1,24 +1,78 @@
 import { readFileSync } from 'node:fs'
-import { type Block, blockText } from '@life-log-club/domain'
+import { type Block, blockText, type Chapter, splitBook } from '@life-log-club/domain'
 import { strToU8, zipSync } from 'fflate'
-import { testEpub as epub } from './test-books'
 import { describe, expect, it } from 'vitest'
 import { readEpub } from './epub'
-import { layoutPdf, type PdfItem, type PdfPage, readPdf } from './pdf'
+import { matterOf } from './matter'
+import { layoutPdf, type PdfItem, type PdfPage, pdfChapters, readPdf } from './pdf'
+import { testEpub as epub, testPdf } from './test-books'
 
 const para = (n: number, word = 'word') => Array.from({ length: n }, (_, i) => `${word}${i}`).join(' ')
 
+const outline = (chapters: Chapter[]) => chapters.map((c) => [c.title, c.level, c.kind])
+const headingsOf = (blocks: Block[]) => blocks.flatMap((b) => (b.type === 'heading' ? [[b.level, b.text]] : []))
+
 describe('readEpub', () => {
-	it('splits files into chapters at their table-of-contents anchors, nesting inner headings', () => {
+	it('splits files into chapters at their table-of-contents anchors, keeping inner headings', () => {
 		const book = readEpub(epub({}))
 		expect(book.title).toBe('Test Book')
-		const headings = book.blocks.filter((b) => b.type === 'heading').map((b) => b.type === 'heading' && [b.level, b.text])
-		// The cover is skipped; each chapter's own heading is not repeated under its title.
-		expect(headings).toEqual([[1, 'Chapter One'], [2, 'A part'], [1, 'Chapter Two'], [1, 'Chapter Three']])
-		const image = book.blocks.find((b) => b.type === 'image')
+		// The cover, before the first listed chapter, is left out.
+		expect(outline(book.chapters)).toEqual([
+			['Chapter One', 1, 'body'],
+			['Chapter Two', 1, 'body'],
+			['Chapter Three', 1, 'body'],
+		])
+		// Each chapter's own heading is not repeated under its title.
+		expect(book.chapters.map((c) => headingsOf(c.blocks))).toEqual([[[3, 'A part']], [], []])
+		const image = book.chapters[1]!.blocks.find((b) => b.type === 'image')
 		expect(image).toMatchObject({ type: 'image', alt: 'Figure', mediaId: null, src: 'epub://book/OEBPS/images/fig.png' })
 		expect(book.images.get('epub://book/OEBPS/images/fig.png')).toBeDefined()
-		expect(JSON.stringify(book.blocks)).not.toContain('alert')
+		expect(JSON.stringify(book.chapters)).not.toContain('alert')
+	})
+
+	it('keeps the outline nesting, and recognises front and back matter by its semantics or its title', () => {
+		const items = ['cover', 'titlepage', 'part', 'ch1', 'ch1b', 'notes', 'bib', 'legal', 'about']
+		const page = (body: string, attrs = '') => `<html xmlns:epub="http://www.idpf.org/2007/ops"><body${attrs}>${body}</body></html>`
+		const text = (word: string) => `<p>${para(30, word)}</p>`
+		const book = readEpub(
+			epub({
+				'OEBPS/book.opf': `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:title>Matter</dc:title><dc:creator>A. Writer</dc:creator></metadata>
+					<manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>${items.map((i) => `<item id="${i}" href="${i}.xhtml" media-type="application/xhtml+xml"/>`).join('')}</manifest>
+					<spine>${items.map((i) => `<itemref idref="${i}"/>`).join('')}</spine><guide><reference type="copyright-page" href="legal.xhtml"/></guide></package>`,
+				'OEBPS/nav.xhtml': page(`<nav epub:type="toc"><ol>
+					<li><a href="cover.xhtml">Cover</a></li><li><a href="titlepage.xhtml">The Matter Book</a></li>
+					<li><a href="part.xhtml">Part One</a><ol><li><a href="ch1.xhtml">1. Arrival</a><ol><li><a href="ch1.xhtml#s2">The harbour</a></li></ol></li></ol></li>
+					<li><a href="notes.xhtml">Endnotes</a></li><li><a href="bib.xhtml">7 References</a></li><li><a href="legal.xhtml">Legal</a></li><li><a href="about.xhtml">About the Author</a></li></ol></nav>
+					<nav epub:type="landmarks"><ol><li><a epub:type="cover" href="cover.xhtml">Cover</a></li></ol></nav>`),
+				'OEBPS/cover.xhtml': page(text('cover')),
+				'OEBPS/titlepage.xhtml': page(`<section epub:type="titlepage"><h1>The Matter Book</h1>${text('title')}</section>`),
+				'OEBPS/part.xhtml': page('<h1>Part One</h1>', ' epub:type="bodymatter"'),
+				'OEBPS/ch1.xhtml': page(`<section epub:type="chapter"><h2>1. Arrival</h2>${text('arrive')}<h3 id="s2">The harbour</h3>${text('harbour')}</section>`),
+				// A file the table of contents doesn't list goes on with the chapter before it.
+				'OEBPS/ch1b.xhtml': page(text('later')),
+				'OEBPS/notes.xhtml': page(`<section epub:type="endnotes"><ol><li>${text('note')}</li></ol></section>`),
+				'OEBPS/bib.xhtml': page(text('source')),
+				'OEBPS/legal.xhtml': page(text('rights')),
+				'OEBPS/about.xhtml': page(text('bio')),
+			}),
+		)
+		expect(book.author).toBe('A. Writer')
+		expect(outline(book.chapters)).toEqual([
+			['Part One', 1, 'body'],
+			['1. Arrival', 2, 'body'],
+			['The harbour', 3, 'body'],
+			['7 References', 1, 'reference'],
+		])
+		const all = JSON.stringify(book.chapters)
+		for (const left of ['cover0', 'title0', 'note0', 'rights0', 'bio0']) expect(all).not.toContain(left)
+		expect(blockText(book.chapters[2]!.blocks.at(-1)!)).toMatch(/^later0/)
+		// The part page has no text, and stays as the parent of its chapter.
+		expect(splitBook(book.chapters).map((s) => [s.title, s.level])).toEqual([
+			['Part One', 1],
+			['1. Arrival', 2],
+			['The harbour', 3],
+			['7 References', 1],
+		])
 	})
 
 	it('refuses a DRM-protected book but allows obfuscated fonts', () => {
@@ -75,27 +129,151 @@ describe('layoutPdf', () => {
 		])
 		expect(blocks).toContainEqual({ type: 'paragraph', text: 'Spaced practice helps memory because each retrieval is an example of effortful recall that strengthens the trace.' })
 	})
+
+	it('keeps a raised note marker in its line, so the text after it is no numbered heading', () => {
+		// As a court opinion sets it: the marker sits higher, and the text after it is a hair off the baseline.
+		const lead = run('Art. II, §1, cl. 2.', 50, 519.1787, 11)
+		const blocks = layoutPdf([
+			page(1, [run(para(12), 50, 545, 11), run(para(12), 50, 532, 11), lead, { str: '1', x: 50 + lead.width, y: 522.18, size: 7, width: 4 }, run('But there is little reason to think that', 50 + lead.width + 13, 519.18, 11)]),
+		])
+		expect(blocks.filter((b) => b.type === 'heading')).toEqual([])
+		expect(JSON.stringify(blocks)).toMatch(/cl\. 2\. ?1 But there is little reason/)
+	})
+
+	it('reads the same large line near the top of three pages as a running title, not a heading', () => {
+		const pages = [1, 2, 3].map((n) => page(n, [run('SUPREME COURT OF THE UNITED STATES', 50, 600, 15), run(`${para(14)} ${n}.`, 50, 560), run(`${para(14)} ${n}.`, 50, 548)]))
+		expect(layoutPdf(pages).filter((b) => b.type === 'heading')).toEqual([])
+	})
 })
 
 const fixture = (name: string) => new Uint8Array(readFileSync(new URL(`fixtures/${name}`, import.meta.url)))
 const text = (blocks: Block[]) => blocks.map(blockText).join('\n')
 
-describe('saved books', () => {
-	it('The Prince (Standard Ebooks EPUB 3): title, author, chapters and text', () => {
-		const book = readEpub(fixture('the-prince.epub'))
-		expect([book.title, book.author]).toEqual(['The Prince', 'Niccolò Machiavelli'])
-		const chapters = book.blocks.flatMap((b) => (b.type === 'heading' && b.level === 1 ? [b.text] : []))
-		expect(chapters).toContain('XIX: That One Should Avoid Being Despised and Hated')
-		expect(chapters.filter((c) => /^[XVI]+: /.test(c))).toHaveLength(26)
-		expect(text(book.blocks)).toContain('All states, all powers, that have held and hold rule over men have been and are either republics or principalities.')
+describe('matterOf', () => {
+	it('reads EPUB semantics first, then the title without its number', () => {
+		expect(matterOf({ types: ['frontmatter', 'dedication'], title: 'For my mother' })).toBe('drop')
+		expect(matterOf({ types: ['bibliography'], title: 'The Man and His Works' })).toBe('reference')
+		expect(matterOf({ types: ['endnotes', 'footnotes'], title: 'Notes' })).toBe('notes')
+		// A chapter is the book, whatever it is called.
+		expect(matterOf({ types: ['chapter'], title: 'Index' })).toBe('body')
+		expect(matterOf({ title: '7 References' })).toBe('reference')
+		expect(matterOf({ title: 'Table of Contents' })).toBe('drop')
+		expect(matterOf({ title: 'Index' })).toBe('drop')
+		for (const title of ['Introduction', 'Preface', 'Appendix A: Proofs', 'Epilogue', 'Indexing at scale']) expect(matterOf({ title }), title).toBe('body')
+	})
+})
+
+describe('pdfChapters', () => {
+	const body = (word: string, y: number, lines = 3) => Array.from({ length: lines }, (_, i) => run(`${word} ${para(10, word)}`, 50, y - i * 12))
+
+	it("splits at the outline's entries, at the heading that repeats each title or where the entry points", () => {
+		const pages = [
+			page(1, [run('Retrieval Practice', 50, 760, 18), ...body('abstract', 700)]),
+			// A table of contents page, read from its dot leaders.
+			page(2, ['1 Introduction', '1.1 Background', '2 Method', 'References'].map((t, i) => run(`${t} . . . . . . . . . 3`, 50, 700 - i * 14))),
+			page(3, [run('1 Introduction', 50, 740, 14), ...body('intro', 720), run('1.1 Background', 50, 660, 12), ...body('background', 640)]),
+			// 'Method' has no heading of its own; the outline says it starts halfway down page 4.
+			page(4, [...body('before', 700), ...body('method', 400)]),
+			page(5, [run('References', 50, 740, 14), ...body('source', 720)]),
+		]
+		const { chapters, article } = pdfChapters(
+			pages,
+			[
+				{ title: 'Introduction', level: 1, page: 3, y: null },
+				{ title: 'Background', level: 2, page: 3, y: null },
+				{ title: 'Method', level: 1, page: 4, y: 401 },
+			],
+			'Retrieval Practice',
+		)
+		expect(article).toBe(false)
+		expect(outline(chapters)).toEqual([
+			['Retrieval Practice', 1, 'body'],
+			['Introduction', 1, 'body'],
+			['Background', 2, 'body'],
+			['Method', 1, 'body'],
+			// Not in the outline, but a heading that names back matter.
+			['References', 1, 'reference'],
+		])
+		const text = chapters.map((c) => c.blocks.map(blockText).join(' '))
+		expect(text[0]).toMatch(/abstract/)
+		expect(text.join(' ')).not.toMatch(/\. \. \./)
+		// Headings that repeat a chapter's title are not kept twice.
+		expect(chapters.flatMap((c) => headingsOf(c.blocks)).map(([, t]) => t)).toEqual(['Retrieval Practice'])
+		expect(text[2]).toMatch(/background/)
+		expect(text[2]).toMatch(/before/)
+		expect(text[3]).toMatch(/^method/)
+		// Each chapter that starts a page holds that page's marker.
+		expect(chapters[1]!.blocks[0]).toEqual({ type: 'page', number: 3 })
 	})
 
-	it('Trump v. Anderson (Supreme Court PDF): every page marked, and the text read in order', async () => {
+	it('reads a PDF with no outline and no headings as one article', () => {
+		const { chapters, article } = pdfChapters([page(1, body('plain', 700, 8)), page(2, body('more', 700, 8))], [], 'Memo')
+		expect(article).toBe(true)
+		expect(outline(chapters)).toEqual([['Memo', 1, 'body']])
+	})
+
+	it('reads the outline of a real PDF file', async () => {
+		const pdf = await readPdf(
+			testPdf(
+				[
+					[['Spacing Effects', 20], ...Array(6).fill('An opening paragraph that sets out the question this short paper asks.')],
+					['Some text about spacing that is long enough to read as a paragraph.', ...Array(5).fill('More of the first chapter, set in the body size.')],
+					['The second chapter starts at the top of this page with its own words.', ...Array(5).fill('More of the second chapter, set in the body size.')],
+				],
+				[
+					{ title: 'Part I: Spacing', page: 2, items: [{ title: 'Why it works', page: 2, top: 730 }] },
+					{ title: 'Part II: Testing', page: 3 },
+				],
+			),
+			'fallback',
+		)
+		expect(pdf.title).toBe('Spacing Effects')
+		expect(outline(pdf.chapters)).toEqual([
+			['Spacing Effects', 1, 'body'],
+			['Part I: Spacing', 1, 'body'],
+			['Why it works', 2, 'body'],
+			['Part II: Testing', 1, 'body'],
+		])
+		expect(blockText(pdf.chapters[2]!.blocks.find((b) => b.type === 'paragraph')!)).toMatch(/^Some text about spacing/)
+	})
+})
+
+describe('saved books', () => {
+	it('The Prince (Standard Ebooks EPUB 3): its own outline, without front and back matter', () => {
+		const book = readEpub(fixture('the-prince.epub'))
+		expect([book.title, book.author]).toEqual(['The Prince', 'Niccolò Machiavelli'])
+		const chapters = outline(book.chapters)
+		expect(chapters.slice(0, 6)).toEqual([
+			['Introduction', 1, 'body'],
+			['Youth', 2, 'body'],
+			['Office', 2, 'body'],
+			['Literature and Death', 2, 'body'],
+			['The Man and His Works', 1, 'reference'],
+			['The Prince', 1, 'body'],
+		])
+		expect(chapters.slice(6).filter(([t, level]) => /^[XVI]+: /.test(t as string) && level === 2)).toHaveLength(26)
+		expect(chapters).toHaveLength(32)
+		// Chapter I opens with its text, not its subtitle again (the book sets "I" and the subtitle as an hgroup).
+		expect(blockText(book.chapters[6]!.blocks[0]!)).toMatch(/^All states, all powers/)
+		expect(text(book.chapters.flatMap((c) => c.blocks))).toContain('All states, all powers, that have held and hold rule over men have been and are either republics or principalities.')
+		// The three long chapters without headings wait for the AI; the others are split now.
+		expect([...new Set(splitBook(book.chapters).filter((s) => s.headingsPending).map((s) => s.title.replace(/ \(part \d\)$/, '')))]).toEqual([
+			'III: Concerning Mixed Principalities',
+			'VII: Concerning New Principalities Which Are Acquired Either by the Arms of Others or by Good Fortune',
+			'XIX: That One Should Avoid Being Despised and Hated',
+		])
+	})
+
+	it('Trump v. Anderson (Supreme Court PDF): read as one article, every page marked, and the text in order', async () => {
 		const pdf = await readPdf(fixture('trump-v-anderson.pdf'), 'fallback')
 		expect(pdf.title).toBe('23-719 Trump v. Anderson (03/04/2024)')
-		const pages = pdf.blocks.flatMap((b) => (b.type === 'page' ? [b.number] : []))
-		expect(pages).toEqual(Array.from({ length: pages.length }, (_, i) => i + 1))
-		expect(pages.length).toBeGreaterThan(10)
-		expect(text(pdf.blocks)).toMatch(/Section 3 of the Fourteenth Amendment/)
+		// No outline, and no headings once its running title and note markers are read right.
+		expect(pdf.article).toBe(true)
+		expect(outline(pdf.chapters)).toEqual([[pdf.title, 1, 'body']])
+		const blocks = pdf.chapters[0]!.blocks
+		expect(headingsOf(blocks)).toEqual([])
+		const pages = blocks.flatMap((b) => (b.type === 'page' ? [b.number] : []))
+		expect(pages).toEqual(Array.from({ length: 20 }, (_, i) => i + 1))
+		expect(text(blocks)).toMatch(/Section 3 of the Fourteenth Amendment/)
 	})
 })

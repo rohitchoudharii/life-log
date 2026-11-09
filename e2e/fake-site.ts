@@ -18,6 +18,7 @@ const pages: Record<string, () => { status?: number; headers: Record<string, str
 	'/articles/spaced-repetition': () => ({ headers: html, body: fixture('wikipedia-spaced-repetition.html'), delayMs: 1500 }),
 	'/articles/execution-model': () => ({ headers: html, body: fixture('mdn-execution-model.html') }),
 	'/articles/no-headings': () => ({ headers: html, body: essay }),
+	'/opinions/23-719.pdf': () => ({ headers: { 'content-type': 'application/pdf' }, body: fixture('trump-v-anderson.pdf') }),
 	'/members-only': () => ({ status: 302, headers: { location: '/login' } }),
 	'/login': () => ({ headers: html, body: '<h1>Sign in</h1><form><input name="email"><input type="password"><button>Sign in</button></form>' }),
 	// A public page that redirects to this machine, as an attacker's site might.

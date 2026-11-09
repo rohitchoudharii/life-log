@@ -1,9 +1,9 @@
 import { and, eq, isNotNull, lt, or } from 'drizzle-orm'
-import { type JobWithMetadata, PgBoss } from 'pg-boss'
+import { type Job, type JobWithMetadata, PgBoss } from 'pg-boss'
 import { ownerDb } from './db/client'
 import { entries, invites, readings, sessions } from './db/schema'
 import { env } from './env'
-import { importReading } from './import/reading'
+import { addChapterHeadings, importReading } from './import/reading'
 
 const DAY = 24 * 60 * 60 * 1000
 const ago = (days: number, now: Date) => new Date(now.getTime() - days * DAY)
@@ -40,6 +40,13 @@ type ImportJob = { readingId: string; userId: string }
 /** Queues the import of a reading added as `importing`. At most one import per reading waits or runs. */
 export const enqueueImport = (job: ImportJob) => boss.send(IMPORT, job, { singletonKey: job.readingId })
 
+const HEADINGS = 'chapter-headings'
+type HeadingsJob = { userId: string; readingId: string; chapter: number }
+
+/** Queues AI headings for a long chapter the member opened. At most one waits or runs per chapter. */
+export const enqueueChapterHeadings = (job: HeadingsJob) =>
+	boss.send(HEADINGS, job, { singletonKey: `${job.readingId}:${job.chapter}` })
+
 /** Background jobs run in Postgres, so there is nothing else to install or keep running. */
 export async function startJobs() {
 	boss.on('error', (error) => console.error('[jobs]', error))
@@ -58,6 +65,11 @@ export async function startJobs() {
 	else await boss.createQueue(IMPORT, { policy: 'stately', ...options })
 	await boss.work(IMPORT, { localConcurrency: 4, includeMetadata: true }, async ([job]: JobWithMetadata<ImportJob>[]) => {
 		if (job) await importReading(job.data, job.retryCount >= job.retryLimit)
+	})
+	// A chapter whose job fails keeps its length cut; the member can open it again to retry.
+	if (!(await boss.getQueue(HEADINGS))) await boss.createQueue(HEADINGS, { policy: 'stately', retryLimit: 1, expireInSeconds: 5 * 60 })
+	await boss.work(HEADINGS, { localConcurrency: 4 }, async ([job]: Job<HeadingsJob>[]) => {
+		if (job) await addChapterHeadings(job.data)
 	})
 	// Readings left importing by a stop before their job was queued. The singleton key keeps a
 	// reading whose job is still queued from getting a second one.

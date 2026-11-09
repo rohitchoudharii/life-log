@@ -44,6 +44,9 @@ export type Card = z.infer<typeof Card>
 export const AiKey = z.object({ provider: z.enum(['anthropic', 'openai']), model: z.string(), last4: z.string() })
 export type AiKey = z.infer<typeof AiKey>
 
+/** A `reference` section (a bibliography) is kept to read, with no questions and outside progress. */
+const SectionKind = z.enum(['body', 'reference'])
+
 export const Reading = z.object({
 	id: z.uuid(),
 	title: z.string(),
@@ -56,6 +59,7 @@ export const Reading = z.object({
 	/** Why the import failed, written for the member. */
 	error: z.string().nullable(),
 	wordCount: z.int(),
+	/** Sections to read and recall; reference sections are not counted. */
 	sectionCount: z.int(),
 	createdAt: z.date(),
 })
@@ -64,7 +68,15 @@ export type Reading = z.infer<typeof Reading>
 export const ReadingWithContents = Reading.extend({
 	/** Every section in reading order; `level` 1 to 3 nests them into a tree. */
 	contents: z.array(
-		z.object({ id: z.uuid(), position: z.int(), level: z.int(), title: z.string(), aiTitle: z.boolean(), wordCount: z.int() }),
+		z.object({
+			id: z.uuid(),
+			position: z.int(),
+			level: z.int(),
+			title: z.string(),
+			aiTitle: z.boolean(),
+			wordCount: z.int(),
+			kind: SectionKind,
+		}),
 	),
 })
 export type ReadingWithContents = z.infer<typeof ReadingWithContents>
@@ -77,6 +89,13 @@ export const Section = z.object({
 	title: z.string(),
 	/** True when the AI wrote the title, because the article had no headings of its own. */
 	aiTitle: z.boolean(),
+	kind: SectionKind,
+	/**
+	 * True while the member's AI adds headings to this long chapter, which opening it asked for.
+	 * The reading's contents change when they are added. Never true for a member with no AI key:
+	 * the chapter stays cut by length.
+	 */
+	headingsPending: z.boolean(),
 	blocks: z.array(Block),
 })
 export type Section = z.infer<typeof Section>

@@ -43,6 +43,13 @@
       "when": 1794187877570,
       "tag": "0005_books",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794192632423,
+      "tag": "0006_book_outline",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { type Block, blockText, countWords, insertHeadings, splitSections } from './content'
+import { type Block, blockText, type Chapter, countWords, insertHeadings, splitBook, splitSections } from './content'
 
 const p = (words: number, word = 'word'): Block => ({ type: 'paragraph', text: Array(words).fill(word).join(' ') })
 const h = (level: number, text: string): Block => ({ type: 'heading', level, text })
@@ -64,6 +64,51 @@ describe('splitSections', () => {
 	it('never cuts inside a block', () => {
 		const sections = splitSections([p(3000), p(10)], 'Essay')
 		expect(sections.map((s) => s.wordCount)).toEqual([3000, 10])
+	})
+})
+
+describe('splitBook', () => {
+	const ch = (title: string, level: number, blocks: Block[], kind: Chapter['kind'] = 'body'): Chapter => ({ title, level, kind, blocks })
+
+	it("nests chapters at their outline depth, with each chapter's own headings below it", () => {
+		const sections = splitBook([
+			ch('Part One', 1, []),
+			// The author's top heading inside a chapter is h1, the same tag as the part's.
+			ch('Chapter 1', 2, [p(10), h(1, 'Scene'), p(10)]),
+			ch('Section 1.1', 3, [p(5)]),
+			ch('Works Cited', 1, [p(40)], 'reference'),
+		])
+		expect(sections.map((s) => [s.title, s.level, s.kind, s.chapter])).toEqual([
+			['Part One', 1, 'body', 0],
+			['Chapter 1', 2, 'body', 1],
+			['Scene', 3, 'body', 1],
+			['Section 1.1', 3, 'body', 2],
+			['Works Cited', 1, 'reference', 3],
+		])
+	})
+
+	it('keeps a chapter with no text only as the parent of the chapters after it', () => {
+		const sections = splitBook([ch('Part One', 1, [{ type: 'page', number: 3 }]), ch('Interlude', 2, []), ch('Chapter 1', 2, [p(10)]), ch('Part Two', 1, [])])
+		// Interlude and Part Two have no text and nothing below them; Part One's page marker is not text.
+		expect(sections.map((s) => [s.title, s.level, s.chapter])).toEqual([
+			['Part One', 1, 0],
+			['Chapter 1', 2, 1],
+		])
+	})
+
+	it('marks a long chapter with no headings for AI headings, and cuts it by length meanwhile', () => {
+		// 'Long' is listed three levels deep with nothing above it, so it moves up to level 1.
+		const sections = splitBook([ch('Long', 3, [p(1500), p(1500)]), ch('Long with headings', 1, [p(1500), h(2, 'Then'), p(1500)]), ch('Short', 1, [p(2500)])])
+		expect(sections.map((s) => [s.title, s.level, s.headingsPending])).toEqual([
+			['Long', 1, true],
+			['Long (part 2)', 2, true],
+			['Long with headings', 1, false],
+			['Then', 2, false],
+			['Short', 1, false],
+		])
+		// A PDF that reads as one article asks for headings from 1,000 words, like a web page.
+		expect(splitBook([ch('Paper', 1, [p(1200)])], { headingsFrom: 1000 })).toMatchObject([{ headingsPending: true, wordCount: 1200 }])
+		expect(splitBook([ch('Bibliography', 1, [p(3000)], 'reference')]).every((s) => !s.headingsPending)).toBe(true)
 	})
 })
 

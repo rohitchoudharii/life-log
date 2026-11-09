@@ -1,4 +1,4 @@
-import type { Block, ReviewState } from '@life-log-club/domain'
+import type { Block, ReviewState, SectionKind } from '@life-log-club/domain'
 import { type AnyColumn, sql } from 'drizzle-orm'
 import {
 	type AnyPgColumn,
@@ -182,7 +182,8 @@ export const readings = pgTable(
 			.references(() => users.id, { onDelete: 'cascade' }),
 		title: text().notNull(),
 		author: text(),
-		source: text().$type<'url' | 'epub' | 'pdf_upload'>().notNull(),
+		/** `pdf_url` is a link that turned out to be a PDF. */
+		source: text().$type<'url' | 'pdf_url' | 'epub' | 'pdf_upload'>().notNull(),
 		/** The link as the member added it, normalised. The same link always finds the same reading. */
 		requestedUrl: text(),
 		/** The page's canonical address, or where the link ended after redirects. */
@@ -272,9 +273,18 @@ export const sections = pgTable(
 		wordCount: integer().notNull(),
 		/** True when the title is a heading the AI added, not the author's. */
 		aiTitle: boolean().notNull().default(false),
+		/** `reference` (a bibliography) is kept to read, with no questions and outside progress. */
+		kind: text().$type<SectionKind>().notNull().default('body'),
+		/** Which chapter of a book the section came from, counting from 0; 0 for an article. */
+		chapter: integer().notNull().default(0),
+		/**
+		 * True for every section of a long chapter with no headings that is cut by length alone,
+		 * until the AI adds its headings when the member opens it.
+		 */
+		headingsPending: boolean().notNull().default(false),
 		createdAt: createdAt(),
 	},
-	(t) => [uniqueIndex().on(t.readingId, t.position), ownRows(t.userId)],
+	(t) => [uniqueIndex().on(t.readingId, t.position), index().on(t.readingId, t.chapter), ownRows(t.userId)],
 )
 
 /** One row per call to a member's AI provider: what it was for and the tokens it used. */

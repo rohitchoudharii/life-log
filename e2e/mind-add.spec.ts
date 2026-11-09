@@ -125,10 +125,31 @@ test('an EPUB added as a file shows as importing, then opens to its chapters', a
 	await expect(readings(page).getByRole('link', { name: /The Prince/ })).toBeVisible({ timeout: 30_000 })
 	await expect(readings(page)).toContainText('Niccolò Machiavelli')
 
+	// The bibliography is not counted: 34 sections to read and recall, of 35.
+	await expect(readings(page)).toContainText('34 sections')
+
 	await readings(page).getByRole('link').click()
 	await expect(page.getByRole('heading', { level: 1, name: 'The Prince' })).toBeVisible()
 	if (isMobile) await page.getByRole('button', { name: /^Contents/ }).click()
-	await page.getByRole('navigation', { name: 'Contents' }).getByRole('button', { name: 'II: Concerning Hereditary Principalities' }).click()
+	const contents = page.getByRole('navigation', { name: 'Contents' })
+	// The book's own outline: the introduction's parts nest under it, and the title page,
+	// imprint, dedication, endnotes and colophon are left out.
+	await expect(contents.getByRole('listitem')).toHaveText([
+		'Introduction',
+		'Youth',
+		'Office',
+		'Literature and Death',
+		'The Man and His Works· Reference',
+		'The Prince',
+		/^I: How Many Kinds/,
+		...Array(35 - 7).fill(/./),
+	])
+	const indent = (name: string) => contents.getByRole('listitem').filter({ hasText: name }).first().evaluate((li) => getComputedStyle(li).paddingLeft)
+	expect(await indent('Youth')).not.toBe(await indent('Introduction'))
+	await contents.getByRole('button', { name: /The Man and His Works/ }).click()
+	await expect(page.getByText('Kept to read. No recall.')).toBeVisible()
+	if (isMobile) await page.getByRole('button', { name: /^Contents/ }).click()
+	await contents.getByRole('button', { name: 'II: Concerning Hereditary Principalities' }).click()
 	await expect(page.getByRole('heading', { level: 2, name: 'II: Concerning Hereditary Principalities' })).toBeVisible()
 
 	// The same file again is the same reading.
@@ -136,6 +157,52 @@ test('an EPUB added as a file shows as importing, then opens to its chapters', a
 	await pickFile(page, books('the-prince.epub'))
 	await expect(page.getByRole('status')).toContainText('You already have this book.')
 	await expect(readings(page)).toHaveCount(1)
+})
+
+test('a long chapter with no headings gets AI headings when the member opens it, and stays cut by length without a key', async ({ page, isMobile }) => {
+	const chapter = 'XIX: That One Should Avoid Being Despised and Hated'
+	const contents = page.getByRole('navigation', { name: 'Contents' })
+	const openChapter = async () => {
+		if (isMobile) await page.getByRole('button', { name: /^Contents/ }).click()
+		await contents.getByRole('button', { name: chapter, exact: true }).click()
+		await expect(page.getByRole('heading', { level: 2, name: chapter })).toBeVisible()
+		if (isMobile) await page.getByRole('button', { name: /^Contents/ }).click()
+	}
+	await joinAs(page)
+	await page.goto('/mind')
+	await pickFile(page, books('the-prince.epub'))
+	await expect(readings(page).getByRole('link', { name: /The Prince/ })).toBeVisible({ timeout: 30_000 })
+	await readings(page).getByRole('link').click()
+
+	await openChapter()
+	await expect(contents.getByRole('button', { name: `${chapter} (part 2)` })).toBeVisible()
+	await expect(page.getByText('Adding headings to this long chapter…')).toHaveCount(0)
+
+	// Once the member has a key, opening the chapter again adds its headings.
+	const saved = await page.request.post('/rpc/ai/saveKey', {
+		headers: { 'x-csrf-token': 'orpc' },
+		data: { json: { provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY } },
+	})
+	expect(saved.ok()).toBe(true)
+	await page.reload()
+	await openChapter()
+	// e2e/fake-llm.ts puts a heading halfway through; the length cut goes.
+	await expect(contents.getByRole('button', { name: 'Where it leads' })).toBeVisible({ timeout: 15_000 })
+	await expect(contents.getByRole('button', { name: `${chapter} (part 2)` })).toHaveCount(0)
+	// The member stays on the chapter they opened, which now ends where the AI's heading starts.
+	await expect(page.getByRole('heading', { level: 2, name: chapter })).toBeVisible()
+	await contents.getByRole('button', { name: 'Where it leads' }).click()
+	await expect(page.getByText("Heading added by AI. The text is the author's.")).toBeVisible()
+})
+
+test('a link to a PDF is read as a book', async ({ page }) => {
+	await joinAs(page)
+	await page.goto('/mind')
+	await addLink(page, `${FAKE_SITE}/opinions/23-719.pdf`)
+	await expect(readings(page).getByRole('link', { name: /Trump v. Anderson/ })).toBeVisible({ timeout: 30_000 })
+	await readings(page).getByRole('link').click()
+	await expect(page.getByText('p. 1', { exact: true })).toBeVisible()
+	await expect(page.getByText(/Section 3 of the Fourteenth Amendment/).first()).toBeVisible()
 })
 
 test("a book's images are stored and shown in the reader", async ({ page, isMobile }) => {

@@ -25,12 +25,63 @@ export function testEpub(files: Record<string, string | Uint8Array> = {}) {
 }
 
 /** A one-page PDF with nothing on its page, as a scan without a text layer reads to pdf.js. */
-export function blankPdf() {
-	const objects = [
-		'<< /Type /Catalog /Pages 2 0 R >>',
-		'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-		'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>',
-	]
+export const blankPdf = () =>
+	pdfOf(['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>'])
+
+export type TestBookmark = { title: string; page: number; top?: number; items?: TestBookmark[] }
+
+/**
+ * A PDF with a text layer for tests. Each page is a list of lines, `[text, size]` (10 when no
+ * size), set top down in Helvetica from the top margin. `outline` becomes its bookmarks, each
+ * pointing at a page (from 1) and, when `top` is set, at that height on it.
+ */
+export function testPdf(pages: (string | [string, number])[][], outline: TestBookmark[] = []) {
+	const escape = (s: string) => s.replace(/[\\()]/g, (c) => `\\${c}`)
+	const objects: string[] = []
+	const add = (o: string) => objects.push(o)
+	add('') // 1: catalog, written last
+	add(`<< /Type /Pages /Kids [${pages.map((_, i) => `${4 + i * 2} 0 R`).join(' ')}] /Count ${pages.length} >>`)
+	add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
+	for (const lines of pages) {
+		let y = 740
+		const stream = lines
+			.map((line) => {
+				const [text, size] = typeof line === 'string' ? [line, 10] : line
+				y -= size * 1.5
+				return `BT /F1 ${size} Tf 72 ${y} Td (${escape(text)}) Tj ET`
+			})
+			.join('\n')
+		add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${objects.length + 2} 0 R >>`)
+		add(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`)
+	}
+	// Bookmarks are a linked tree: each item knows its parent, siblings and children.
+	const root = objects.length + 1
+	add('')
+	const place = (items: TestBookmark[], parent: number): number[] => {
+		const ids = items.map(() => {
+			add('')
+			return objects.length
+		})
+		items.forEach((item, i) => {
+			const kids = item.items?.length ? place(item.items, ids[i]!) : []
+			const dest = `[${4 + (item.page - 1) * 2} 0 R ${item.top === undefined ? '/Fit' : `/XYZ 0 ${item.top} null`}]`
+			objects[ids[i]! - 1] =
+				`<< /Title (${escape(item.title)}) /Parent ${parent} 0 R /Dest ${dest}` +
+				(i > 0 ? ` /Prev ${ids[i - 1]} 0 R` : '') +
+				(i < ids.length - 1 ? ` /Next ${ids[i + 1]} 0 R` : '') +
+				(kids.length ? ` /First ${kids[0]} 0 R /Last ${kids.at(-1)} 0 R /Count ${kids.length}` : '') +
+				' >>'
+		})
+		return ids
+	}
+	const top = place(outline, root)
+	objects[root - 1] = top.length ? `<< /Type /Outlines /First ${top[0]} 0 R /Last ${top.at(-1)} 0 R /Count ${top.length} >>` : '<< /Type /Outlines /Count 0 >>'
+	objects[0] = `<< /Type /Catalog /Pages 2 0 R /Outlines ${root} 0 R >>`
+	return pdfOf(objects)
+}
+
+/** Writes numbered objects as a PDF file, with its cross-reference table. */
+function pdfOf(objects: string[]) {
 	let body = '%PDF-1.4\n'
 	const offsets: number[] = []
 	objects.forEach((o, i) => {

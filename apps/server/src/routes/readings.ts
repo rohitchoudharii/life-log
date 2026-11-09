@@ -2,15 +2,15 @@ import { createHash } from 'node:crypto'
 import { ORPCError } from '@orpc/server'
 import { and, asc, desc, eq, isNull, or, type SQL, sql } from 'drizzle-orm'
 import { asUser, type Tx } from '../db/client'
-import { readingFiles, readings, sections } from '../db/schema'
+import { aiKeys, readingFiles, readings, sections } from '../db/schema'
 import { bookKind } from '../import/book'
 import { NOT_A_BOOK, NOT_A_LINK, normaliseUrl } from '../import/reading'
-import { enqueueImport } from '../jobs'
+import { enqueueChapterHeadings, enqueueImport } from '../jobs'
 import { authed } from '../orpc'
 
 // Written out in full: inside a subquery Drizzle leaves column names unqualified, and `id` would
 // then mean the section's own id.
-const sectionCount = sql<number>`(select count(*)::int from sections where sections.reading_id = readings.id)`
+const sectionCount = sql<number>`(select count(*)::int from sections where sections.reading_id = readings.id and sections.kind = 'body')`
 const columns = { reading: readings, sectionCount }
 type Row = { reading: typeof readings.$inferSelect; sectionCount: number }
 
@@ -131,6 +131,7 @@ export const readingsRoutes = {
 					title: sections.title,
 					aiTitle: sections.aiTitle,
 					wordCount: sections.wordCount,
+					kind: sections.kind,
 				})
 				.from(sections)
 				.where(eq(sections.readingId, row.reading.id))
@@ -139,25 +140,37 @@ export const readingsRoutes = {
 		}),
 	),
 
-	section: authed.readings.section.handler(({ input, context }) =>
-		asUser(context.user.id, async (tx) => {
-			const [section] = await tx
-				.select({
+	section: authed.readings.section.handler(async ({ input, context }) => {
+		const userId = context.user.id
+		const [[section], [key]] = await asUser(userId, (tx) =>
+			Promise.all([
+				tx
+					.select({
 					id: sections.id,
 					readingId: sections.readingId,
 					position: sections.position,
 					level: sections.level,
 					title: sections.title,
 					aiTitle: sections.aiTitle,
+					kind: sections.kind,
+					headingsPending: sections.headingsPending,
+					chapter: sections.chapter,
 					blocks: sections.blocks,
 				})
-				.from(sections)
-				.innerJoin(readings, eq(readings.id, sections.readingId))
-				.where(and(eq(sections.id, input.id), isNull(readings.deletedAt)))
-			if (!section) throw new ORPCError('NOT_FOUND', { message: 'That section does not exist. It may have been removed.' })
-			return section
-		}),
-	),
+					.from(sections)
+					.innerJoin(readings, eq(readings.id, sections.readingId))
+					.where(and(eq(sections.id, input.id), isNull(readings.deletedAt))),
+				tx.select({ userId: aiKeys.userId }).from(aiKeys),
+			]),
+		)
+		if (!section) throw new ORPCError('NOT_FOUND', { message: 'That section does not exist. It may have been removed.' })
+		// The member is reading this chapter now, so it is worth an AI call for its headings. The
+		// flag stays for a member with no key, so the headings come once they add one.
+		const { chapter, ...out } = section
+		const headingsPending = section.headingsPending && Boolean(key)
+		if (headingsPending) await enqueueChapterHeadings({ userId, readingId: section.readingId, chapter })
+		return { ...out, headingsPending }
+	}),
 
 	remove: authed.readings.remove.handler(({ input, context }) =>
 		asUser(context.user.id, async (tx) => {

@@ -39,16 +39,25 @@ export const Block = z.discriminatedUnion('type', [
 export type Block = z.infer<typeof Block>
 
 /**
+ * `body` sections are read and recalled. `reference` sections (a bibliography) are kept to read,
+ * but get no questions and don't count towards progress (issue #2).
+ */
+export type SectionKind = 'body' | 'reference'
+
+/**
  * `level` is 1 for top-level sections, 2 and 3 for nested ones; sections are stored in reading
  * order. `aiTitle` is true when the title is a heading the AI wrote, not the author.
  */
-export type SectionDraft = { title: string; level: number; blocks: Block[]; wordCount: number; aiTitle: boolean }
+export type SectionDraft = { title: string; level: number; blocks: Block[]; wordCount: number; aiTitle: boolean; kind: SectionKind }
 
 /** At most three levels: sections, subsections, and their subsections. */
 export const MAX_SECTION_LEVEL = 3
 
 /** A section with more words than this is cut at a block boundary (issue #1). */
 export const MAX_SECTION_WORDS = 2500
+
+/** An article this long with no headings gets AI headings; a shorter one is one section (issue #1). */
+export const ARTICLE_HEADINGS_MIN_WORDS = 1000
 
 const words = new Intl.Segmenter(undefined, { granularity: 'word' })
 
@@ -92,16 +101,80 @@ export function splitSections(blocks: Block[], fallbackTitle: string): SectionDr
 			const page = last?.blocks.at(-1)?.type === 'page' ? last.blocks.pop() : undefined
 			const parentLimit = (groups.at(-1)?.level ?? 0) + 1
 			const level = Math.max(1, Math.min(block.level - top + 1, parentLimit, MAX_SECTION_LEVEL))
-			groups.push({ title: block.text, level, blocks: page ? [page] : [], wordCount: 0, aiTitle: block.source === 'ai', heading: true })
+			groups.push({ title: block.text, level, blocks: page ? [page] : [], wordCount: 0, aiTitle: block.source === 'ai', kind: 'body', heading: true })
 			continue
 		}
-		if (!groups.length) groups.push({ title: fallbackTitle, level: 1, blocks: [], wordCount: 0, aiTitle: false, heading: false })
+		if (!groups.length) groups.push({ title: fallbackTitle, level: 1, blocks: [], wordCount: 0, aiTitle: false, kind: 'body', heading: false })
 		const group = groups.at(-1)!
 		group.blocks.push(block)
 		group.wordCount += countWords(blockText(block))
 	}
 	// A run of page markers alone is no section: a page break, not text.
 	return groups.filter((g) => g.heading || g.blocks.some((b) => b.type !== 'page')).flatMap(({ heading: _, ...g }) => cut(g))
+}
+
+/**
+ * A part of a book as its own table of contents or outline lists it. `level` is its depth in
+ * that outline (1 for a part or a top-level chapter); its blocks may hold the author's headings.
+ */
+export type Chapter = { title: string; level: number; kind: SectionKind; blocks: Block[] }
+
+/**
+ * `chapter` is the index of the chapter a section came from. `headingsPending` marks every
+ * section of a chapter that has no headings and was cut by length alone, so the AI can add
+ * headings when the member opens it.
+ */
+export type BookSection = SectionDraft & { chapter: number; headingsPending: boolean }
+
+/**
+ * Splits a book chapter by chapter: each chapter is split like an article (issue #1), under a
+ * section titled with the chapter's own title, nested at the chapter's depth in the book's
+ * outline, at most three levels. A chapter with no text of its own (a part page) stays only as
+ * the parent of the chapters after it.
+ *
+ * A body chapter with no headings is marked `headingsPending` when it is longer than
+ * `headingsFrom` words: by default only chapters long enough to be cut, and for a PDF that
+ * reads as one article, ARTICLE_HEADINGS_MIN_WORDS.
+ */
+export function splitBook(chapters: readonly Chapter[], { headingsFrom = MAX_SECTION_WORDS + 1 } = {}): BookSection[] {
+	return withParents(chapters).flatMap((chapter, index) => {
+		const top = Math.min(6, ...chapter.blocks.flatMap((b) => (b.type === 'heading' ? [b.level] : [])))
+		// The chapter's title is the top heading, so its own headings start one level below it.
+		const blocks: Block[] = [
+			{ type: 'heading', level: 1, text: chapter.title },
+			...chapter.blocks.map((b) => (b.type === 'heading' ? { ...b, level: Math.min(6, 2 + b.level - top) } : b)),
+		]
+		const words = chapter.blocks.reduce((n, b) => n + countWords(blockText(b)), 0)
+		const headingsPending = chapter.kind === 'body' && !hasHeadings(chapter.blocks) && words >= headingsFrom
+		return splitSections(blocks, chapter.title).map((s) => ({
+			...s,
+			level: Math.min(MAX_SECTION_LEVEL, s.level + chapter.level - 1),
+			kind: chapter.kind,
+			chapter: index,
+			headingsPending,
+		}))
+	})
+}
+
+/**
+ * Leaves out chapters with no text unless they are the parent of the chapters after them, and
+ * closes the gaps left in the outline, so every chapter is at most one level below the one
+ * before it.
+ */
+function withParents(chapters: readonly Chapter[]): Chapter[] {
+	const out: Chapter[] = []
+	for (let i = chapters.length - 1; i >= 0; i--) {
+		const c = chapters[i]!
+		const empty = !c.blocks.some((b) => b.type === 'image' || blockText(b).trim())
+		if (empty && !(out[0] && out[0].level > c.level)) continue
+		out.unshift(c)
+	}
+	let previous = 0
+	return out.map((c) => {
+		const level = Math.max(1, Math.min(c.level, previous + 1))
+		previous = level
+		return { ...c, level }
+	})
 }
 
 function cut(section: SectionDraft): SectionDraft[] {
@@ -121,6 +194,7 @@ function cut(section: SectionDraft): SectionDraft[] {
 				blocks: [],
 				wordCount: 0,
 				aiTitle: section.aiTitle,
+				kind: section.kind,
 			})
 		out.at(-1)!.blocks.push(block)
 		out.at(-1)!.wordCount += n
