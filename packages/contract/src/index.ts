@@ -61,6 +61,8 @@ export const SEEN_SECONDS = 30
 export const Preferences = z.object({
 	/** Background AI work pauses once this month's estimated spend reaches it, in US dollars. */
 	aiMonthlyBudgetUsd: z.number().min(0, 'The budget can’t be below $0.').max(1000, 'Choose a budget of $1,000 or less.'),
+	/** The chance of recall to aim for when an idea comes back, from 0.8 to 0.95. Higher means more reviews. */
+	desiredRetention: z.number().min(0.8, 'Choose a target of 80% or more.').max(0.95, 'Choose a target of 95% or less.'),
 })
 export type Preferences = z.infer<typeof Preferences>
 

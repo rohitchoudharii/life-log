@@ -34,3 +34,14 @@ export async function ageSessions(email: string, days: number) {
 		[email, days],
 	)
 }
+
+/** Puts a card past the steps, with an FSRS memory last reviewed `daysAgo`, and due `dueDaysAgo`. */
+export const graduate = (id: string, stability: number, daysAgo: number, dueDaysAgo: number) =>
+	sql(
+		`update cards set due_at = now() - make_interval(days => $4), state = jsonb_build_object(
+			'step', null, 'relearning', null, 'reps', 5, 'lapses', 0,
+			'memory', jsonb_build_object('stability', $2::float, 'difficulty', 5),
+			'lastReviewAt', to_char((now() - make_interval(days => $3)) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+		) where id = $1`,
+		[id, stability, daysAgo, dueDaysAgo],
+	)

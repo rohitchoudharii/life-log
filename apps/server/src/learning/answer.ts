@@ -9,6 +9,7 @@ import {
 	type IdeaProgress,
 	type Judge,
 	type PointStatus,
+	schedulerFor,
 	withConfidence,
 } from '@life-log-club/domain'
 import { judgeRequest, parseJudgeVerdict } from '@life-log-club/llm'
@@ -18,6 +19,7 @@ import { ZodError } from 'zod'
 import { asUser, type Tx } from '../db/client'
 import { cards, questions, recallAttempts, reviewLog } from '../db/schema'
 import { callAi } from './ai'
+import { preferencesOf } from './preferences'
 
 const NOT_CHECKED = 'Your answer couldn’t be checked just now. Try again in a moment.'
 
@@ -130,7 +132,8 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
 		let dueAt = locked!.dueAt
 		const prev = { state: locked!.state, level: locked!.level, dueAt: locked!.dueAt.toISOString() }
 		if (input.mode !== 'practice') {
-			const next = answerIdea({ state: locked!.state, level: locked!.level, dueAt: locked!.dueAt }, grade, now)
+			const scheduler = schedulerFor((await preferencesOf(tx, userId)).desiredRetention)
+			const next = answerIdea({ state: locked!.state, level: locked!.level, dueAt: locked!.dueAt }, grade, now, scheduler)
 			dueAt = next.dueAt
 			await tx
 				.update(cards)
@@ -176,10 +179,11 @@ async function replayFrom(tx: Tx, from: typeof reviewLog.$inferSelect) {
 		.from(reviewLog)
 		.where(and(eq(reviewLog.cardId, from.cardId), gte(reviewLog.id, from.id)))
 		.orderBy(asc(reviewLog.id))
+	const scheduler = schedulerFor((await preferencesOf(tx, from.userId)).desiredRetention)
 	let progress: IdeaProgress = { ...from.prev, dueAt: new Date(from.prev.dueAt) }
 	for (const row of rows) {
 		if (row.mode === 'practice') continue
-		progress = answerIdea(progress, { correct: row.correct ?? row.rating !== 'again', rating: row.rating }, row.reviewedAt)
+		progress = answerIdea(progress, { correct: row.correct ?? row.rating !== 'again', rating: row.rating }, row.reviewedAt, scheduler)
 		if (row.id === from.id) await tx.update(reviewLog).set({ nextDueAt: progress.dueAt }).where(eq(reviewLog.id, row.id))
 	}
 	await tx.update(cards).set({ state: progress.state, level: progress.level, dueAt: progress.dueAt }).where(eq(cards.id, from.cardId))

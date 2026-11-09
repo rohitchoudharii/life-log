@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { ORPCError } from '@orpc/client'
 import { expect, test } from '@playwright/test'
 import { newMember } from './api'
-import { sql } from './db'
+import { graduate, sql } from './db'
 import { GOOD_ANTHROPIC_KEY } from './env'
 
 test.beforeEach(({}, info) => test.skip(info.project.name !== 'desktop', 'API only'))
@@ -55,6 +55,41 @@ test('a new card is due at once, then comes back after 1, 2 and 3 days, then aft
 	// recall from the second answer on (the first has nothing to predict from).
 	expect(log[0]).toMatchObject({ ask: 'self', mode: 'review', scheduler: 'steps-fsrs-v1:FSRS-6', predicted_recall: null })
 	for (const row of log.slice(1)) expect(row.predicted_recall).toBeGreaterThan(0.5)
+})
+
+test('the member’s review target sets the gap from FSRS: a higher target brings an idea back sooner', async () => {
+	const { client } = await newMember()
+	const add = () => client.review.add({ id: randomUUID(), kind: 'idea', prompt: 'Why space practice?', answer: 'Forgetting makes recall work harder.' })
+	const [a, b] = [await add(), await add()]
+	// Two cards with the same memory, a month since their last review.
+	await graduate(a.id, 30, 30, 0)
+	await graduate(b.id, 30, 30, 0)
+	expect((await client.preferences.get()).desiredRetention).toBe(0.9)
+	const at90 = daysUntil((await client.review.answer(rate(a.id, 'good'))).dueAt)
+	await client.preferences.update({ desiredRetention: 0.95 })
+	const at95 = daysUntil((await client.review.answer(rate(b.id, 'good'))).dueAt)
+	// Fuzz moves a gap this long by 5% at most, far less than the difference between targets.
+	expect(at90).toBeGreaterThan(60)
+	expect(at95).toBeLessThan(at90 / 2)
+	expect(await code(client.preferences.update({ desiredRetention: 0.99 }))).toBe('BAD_REQUEST')
+})
+
+test('Review serves the idea most likely forgotten first, not the one due longest', async () => {
+	const { client } = await newMember()
+	const add = (prompt: string) => client.review.add({ id: randomUUID(), kind: 'idea', prompt, answer: 'An answer.' })
+	const strong = await add('Strong memory, due longest')
+	const weak = await add('Weak memory, due a day ago')
+	const fresh = await add('Never answered')
+	// Both last reviewed 10 days ago: about 97% predicted recall for the strong one, 76% for the weak.
+	await graduate(strong.id, 50, 10, 5)
+	await graduate(weak.id, 2, 10, 1)
+
+	const batch = await client.review.next({ limit: 2 })
+	expect(batch.total).toBe(3)
+	// A card never answered has nothing to recall from yet, so it comes first; the ranking covers
+	// every due card, not just the oldest few.
+	expect(batch.items.map((i) => i.cardId)).toEqual([fresh.id, weak.id])
+	expect((await client.review.next({ limit: 20 })).items.map((i) => i.cardId)).toEqual([fresh.id, weak.id, strong.id])
 })
 
 test('a forgotten card comes back in 10 minutes, and an answer to a card not yet due is refused', async () => {
@@ -230,7 +265,8 @@ test('Review asks a question not asked yet nearest the card’s level, then the 
 
 	// Filters: a lesson shows under Lessons, the hand-added idea under neither Lessons nor Readings.
 	const lesson = await a.client.review.add({ id: randomUUID(), kind: 'lesson', prompt: 'Rest days?', answer: 'They count.' })
-	expect((await a.client.review.next({})).items.map((i) => i.cardId)).toEqual([card.id, lesson.id])
+	// The new lesson has never been answered, so it comes before the idea answered three times.
+	expect((await a.client.review.next({})).items.map((i) => i.cardId)).toEqual([lesson.id, card.id])
 	expect((await a.client.review.next({ filter: 'lessons' })).items.map((i) => i.cardId)).toEqual([lesson.id])
 	expect(await a.client.review.next({ filter: 'readings' })).toEqual({ items: [], total: 0, minutes: 0 })
 

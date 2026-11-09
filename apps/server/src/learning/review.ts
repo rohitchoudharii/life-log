@@ -1,6 +1,6 @@
 import type { ReviewFilter, ReviewItem } from '@life-log-club/contract'
-import { isQuestionType, pickQuestion, toPrompt } from '@life-log-club/domain'
-import { and, asc, count, desc, eq, inArray, isNotNull, isNull, lte, max, type SQL } from 'drizzle-orm'
+import { defaultScheduler, isQuestionType, pickQuestion, toPrompt } from '@life-log-club/domain'
+import { and, desc, eq, inArray, isNotNull, isNull, lte, max, type SQL } from 'drizzle-orm'
 import type { Tx } from '../db/client'
 import { aiKeys, cards, questions, readings, reviewLog, sections } from '../db/schema'
 
@@ -36,22 +36,30 @@ export async function minutesFor(tx: Tx, total: number) {
 }
 
 /**
- * The next due cards, oldest due first, each with the one thing to ask: a question not asked
+ * The next due cards, the one the member is most likely to have forgotten first: lowest
+ * predicted recall now, with cards never answered (nothing to predict from) before the rest, and
+ * oldest due first between equals. Each comes with the one thing to ask: a question not asked
  * yet, nearest the card's level (`pickQuestion`), else the cue. Written questions and cues are
  * judged with the member's AI key; without one, the card is self-rated.
  */
 export async function nextBatch(tx: Tx, limit: number, filter: ReviewFilter) {
-	const where = dueNow(filter)
-	const rows = await tx
-		.select({ card: cards, reading: readings.title, section: sections.title })
-		.from(cards)
-		.leftJoin(sections, eq(sections.id, cards.sectionId))
-		.leftJoin(readings, eq(readings.id, cards.readingId))
-		.where(where)
-		.orderBy(asc(cards.dueAt))
-		.limit(limit)
-	const [total] = await tx.select({ n: count() }).from(cards).where(where)
-	const ids = rows.map((r) => r.card.id)
+	const now = new Date()
+	// Predicted recall comes from the FSRS forgetting curve, in code, so every due card is ranked here.
+	const due = await tx.select({ id: cards.id, state: cards.state, dueAt: cards.dueAt }).from(cards).where(dueNow(filter))
+	const recall = new Map(due.map((c) => [c.id, defaultScheduler.retrievability(c.state, now) ?? -1]))
+	const ids = due
+		.sort((a, b) => recall.get(a.id)! - recall.get(b.id)! || a.dueAt.getTime() - b.dueAt.getTime())
+		.slice(0, limit)
+		.map((c) => c.id)
+	const joined = ids.length
+		? await tx
+				.select({ card: cards, reading: readings.title, section: sections.title })
+				.from(cards)
+				.leftJoin(sections, eq(sections.id, cards.sectionId))
+				.leftJoin(readings, eq(readings.id, cards.readingId))
+				.where(inArray(cards.id, ids))
+		: []
+	const rows = ids.map((id) => joined.find((r) => r.card.id === id)!)
 	const own = ids.length ? await tx.select().from(questions).where(and(inArray(questions.cardId, ids), isNull(questions.retiredAt))) : []
 	const qIds = own.map((q) => q.id)
 	const asked = qIds.length
@@ -88,5 +96,5 @@ export async function nextBatch(tx: Tx, limit: number, filter: ReviewFilter) {
 		const { prompt } = toPrompt(picked.type, picked.content)
 		return { ...base, ask: { kind: 'question', questionId: picked.id, type: picked.type, prompt: prompt.prompt, code: prompt.code ?? null } }
 	})
-	return { items, total: total?.n ?? 0, minutes: await minutesFor(tx, total?.n ?? 0) }
+	return { items, total: due.length, minutes: await minutesFor(tx, due.length) }
 }

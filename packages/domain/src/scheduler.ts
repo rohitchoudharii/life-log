@@ -110,6 +110,17 @@ export function stepsThenFsrs({
 
 export const defaultScheduler = stepsThenFsrs()
 
+const byTarget = new Map<number, Scheduler>([[0.9, defaultScheduler]])
+/**
+ * The scheduler for a member's target recall. Only the FSRS gaps depend on it, so its id and its
+ * predicted recall are the same as `defaultScheduler`'s.
+ */
+export function schedulerFor(desiredRetention: number): Scheduler {
+	let scheduler = byTarget.get(desiredRetention)
+	if (!scheduler) byTarget.set(desiredRetention, (scheduler = stepsThenFsrs({ desiredRetention })))
+	return scheduler
+}
+
 /** One logged answer, as a replay needs it. `correct` is null on answers from before it was kept. */
 export type LoggedAnswer = { rating: Rating; correct: boolean | null; at: Date; mode: 'recall' | 'review' }
 

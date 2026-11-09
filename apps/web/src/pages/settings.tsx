@@ -100,6 +100,7 @@ export function Settings() {
 				)}
 			</div>
 			<AiUsage />
+			<ReviewTarget />
 			<div className="flex flex-wrap items-center gap-3 rounded-2xl bg-white p-5 ring-1 ring-ink/5">
 				<div className="mr-auto">
 					<h2 className="text-lg font-semibold">Account</h2>
@@ -113,6 +114,47 @@ export function Settings() {
 				</button>
 			</div>
 		</section>
+	)
+}
+
+const TARGETS = [0.8, 0.85, 0.9, 0.95]
+
+/** The chance of recall to aim for when an idea comes back. One click saves it. */
+function ReviewTarget() {
+	const queryClient = useQueryClient()
+	const prefs = useQuery(orpc.preferences.get.queryOptions())
+	const save = useMutation(
+		orpc.preferences.update.mutationOptions({
+			onSuccess: (saved) => queryClient.setQueryData(orpc.preferences.get.queryKey(), saved),
+		}),
+	)
+	const current = save.isPending ? save.variables.desiredRetention : prefs.data?.desiredRetention
+	return (
+		<div className="grid gap-3 rounded-2xl bg-white p-5 ring-1 ring-ink/5">
+			<h2 className="text-lg font-semibold">Review</h2>
+			<fieldset className="grid gap-2" disabled={!prefs.data}>
+				<legend className="mb-1.5 text-sm font-medium text-ink/80">When an idea comes back, aim to remember it</legend>
+				<div className="flex flex-wrap gap-2">
+					{TARGETS.map((t) => (
+						<label
+							key={t}
+							className="cursor-pointer rounded-lg border border-ink/15 px-3 py-1.5 text-sm has-[:checked]:border-navy has-[:checked]:bg-navy has-[:checked]:text-white has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-navy/40"
+						>
+							<input
+								type="radio"
+								name="review-target"
+								className="sr-only"
+								checked={current !== undefined && Math.abs(current - t) < 0.001}
+								onChange={() => save.mutate({ desiredRetention: t })}
+							/>
+							{Math.round(t * 100)}%
+						</label>
+					))}
+				</div>
+				<p className="text-sm text-ink/60">Higher means more reviews.</p>
+			</fieldset>
+			<ErrorText>{save.error && errorMessage(save.error)}</ErrorText>
+		</div>
 	)
 }
 

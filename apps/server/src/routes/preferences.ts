@@ -4,7 +4,7 @@ import { withinBudget } from '../learning/ai'
 import { preferencesOf, updatePreferences } from '../learning/preferences'
 import { authed } from '../orpc'
 
-const shown = ({ aiMonthlyBudgetUsd }: { aiMonthlyBudgetUsd: number }) => ({ aiMonthlyBudgetUsd })
+const shown = ({ aiMonthlyBudgetUsd, desiredRetention }: { aiMonthlyBudgetUsd: number; desiredRetention: number }) => ({ aiMonthlyBudgetUsd, desiredRetention })
 
 export const preferencesRoutes = {
 	get: authed.preferences.get.handler(({ context }) => asUser(context.user.id, async (tx) => shown(await preferencesOf(tx, context.user.id)))),

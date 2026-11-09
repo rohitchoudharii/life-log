@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
-import { sql } from './db'
+import { graduate, sql } from './db'
 import { FAKE_SITE, GOOD_ANTHROPIC_KEY } from './env'
 import { proof } from './proof'
 import { joinAs } from './session'
@@ -704,4 +704,28 @@ test('without a key, a reading with no key ideas can only be compared with the t
 	await page.getByRole('button', { name: 'Done' }).click()
 	await expect(page).toHaveURL(/\/mind\/read\//)
 	await expect(sectionTitle(page)).not.toHaveText(first)
+})
+
+test('Review opens with the idea most likely forgotten, not the one due longest', async ({ page }, testInfo) => {
+	await joinAs(page)
+	const add = async (prompt: string) => {
+		const id = crypto.randomUUID()
+		expect((await api(page, 'review/add', { id, kind: 'lesson', prompt, answer: 'An answer.' })).ok()).toBe(true)
+		return id
+	}
+	const strong = await add('Anchor high in salary talks: why?')
+	const weak = await add('Rest days count: why?')
+	// Both last reviewed 10 days ago. The strong one has been due for 5 days, the weak one for 1,
+	// but the weak one is much more likely forgotten by now (about 76% against 97%).
+	await graduate(strong, 50, 10, 5)
+	await graduate(weak, 2, 10, 1)
+
+	await page.goto('/mind/review')
+	await expect(page.getByText('Card 1 of 2')).toBeVisible()
+	await expect(page.getByTestId('question')).toHaveText('Rest days count: why?')
+	await proof(page, testInfo, 'review-weakest-first')
+	await page.getByRole('button', { name: 'Show answer' }).click()
+	await page.getByRole('button', { name: 'Got it' }).click()
+	await expect(page.getByText('Card 2 of 2')).toBeVisible()
+	await expect(page.getByTestId('question')).toHaveText('Anchor high in salary talks: why?')
 })

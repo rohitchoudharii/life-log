@@ -82,3 +82,21 @@ test('Settings shows this month’s AI use against the budget, and Mind says whe
 	await paused.getByRole('link', { name: 'Settings' }).click()
 	await expect(page.getByRole('heading', { name: 'AI usage' })).toBeVisible()
 })
+
+test('Settings → Review sets how well to remember with one click, 90% at first, and keeps it', async ({ page }, testInfo) => {
+	const email = await joinAndOpenSettings(page)
+	const target = page.getByRole('group', { name: 'When an idea comes back, aim to remember it' })
+	await expect(target.getByRole('radio', { name: '90%' })).toBeChecked()
+	await expect(target).toContainText('Higher means more reviews.')
+	await proof(page, testInfo, 'settings-review-target')
+
+	await target.getByText('95%').click()
+	await expect(target.getByRole('radio', { name: '95%' })).toBeChecked()
+	await expect
+		.poll(async () => (await sql<{ desired_retention: number }>('select desired_retention from preferences where user_id = (select id from users where email = $1)', [email]))[0]?.desired_retention)
+		.toBeCloseTo(0.95)
+	await page.reload()
+	await expect(target.getByRole('radio', { name: '95%' })).toBeChecked()
+	await expect(target.getByRole('radio', { name: '90%' })).not.toBeChecked()
+	await proof(page, testInfo, 'settings-review-target-95')
+})
