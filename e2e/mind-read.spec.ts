@@ -359,25 +359,38 @@ test('Recall on a section not written yet opens the dump at once; Nothing comes 
 const makeDue = (id: string) => sql(`update cards set due_at = now() - interval '1 second' where id = $1`, [id])
 const cardNow = (id: string) => sql<{ level: number; due_at: Date }>('select level, due_at from cards where id = $1', [id]).then((r) => r[0]!)
 
-test('Review: an idea covered in recall, once due, is back in 2 days when answered right, and in 10 minutes a level lower when wrong', async ({ page }, testInfo) => {
+// The Release 1 loop (learning_spec.md section 10): add a link, stay 30 seconds, recall, dump,
+// answer, results, due in 1 day, then Review, right, due in 2 days.
+test('Release 1 loop: a link read for 30 seconds, recalled and answered, is due in 1 day; in Review it is back in 2 days when right, and in 10 minutes a level lower when wrong', async ({
+	page,
+}, testInfo) => {
 	const desktop = testInfo.project.name === 'desktop'
 	const { ids } = await openWithKey(page)
 	await stay(page)
 	await expect.poll(() => writeStatus(ids[0]!), { timeout: 15_000 }).toBe('ready')
+	await proof(page, testInfo, 'loop-1-read')
 	const ideas = await ideasOf(ids[0]!)
 	const title = await sectionTitle(page).innerText()
 	// Recall: the dump covers the first idea, its deeper question is answered right, the others with I don't know.
 	await page.getByRole('button', { name: 'Recall this section' }).click()
 	await page.getByLabel('What you remember').fill(ideas[0]!.answer)
+	await proof(page, testInfo, 'loop-2-dump')
 	await page.getByRole('button', { name: 'Done' }).click()
 	await expect(page.getByText('Question 1 of 3')).toBeVisible({ timeout: 15_000 })
 	for (let n = 0; n < 3; n++) {
 		const { idea } = await shownIdea(page, ideas)
+		if (n === 2) await proof(page, testInfo, 'loop-3-question')
 		await answerShown(page, idea.id === ideas[0]!.id ? idea.answer : null, 'Think so')
 	}
-	await expect(page.getByRole('list', { name: 'Recall map' })).toBeVisible()
+	const map = page.getByRole('list', { name: 'Recall map' })
+	await expect(map).toBeVisible()
 	const covered = ideas[0]!.id
-	expect(await cardNow(covered)).toMatchObject({ level: 2 })
+	// The covered idea, answered right, is due in 1 day.
+	await expect(map.locator(':scope > li').filter({ hasText: ideas[0]!.answer }).first()).toContainText('Back tomorrow')
+	await proof(page, testInfo, 'loop-4-results')
+	const afterRecall = await cardNow(covered)
+	expect(afterRecall.level).toBe(2)
+	expect(Math.abs(minutesUntil(afterRecall.due_at) - DAY_MINUTES)).toBeLessThanOrEqual(1)
 	await makeDue(covered)
 
 	// Home: the due count opens Review in one click.

@@ -148,6 +148,30 @@ test("a member can't review another member's cards or link a card to their entri
 	expect((await a.client.review.due({})).cards[0]?.prompt).toBe('A prompt')
 })
 
+test("a member can't reach another member's recall check, its marks or a card's checklist", async () => {
+	const a = await newMember('A')
+	const b = await newMember('B')
+	expect(await a.client.readings.addSample()).toEqual({ added: true })
+	expect(await a.client.readings.addSample()).toEqual({ added: false })
+	const [sample] = await a.client.readings.list()
+	const { contents } = await a.client.readings.get({ id: sample!.id })
+	const attempt = await a.client.recall.start({ id: randomUUID(), readingId: sample!.id, sectionIds: [contents[0]!.id] })
+	await a.client.recall.submit({ id: attempt.id, text: 'Rereading feels like learning.' })
+	await expect.poll(async () => (await a.client.recall.get({ id: attempt.id })).status, { timeout: 10_000 }).toBe('self')
+	const { toMark } = await a.client.recall.get({ id: attempt.id })
+	expect(toMark).toHaveLength(3)
+	const cardId = toMark![0]!.cardId
+
+	expect(await code(b.client.recall.get({ id: attempt.id }))).toBe('NOT_FOUND')
+	expect(await code(b.client.recall.selfMark({ id: attempt.id, marks: [{ cardId, status: 'covered' }] }))).toBe('NOT_FOUND')
+	expect(await code(b.client.review.checklist({ cardId, questionId: null }))).toBe('NOT_FOUND')
+	expect(await b.client.readings.list()).toEqual([])
+	// B's marks changed nothing: A still marks their own dump.
+	expect((await a.client.recall.get({ id: attempt.id })).status).toBe('self')
+	expect((await a.client.review.checklist({ cardId, questionId: null })).points).toEqual([toMark![0]!.idea])
+	expect((await a.client.recall.selfMark({ id: attempt.id, marks: [{ cardId, status: 'covered' }] })).status).toBe('graded')
+})
+
 type Member = Awaited<ReturnType<typeof newMember>>
 const IDEA = { prompt: 'Why does spacing beat cramming?', answer: 'Spaced practice leaves time to forget, so each recall works harder.' }
 const MUST_HAVE = ['forgetting between sessions', 'harder retrieval strengthens memory']
