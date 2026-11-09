@@ -47,7 +47,7 @@ const contents = (dir: string) =>
 		(title, i) => `<li><a href="/books/${dir}/${i + 1}.html">${i + 1}. ${title}</a></li>`,
 	).join('')}</ol></body></html>`
 const chapter = (n: number) =>
-	`<!doctype html><html><head><title>${CHAPTERS[n - 1]} · The Ring Book</title></head><body><nav><a href="/books/rings/">Contents</a></nav><article><h1>${n}. ${CHAPTERS[n - 1]}</h1>${Array.from(
+	`<!doctype html><html><head><title>${n}. ${CHAPTERS[n - 1]} · The Ring Book</title></head><body><nav><a href="/books/rings/">Contents</a></nav><article><h1>${n}. ${CHAPTERS[n - 1]}</h1>${Array.from(
 		{ length: 6 },
 		(_, i) => `<p>${i ? '' : `Chapter ${n} opens here. `}A ring of servers shares its keys so that adding or removing one server moves only a few of them, and paragraph ${i + 1} of this chapter says how.</p>`,
 	).join('')}<h2>In practice</h2>${'<p>Each server owns the keys between it and the server before it on the ring, so a lookup walks to the next server clockwise.</p>'.repeat(3)}</article></body></html>`

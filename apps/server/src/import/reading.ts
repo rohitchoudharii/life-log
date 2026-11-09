@@ -98,10 +98,15 @@ async function readPage(url: string) {
 	if (!isHtml(type)) throw new ExtractError("This link isn't a web page. Check the link and try again.")
 	if (page.body.length > MAX_HTML_BYTES) throw new ExtractError(TOO_LARGE)
 	const html = decodeHtml(page.body, page.contentType)
-	const book = await findBook(html, page.url, async (u) => (await fetchHtml(u)).html)
+	const book = await findBook(html, page.url, fetchHtml)
 	if (book?.isContents) return { book, sourceUrl: finalUrl } as const
 	const article = extractArticle(html, page.url)
-	return { article, sourceUrl: article.canonicalUrl ?? finalUrl } as const
+	// A chapter of a book that can't be added whole (too long) is only an article.
+	const partOfBook =
+		book && book.pages.length <= MAX_BOOK_PAGES
+			? { contentsUrl: normaliseUrl(book.contentsUrl) ?? book.contentsUrl, title: book.title, pages: book.pages.length }
+			: undefined
+	return { article, sourceUrl: article.canonicalUrl ?? finalUrl, partOfBook } as const
 }
 
 /** What every source turns into before it is stored: the same shape for links and files. */
@@ -111,6 +116,8 @@ type Imported = {
 	publishedAt: Date | null
 	/** Links only: the page's own address, used to find the same page under another link. */
 	sourceUrl: string | null
+	/** A chapter page's web book, which the member can add whole. */
+	partOfBook?: { contentsUrl: string; title: string; pages: number }
 	/** Set when a link turned out to be a PDF. */
 	source?: 'pdf_url'
 	sections: BookSection[]
@@ -146,10 +153,10 @@ async function readLink(userId: string, readingId: string, url: string): Promise
 		const book = await parseBook('pdf', page.pdf, name)
 		return { ...book, publishedAt: null, sourceUrl: page.sourceUrl, source: 'pdf_url', sections: bookSections(book), images: new Map() }
 	}
-	const { article, sourceUrl } = page
+	const { article, sourceUrl, partOfBook } = page
 	const words = article.blocks.reduce((n, b) => n + countWords(blockText(b)), 0)
 	const blocks = !hasHeadings(article.blocks) && words >= ARTICLE_HEADINGS_MIN_WORDS ? await addAiHeadings(userId, article.blocks) : article.blocks
-	return { ...article, sourceUrl, sections: asArticle(blocks, article.title), images: new Map() }
+	return { ...article, sourceUrl, partOfBook, sections: asArticle(blocks, article.title), images: new Map() }
 }
 
 /**
@@ -332,8 +339,28 @@ export async function importReading({ readingId, userId }: { readingId: string; 
 					)
 					.limit(1)
 			: []
-		if (same) {
-			await tx.update(readings).set({ status: 'ready', sourceUrl, mergedInto: same.id }).where(eq(readings.id, readingId))
+		// A chapter of a web book the member already has (still importing or not) opens that book.
+		const { partOfBook } = imported
+		const [book] =
+			!same && partOfBook
+				? await tx
+						.select({ id: readings.id })
+						.from(readings)
+						.where(
+							and(
+								eq(readings.source, 'web_book'),
+								eq(readings.sourceUrl, partOfBook.contentsUrl),
+								ne(readings.id, readingId),
+								ne(readings.status, 'failed'),
+								isNull(readings.mergedInto),
+								isNull(readings.deletedAt),
+							),
+						)
+						.limit(1)
+				: []
+		const kept = same ?? book
+		if (kept) {
+			await tx.update(readings).set({ status: 'ready', sourceUrl, mergedInto: kept.id }).where(eq(readings.id, readingId))
 			return
 		}
 		if (imported.images.size)
@@ -359,6 +386,7 @@ export async function importReading({ readingId, userId }: { readingId: string; 
 				author: imported.author,
 				publishedAt: imported.publishedAt,
 				sourceUrl,
+				partOfBook: partOfBook ?? null,
 				...(imported.source && { source: imported.source }),
 				wordCount: imported.sections.reduce((n, s) => n + s.wordCount, 0),
 			})

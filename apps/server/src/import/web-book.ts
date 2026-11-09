@@ -9,6 +9,8 @@ export const MAX_BOOK_PAGES = 200
 export type BookPage = { url: string; title: string; level: number; kind: SectionKind }
 
 export type WebBook = {
+	/** The book's contents page: the page itself, or the one a chapter page belongs to. */
+	contentsUrl: string
 	title: string
 	pages: BookPage[]
 	/** True when the page is the book's contents page; false when it is one of the book's chapters. */
@@ -116,26 +118,81 @@ function listsIn(document: Doc, base: string, title: string) {
 	return lists
 }
 
-/**
- * Finds the book a web page belongs to: a book whose chapters are each their own page, such as
- * one written with mdBook (The Rust Programming Language), Sphinx (the Python tutorial), O'Reilly's
- * HTMLBook, or by hand (Crafting Interpreters, Eloquent JavaScript). Reads the page's contents
- * list, or for mdBook the `toc.html` its sidebar loads, fetched with `fetchPage`. Returns null for
- * a page that is no part of a book: a list of at least three pages is needed.
- */
-export async function findBook(html: string, url: string, fetchPage: (url: string) => Promise<string>): Promise<WebBook | null> {
-	const { document } = parseHTML(html)
+/** Fetches a page's HTML, with the address it ended on after redirects. */
+export type FetchPage = (url: string) => Promise<{ url: string; html: string }>
+
+/** The book whose contents list a page holds, from the page or, for mdBook, from the toc.html its sidebar loads. */
+async function contentsOf(document: Doc, url: string, fetchPage: FetchPage) {
 	const title = bookTitle(document, url)
 	const lists = listsIn(document, url, title)
 	// mdBook 0.5 keeps the contents in toc.html, which every page loads into its sidebar.
 	const toc = document.querySelector('iframe.sidebar-iframe-outer, iframe[src$="toc.html"]')?.getAttribute('src')
 	const tocUrl = !lists.some((l) => l.length >= 3) && toc ? withoutHash(toc, url) : null
 	if (tocUrl) {
-		const tocHtml = await fetchPage(tocUrl).catch(() => null)
-		if (tocHtml) lists.push(...listsIn(parseHTML(tocHtml).document, tocUrl, title))
+		const page = await fetchPage(tocUrl).catch(() => null)
+		if (page) lists.push(...listsIn(parseHTML(page.html).document, page.url, title))
 	}
 	const pages = lists.reduce<BookPage[]>((best, l) => (l.length > best.length ? l : best), [])
-	if (pages.length < 3) return null
-	const self = withoutHash(url, url)
-	return { title, pages, isContents: !pages.some((p) => p.url === self) }
+	return { title, pages: pages.length >= 3 ? pages : [], tocUrl }
+}
+
+/** Links from a chapter page up towards its book: Up, Contents, the cover (Eloquent JavaScript), Sphinx's accesskey U. */
+const UP = 'link[rel~="up"], link[rel~="contents"], link[rel~="toc"], a[rel~="up"], a[rel~="contents"], a[accesskey="U"], a[accesskey="u"]'
+const UP_NAME = /^(up|contents|table of contents|toc|cover)$/i
+
+function upLinks(document: Doc, url: string): string[] {
+	const named = (Array.from(document.querySelectorAll('a[href]')) as El[]).filter((a) =>
+		[a.textContent, a.getAttribute('title'), a.getAttribute('aria-label')].some((name) => UP_NAME.test(squash(name?.replace(/[^\p{L}\s]/gu, '')))),
+	)
+	const origin = new URL(url).origin
+	const urls = [...(Array.from(document.querySelectorAll(UP)) as El[]), ...named].flatMap((el) => withoutHash(el.getAttribute('href') ?? '', url) ?? [])
+	return [...new Set(urls.filter((u) => new URL(u).origin === origin))]
+}
+
+/** Up links followed from a chapter page, and contents pages fetched on each hop, at most. */
+const HOPS = 2
+const PER_HOP = 3
+
+/**
+ * Finds the book a web page belongs to: a book whose chapters are each their own page, such as
+ * one written with mdBook (The Rust Programming Language), Sphinx (the Python tutorial), O'Reilly's
+ * HTMLBook, or by hand (Crafting Interpreters, Eloquent JavaScript). A list of at least three
+ * pages is needed. On a contents page, reads its list. On a chapter page, finds the contents page
+ * that lists it: the folder mdBook's toc.html is in, or the page its Up or Contents link leads
+ * to, two links up at most, and the largest such book (Crafting Interpreters goes from a chapter
+ * to its part, which lists the part's chapters, then to the contents). Returns null for a page
+ * that is no part of a book.
+ */
+export async function findBook(html: string, url: string, fetchPage: FetchPage): Promise<WebBook | null> {
+	const fetched = new Map<string, ReturnType<FetchPage>>()
+	const fetchOnce: FetchPage = (u) => {
+		if (!fetched.has(u)) fetched.set(u, fetchPage(u))
+		return fetched.get(u)!
+	}
+	const self = withoutHash(url, url)!
+	const lists = (pages: BookPage[], u: string) => pages.length > 0 && !pages.some((p) => p.url === u)
+	const { document } = parseHTML(html)
+	const here = await contentsOf(document, url, fetchOnce)
+	if (lists(here.pages, self)) return { contentsUrl: self, title: here.title, pages: here.pages, isContents: true }
+
+	let candidates = [...(here.tocUrl && here.pages.length ? [new URL('./', here.tocUrl).href] : []), ...upLinks(document, url)]
+	const tried = new Set([self])
+	// A part's own list of its chapters (Crafting Interpreters) is a book too; the largest one wins.
+	let found: WebBook | null = null
+	for (let hop = 0; hop < HOPS && candidates.length; hop++) {
+		const next: string[] = []
+		for (const candidate of candidates.filter((c) => !tried.has(c)).slice(0, PER_HOP)) {
+			tried.add(candidate)
+			const page = await fetchOnce(candidate).catch(() => null)
+			if (!page) continue
+			const doc = parseHTML(page.html).document
+			const there = await contentsOf(doc, page.url, fetchOnce)
+			const contentsUrl = withoutHash(page.url, page.url)!
+			if (lists(there.pages, contentsUrl) && there.pages.some((p) => p.url === self) && there.pages.length > (found?.pages.length ?? 0))
+				found = { contentsUrl, title: there.title, pages: there.pages, isContents: false }
+			next.push(...upLinks(doc, page.url))
+		}
+		candidates = next
+	}
+	return found
 }

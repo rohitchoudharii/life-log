@@ -4,12 +4,26 @@ import { parseRobots } from './robots'
 import { findBook } from './web-book'
 
 const saved = (name: string) => readFileSync(new URL(`fixtures/${name}`, import.meta.url), 'utf8')
-/** The Rust Book's pages load their contents from toc.html; no other page is fetched. */
-const fetchToc = async (url: string) => {
-	if (url !== 'https://doc.rust-lang.org/book/toc.html') throw new Error(`unexpected fetch of ${url}`)
-	return saved('rust-book-toc.html')
+/** The saved pages a test may fetch, by address; any other fetch fails as a page that doesn't exist. */
+const SITE: Record<string, string> = {
+	'https://doc.rust-lang.org/book/toc.html': 'rust-book-toc.html',
+	'https://doc.rust-lang.org/book/': 'rust-book-index.html',
+	'https://craftinginterpreters.com/a-tree-walk-interpreter.html': 'ci-tree-walk.html',
+	'https://craftinginterpreters.com/contents.html': 'ci-contents.html',
+	'https://eloquentjavascript.net/index.html': 'ejs-index.html',
+	'https://docs.python.org/3/tutorial/index.html': 'python-tutorial-index.html',
 }
-const find = (name: string, url: string) => findBook(saved(name), url, fetchToc)
+let fetches: string[] = []
+const fetchSaved = async (url: string) => {
+	fetches.push(url)
+	const name = SITE[url]
+	if (!name) throw new Error(`404 ${url}`)
+	return { url, html: saved(name) }
+}
+const find = (name: string, url: string) => {
+	fetches = []
+	return findBook(saved(name), url, fetchSaved)
+}
 
 describe('findBook on contents pages', () => {
 	it('Crafting Interpreters: parts with their chapters nested, without the front matter or the design notes', async () => {
@@ -64,16 +78,33 @@ describe('findBook on contents pages', () => {
 	})
 })
 
-describe('findBook on other pages', () => {
-	it("knows a chapter of an mdBook book is part of it, not its contents", async () => {
-		const book = await find('rust-ch04-01.html', 'https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html')
-		expect(book?.isContents).toBe(false)
+describe('findBook on chapter pages', () => {
+	it('finds the contents page each chapter leads to, and lists the chapter in it', async () => {
+		for (const [name, url, contentsUrl, title] of [
+			// mdBook: the folder its toc.html is in.
+			['rust-ch04-01.html', 'https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html', 'https://doc.rust-lang.org/book/', 'The Rust Programming Language'],
+			// Up to its part, then Up again to the contents.
+			['ci-scanning.html', 'https://craftinginterpreters.com/scanning.html', 'https://craftinginterpreters.com/contents.html', 'Crafting Interpreters'],
+			// The "cover" link.
+			['ejs-02.html', 'https://eloquentjavascript.net/02_program_structure.html', 'https://eloquentjavascript.net/index.html', 'Eloquent JavaScript'],
+			// Sphinx's accesskey U.
+			['python-classes.html', 'https://docs.python.org/3/tutorial/classes.html', 'https://docs.python.org/3/tutorial/index.html', 'The Python Tutorial'],
+		] as const) {
+			const book = await find(name, url)
+			expect(book, name).toMatchObject({ contentsUrl, title, isContents: false })
+			expect(book!.pages.some((p) => p.url === url), name).toBe(true)
+		}
 	})
 
-	it('finds no book in a chapter with no contents list, a blog post, MDN or Wikipedia', async () => {
+	it('fetches each page once at most, and the Crafting Interpreters chapter only its part and the contents', async () => {
+		await find('ci-scanning.html', 'https://craftinginterpreters.com/scanning.html')
+		expect(fetches).toEqual(['https://craftinginterpreters.com/a-tree-walk-interpreter.html', 'https://craftinginterpreters.com/contents.html'])
+	})
+})
+
+describe('findBook on other pages', () => {
+	it('finds no book in a blog post, MDN or Wikipedia', async () => {
 		for (const [name, url] of [
-			['ci-scanning.html', 'https://craftinginterpreters.com/scanning.html'],
-			['ejs-02.html', 'https://eloquentjavascript.net/02_program_structure.html'],
 			['gds-blog-post.html', 'https://gds.blog.gov.uk/2026/10/19/opening-gov-uk-wallet-sandbox-to-digital-verification-services/'],
 			['mdn-execution-model.html', 'https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Execution_model'],
 			['wikipedia-spaced-repetition.html', 'https://en.wikipedia.org/wiki/Spaced_repetition'],

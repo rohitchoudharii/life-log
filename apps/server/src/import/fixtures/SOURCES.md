@@ -12,6 +12,8 @@ Saved copies of real pages and books, kept unchanged so the import tests read wh
 | `ci-scanning.html` | https://craftinginterpreters.com/scanning.html, *Crafting Interpreters* by Robert Nystrom | CC BY-NC-ND 4.0 |
 | `rust-ch04-01.html` | https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html, *The Rust Programming Language* | MIT or Apache 2.0 |
 | `ci-contents.html` | https://craftinginterpreters.com/contents.html, *Crafting Interpreters* by Robert Nystrom | CC BY-NC-ND 4.0 |
+| `ci-tree-walk.html` | https://craftinginterpreters.com/a-tree-walk-interpreter.html, *Crafting Interpreters* by Robert Nystrom | CC BY-NC-ND 4.0 |
+| `python-classes.html` | https://docs.python.org/3/tutorial/classes.html, Python Software Foundation | PSF License Version 2 |
 | `ejs-index.html` | https://eloquentjavascript.net/, *Eloquent JavaScript* by Marijn Haverbeke | CC BY-NC 3.0 |
 | `python-tutorial-index.html` | https://docs.python.org/3/tutorial/index.html, Python Software Foundation | PSF License Version 2 |
 | `rust-book-index.html`, `rust-book-toc.html` | https://doc.rust-lang.org/book/ and its `toc.html`, *The Rust Programming Language* | MIT or Apache 2.0 |

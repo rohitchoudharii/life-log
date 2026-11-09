@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { ORPCError } from '@orpc/server'
 import { and, asc, desc, eq, isNull, or, type SQL, sql } from 'drizzle-orm'
 import { asUser, type Tx } from '../db/client'
-import { aiKeys, readingFiles, readings, sections } from '../db/schema'
+import { aiKeys, media, readingFiles, readings, sections } from '../db/schema'
 import { bookKind } from '../import/book'
 import { NOT_A_BOOK, NOT_A_LINK, normaliseUrl } from '../import/reading'
 import { enqueueChapterHeadings, enqueueImport } from '../jobs'
@@ -29,6 +29,7 @@ const toReading = ({ reading: r, sectionCount, progress }: Row) => ({
 	wordCount: r.wordCount,
 	sectionCount,
 	progress: r.status === 'importing' ? progress : null,
+	partOfBook: r.partOfBook && { title: r.partOfBook.title, pages: r.partOfBook.pages },
 	createdAt: r.createdAt,
 })
 
@@ -112,6 +113,28 @@ export const readingsRoutes = {
 					data,
 				}),
 		)
+	}),
+
+	addBook: authed.readings.addBook.handler(async ({ input, context }) => {
+		const userId = context.user.id
+		const chapter = await asUser(userId, (tx) => live(tx, input.id))
+		const offer = chapter.reading.partOfBook
+		// A retry after the chapter already opens the book: `live` followed it there.
+		if (!offer && chapter.reading.source === 'web_book') return toReading(chapter)
+		if (!offer) throw new ORPCError('BAD_REQUEST', { message: "This reading isn't part of a book Life Log Club can add." })
+		const url = offer.contentsUrl
+		const book = await addReading(
+			userId,
+			{ id: input.bookId, userId, title: offer.title, source: 'url', requestedUrl: url },
+			or(eq(readings.requestedUrl, url), and(eq(readings.source, 'web_book'), eq(readings.sourceUrl, url)))!,
+		)
+		// The chapter becomes the book: its own copy goes, and its link opens the book from now on.
+		await asUser(userId, async (tx) => {
+			await tx.delete(sections).where(eq(sections.readingId, chapter.reading.id))
+			await tx.delete(media).where(eq(media.readingId, chapter.reading.id))
+			await tx.update(readings).set({ mergedInto: book.id, partOfBook: null }).where(eq(readings.id, chapter.reading.id))
+		})
+		return book
 	}),
 
 	list: authed.readings.list.handler(({ context }) =>

@@ -41,6 +41,7 @@ function useAddReading() {
 				wordCount: 0,
 				sectionCount: 0,
 				progress: null,
+				partOfBook: null,
 				createdAt: new Date(),
 			}
 			const before = queryClient.getQueryData<Reading[]>(listKey)
@@ -85,6 +86,7 @@ export function useAddFile() {
 				wordCount: 0,
 				sectionCount: 0,
 				progress: null,
+				partOfBook: null,
 				createdAt: new Date(),
 			}
 			queryClient.setQueryData<Reading[]>(listKey, (list) => [placeholder, ...(list ?? [])])
@@ -207,18 +209,32 @@ function useRemoveReading() {
 	})
 }
 
+/**
+ * Adds the whole web book a chapter reading is part of. The chapter's card turns into the book's,
+ * importing; a book the member already has takes the chapter's place.
+ */
+function useAddBook() {
+	const queryClient = useQueryClient()
+	const toast = useToast()
+	return useMutation({
+		mutationFn: (chapter: Reading) => client.readings.addBook({ id: chapter.id, bookId: crypto.randomUUID() }),
+		onSuccess: (book) => {
+			if (book.status === 'ready') toast({ text: 'You already have this book.' })
+		},
+		onError: (error) => toast({ text: errorMessage(error) }),
+		onSettled: () => queryClient.invalidateQueries({ queryKey: listKey }),
+	})
+}
+
 function ReadingItem({ reading }: { reading: Reading }) {
 	const add = useAddReading()
 	const remove = useRemoveReading()
+	const addBook = useAddBook()
 	const quiet = 'rounded-lg border border-world-line px-3 py-1.5 font-sans text-sm transition hover:bg-world active:scale-[0.97]'
 	if (reading.status === 'ready')
 		return (
-			<li data-testid="reading">
-				<Link
-					to="/mind/read/$readingId"
-					params={{ readingId: reading.id }}
-					className="block rounded-2xl border border-world-line bg-world-card p-4 transition hover:border-world-accent"
-				>
+			<li data-testid="reading" className="rounded-2xl border border-world-line bg-world-card transition hover:border-world-accent">
+				<Link to="/mind/read/$readingId" params={{ readingId: reading.id }} className="block p-4">
 					<p className="text-lg leading-snug">{reading.title}</p>
 					<p className="mt-1 font-sans text-sm text-world-muted">
 						{[reading.author, host(reading.sourceUrl), `${reading.sectionCount} ${reading.sectionCount === 1 ? 'section' : 'sections'}`, minutes(reading.wordCount)]
@@ -226,6 +242,16 @@ function ReadingItem({ reading }: { reading: Reading }) {
 							.join(' · ')}
 					</p>
 				</Link>
+				{reading.partOfBook && (
+					<div className="flex flex-wrap items-center justify-between gap-2 border-t border-world-line px-4 py-3 font-sans text-sm">
+						<p className="text-world-muted">
+							Part of <i>{reading.partOfBook.title}</i> · {reading.partOfBook.pages} pages
+						</p>
+						<button type="button" className={quiet} disabled={addBook.isPending} onClick={() => addBook.mutate(reading)}>
+							{addBook.isPending ? 'Adding…' : 'Add the whole book'}
+						</button>
+					</div>
+				)}
 			</li>
 		)
 	return (

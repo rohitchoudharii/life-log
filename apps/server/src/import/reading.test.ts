@@ -361,7 +361,7 @@ describe('web books (issue #3)', () => {
 		for (let n = 1; n <= count; n++)
 			if (!missing.includes(n))
 				site.serve(`${dir}/ch${n}.html`, {
-					body: `<html><head><title>Chapter ${n} · Ring Book</title></head><body><article><h1>Chapter ${n}</h1><p>Opening of chapter ${n}.</p><h2>Idea ${n}</h2>${words(n)}</article></body></html>`,
+					body: `<html><head><title>Chapter ${n} · Ring Book</title></head><body><nav><a href="./">Contents</a></nav><article><h1>Chapter ${n}</h1><p>Opening of chapter ${n}.</p><h2>Idea ${n}</h2>${words(n)}</article></body></html>`,
 					headers: html,
 				})
 		return site.serve(`${dir}/`, {
@@ -426,6 +426,19 @@ describe('web books (issue #3)', () => {
 			['/long-book/ch22.html', 1],
 			['/long-book/ch23.html', 1],
 		])
+	})
+
+	it('adds a chapter link as an article that offers its book, and a chapter of a book the member has opens the book', async () => {
+		const userId = await member()
+		const contents = webBook('/offer-book', 3)
+		const chapter = await load(userId, await add(userId, `${TEST_SITE}/offer-book/ch2.html`))
+		expect(chapter.reading).toMatchObject({ status: 'ready', source: 'url', partOfBook: { contentsUrl: contents, title: 'Ring Book', pages: 3 } })
+		expect(chapter.sections.map((s) => s.title)).toEqual(['Chapter 2', 'Idea 2'])
+		const book = await add(userId, contents)
+		expect((await load(userId, book)).reading).toMatchObject({ status: 'ready', source: 'web_book', partOfBook: null })
+		const another = await load(userId, await add(userId, `${TEST_SITE}/offer-book/ch3.html`))
+		expect(another.reading).toMatchObject({ status: 'ready', mergedInto: book })
+		expect(another.sections).toEqual([])
 	})
 
 	it("refuses a book whose site asks apps not to copy it, and a book longer than 200 pages", async () => {

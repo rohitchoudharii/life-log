@@ -64,6 +64,13 @@
       "when": 1794208275817,
       "tag": "0008_web_books",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794211323146,
+      "tag": "0009_part_of_book",
+      "breakpoints": true
     }
   ]
 }

@@ -200,6 +200,11 @@ export const readings = pgTable(
 		error: text(),
 		wordCount: integer().notNull().default(0),
 		/**
+		 * For a chapter page of a web book: the book it belongs to, which the member can add whole.
+		 * `pages` is how many pages its contents list names.
+		 */
+		partOfBook: jsonb().$type<{ contentsUrl: string; title: string; pages: number }>(),
+		/**
 		 * Set when this link turned out to be a page the member already has under another link.
 		 * The reading is then hidden, and opening it opens the one it points at.
 		 */

@@ -247,6 +247,25 @@ test("a link to a web book's contents page adds every chapter page, a batch at a
 	await expect(contents.getByRole('button', { name: '22. What to read next' })).toBeVisible()
 })
 
+test('a chapter link adds that chapter, and its card offers the whole book', async ({ page }) => {
+	await joinAs(page)
+	await page.goto('/mind')
+	const chapter = `${FAKE_SITE}/books/rings/3.html`
+	await addLink(page, chapter)
+	await expect(readings(page).getByRole('link', { name: /3\. Placing servers/ })).toBeVisible({ timeout: 15_000 })
+	await expect(readings(page)).toContainText('Part of The Ring Book · 22 pages')
+	await readings(page).getByRole('button', { name: 'Add the whole book' }).click()
+	// The chapter's card becomes the book's.
+	await expect(readings(page)).toHaveCount(1)
+	await expect(readings(page)).toContainText(/Importing… \d+ of 22 pages/, { timeout: 15_000 })
+	await expect(readings(page).getByRole('link', { name: /The Ring Book/ })).toBeVisible({ timeout: 30_000 })
+	await expect(readings(page)).not.toContainText('Add the whole book')
+	// The chapter's link now opens the book.
+	await addLink(page, chapter)
+	await expect(page.getByRole('status')).toContainText('You already have this reading.')
+	await expect(page.getByRole('heading', { level: 1, name: 'The Ring Book' })).toBeVisible()
+})
+
 test("a book's images are stored and shown in the reader", async ({ page, isMobile }) => {
 	await joinAs(page)
 	await page.goto('/mind')

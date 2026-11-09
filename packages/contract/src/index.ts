@@ -63,6 +63,8 @@ export const Reading = z.object({
 	sectionCount: z.int(),
 	/** While a web book is imported: how many of its pages are done. Null for everything else. */
 	progress: z.object({ done: z.int(), total: z.int() }).nullable(),
+	/** For a chapter page of a web book: the book it belongs to, which `addBook` adds whole. */
+	partOfBook: z.object({ title: z.string(), pages: z.int() }).nullable(),
 	createdAt: z.date(),
 })
 export type Reading = z.infer<typeof Reading>
@@ -200,6 +202,12 @@ export const contract = {
 		 * type comes from its bytes, not its name. The same file added twice is one reading.
 		 */
 		addFile: oc.input(z.object({ id: z.uuid(), file: z.file().max(MAX_FILE_BYTES, FILE_TOO_LARGE) })).output(Reading),
+		/**
+		 * Adds the whole web book a chapter reading (`id`) is part of, as a new reading the client
+		 * picks the id of (`bookId`), imported like `add`. The chapter then opens the book. A book
+		 * the member already has is returned instead, like `add`.
+		 */
+		addBook: oc.input(z.object({ id: z.uuid(), bookId: z.uuid() })).output(Reading),
 		/** The member's readings, newest first. */
 		list: oc.output(z.array(Reading)),
 		/**
