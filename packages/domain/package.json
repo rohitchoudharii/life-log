@@ -11,6 +11,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "ts-fsrs": "^6.0.0",
     "zod": "^4.6.7"
   }
 }

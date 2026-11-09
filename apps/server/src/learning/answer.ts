@@ -1,6 +1,7 @@
 import type { Answer, AnswerResult, REPORT_REASONS, Reveal } from '@life-log-club/contract'
 import {
 	answerIdea,
+	defaultScheduler,
 	type Grade,
 	gradeResponse,
 	gradeWritten,
@@ -152,6 +153,9 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
 			reveal,
 			gradedBy,
 			prev,
+			// The rules that made this decision, and their chance of recall just before it.
+			scheduler: defaultScheduler.id,
+			predictedRecall: locked!.startedAt ? defaultScheduler.retrievability(locked!.state, now) : null,
 			reviewedAt: now,
 			nextDueAt: dueAt,
 		})
