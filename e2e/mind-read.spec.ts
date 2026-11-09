@@ -576,3 +576,119 @@ test('Review without a key: self-rated cards, 20 at a time with Keep going, filt
 	await expect(page).toHaveURL('/mind')
 	await expect(page.getByTestId('mind-due')).toHaveText('0')
 })
+
+test('without a key, the sample reading runs the whole loop: dump, Compare with the text, own marks, self-checked answers, results, then Review', async ({ page }, testInfo) => {
+	await joinAs(page, 'Rohit', { sample: true })
+	await page.goto('/mind')
+	const sample = page.getByTestId('reading').filter({ hasText: 'How to remember what you read' })
+	await expect(sample).toContainText('3 sections')
+	await expect(page.getByText('Add your own AI key in Settings to get questions on your readings.')).toBeVisible()
+	await proof(page, testInfo, 'sample-on-mind')
+	// It is added once: another visit adds no second copy.
+	await page.reload()
+	await expect(page.getByTestId('reading')).toHaveCount(1)
+
+	await sample.getByRole('link').first().click()
+	await expect(sectionTitle(page)).toHaveText('Rereading feels like learning')
+	const readingId = new URL(page.url()).pathname.split('/').at(-1)!
+	const [section] = await sectionIds(readingId)
+	const ideas = await ideasOf(section!)
+	expect(ideas.map((i) => i.started_at)).toEqual([null, null, null])
+	await page.getByRole('button', { name: 'Recall this section' }).click()
+	await page.getByLabel('What you remember').fill('Rereading feels like learning because familiar text is easy, but that is recognition.')
+	await page.getByRole('button', { name: 'Done' }).click()
+	const attemptId = attemptIdOf(page)
+
+	// No key: the member compares the dump with the text and marks each idea, Missed until changed.
+	await expect(page.getByRole('heading', { name: 'Compare with the text' })).toBeVisible({ timeout: 15_000 })
+	await expect(page.getByRole('region', { name: 'What you wrote' })).toContainText('familiar text is easy, but that is recognition')
+	await expect(page.getByRole('region', { name: 'The text' })).toContainText('Familiar text is easy to process')
+	const marks = page.getByRole('list', { name: 'Key ideas' }).locator(':scope > li')
+	await expect(marks).toHaveCount(3)
+	for (let k = 0; k < 3; k++) await expect(marks.nth(k).getByRole('radio', { name: 'Missed' })).toHaveAttribute('aria-checked', 'true')
+	await marks.nth(0).getByRole('radio', { name: 'Got it' }).click()
+	await marks.nth(2).getByRole('radio', { name: 'Partly' }).click()
+	await proof(page, testInfo, 'compare-with-the-text')
+	await page.getByRole('button', { name: 'Go on to the questions' }).click()
+
+	// The missed idea first, through its cue, checked against the idea itself.
+	await expect(page.getByText('Question 1 of 3')).toBeVisible()
+	await expect(page.getByTestId('question')).toHaveText('Which kind of remembering does a meeting or an exam ask of you?')
+	await page.getByLabel('Your answer').fill('Recall, not recognition.')
+	await page.getByRole('button', { name: 'Sure', exact: true }).click()
+	const checklist = page.getByTestId('checklist')
+	await expect(checklist.getByRole('group', { name: 'Did your answer say this?' })).toBeVisible()
+	await expect(checklist).not.toContainText('Model answer')
+	await proof(page, testInfo, 'self-check-cue')
+	await checklist.getByRole('checkbox', { name: 'Recognising something is not the same as recalling it, and everyday life asks for recall.' }).check()
+	await page.getByRole('button', { name: 'Done' }).click()
+
+	// The vague idea: its lowest stored question, with the model answer and two points to tick. One is made.
+	await expect(page.getByText('Question 2 of 3')).toBeVisible()
+	await expect(page.getByTestId('question')).toHaveText('Why does trying to recall a text, which feels slow and full of gaps, beat rereading it?')
+	await page.getByLabel('Your answer').fill('Recalling makes the memory stronger.')
+	await page.getByRole('button', { name: 'Think so' }).click()
+	await expect(checklist).toContainText('Model answer')
+	await expect(checklist.getByRole('checkbox')).toHaveCount(2)
+	await checklist.getByRole('checkbox', { name: 'Retrieving an idea strengthens the memory of it' }).check()
+	await proof(page, testInfo, 'self-check-points')
+	await page.getByRole('button', { name: 'Done' }).click()
+
+	// The covered idea: its question, both points made.
+	await expect(page.getByText('Question 3 of 3')).toBeVisible()
+	await expect(page.getByTestId('question')).toHaveText('Why can a chapter you have read twice still be gone a week later, even though it felt familiar?')
+	await page.getByLabel('Your answer').fill('It felt easy and familiar, but I only recognised it; I could not recall it.')
+	await page.getByRole('button', { name: 'Think so' }).click()
+	await expect(checklist.getByRole('checkbox')).toHaveCount(2)
+	for (const box of await checklist.getByRole('checkbox').all()) await box.check()
+	await page.getByRole('button', { name: 'Done' }).click()
+
+	const map = page.getByRole('list', { name: 'Recall map' })
+	await expect(map.locator(':scope > li')).toHaveCount(3)
+	await expect(page.getByText('You brought back 1 of 3 key ideas, and answered 2 of 3 questions right.')).toBeVisible()
+	await expect(map.locator(':scope > li').nth(2)).toContainText('Vague')
+	await expect(map.locator(':scope > li').nth(2)).toContainText('Not quite')
+	await expect(map.locator(':scope > li').nth(2)).toContainText('MissedThe effort is a desirable difficulty, not a sign of failure')
+	await proof(page, testInfo, 'sample-results')
+	const [attempt] = await sql<{ graded_by: string; results: { status: string }[] }>('select graded_by, results from recall_attempts where id = $1', [attemptId])
+	expect(attempt).toEqual({ graded_by: 'self', results: [expect.objectContaining({ status: 'covered' }), expect.objectContaining({ status: 'missing' }), expect.objectContaining({ status: 'vague' })] })
+	expect(await sql('select ask, correct from review_log where attempt_id = $1 and graded_by = $2 order by reviewed_at', [attemptId, 'self'])).toEqual([
+		{ ask: 'cue', correct: true },
+		{ ask: 'question', correct: false },
+		{ ask: 'question', correct: true },
+	])
+	const covered = ideas[0]!.id
+	expect(Math.abs(minutesUntil((await cardNow(covered)).due_at) - DAY_MINUTES)).toBeLessThanOrEqual(1)
+
+	// A day later, Review brings the covered idea back as a self-rated card; right puts it 2 days out.
+	await makeDue(covered)
+	await page.goto('/mind/review')
+	await expect(page.getByText('Card 1 of 1')).toBeVisible()
+	await expect(page.getByTestId('source')).toHaveText('How to remember what you read · Rereading feels like learning')
+	await page.getByRole('button', { name: 'Show answer' }).click()
+	await expect(page.getByTestId('answer')).toContainText(ideas[0]!.answer)
+	await proof(page, testInfo, 'sample-review')
+	await page.getByRole('button', { name: 'Got it' }).click()
+	await expect(page.getByText('You answered 1 of 1 right.')).toBeVisible()
+	expect(Math.abs(minutesUntil((await cardNow(covered)).due_at) - 2 * DAY_MINUTES)).toBeLessThanOrEqual(1)
+})
+
+test('without a key, a reading with no key ideas can only be compared with the text, and Done goes on reading', async ({ page }) => {
+	await joinAs(page)
+	await page.goto('/mind')
+	await addLink(page, `${FAKE_SITE}/articles/execution-model`)
+	const reading = page.getByTestId('reading').first()
+	await expect(reading.getByText(/sections/)).toBeVisible({ timeout: 15_000 })
+	await reading.getByRole('link').first().click()
+	const first = await sectionTitle(page).innerText()
+	await page.getByRole('button', { name: 'Recall this section' }).click()
+	await page.getByLabel('What you remember').fill('Something about the event loop.')
+	await page.getByRole('button', { name: 'Done' }).click()
+	await expect(page.getByRole('heading', { name: 'Compare with the text' })).toBeVisible({ timeout: 15_000 })
+	await expect(page.getByText('There are no key ideas to mark in this section. Add your own AI key in Settings to have them written.')).toBeVisible()
+	await expect(page.getByRole('region', { name: 'The text' }).getByRole('heading', { name: first })).toBeVisible()
+	await expect(page.getByRole('list', { name: 'Key ideas' })).toHaveCount(0)
+	await page.getByRole('button', { name: 'Done' }).click()
+	await expect(page).toHaveURL(/\/mind\/read\//)
+	await expect(sectionTitle(page)).not.toHaveText(first)
+})

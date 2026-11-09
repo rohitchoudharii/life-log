@@ -270,7 +270,7 @@ export const readings = pgTable(
 		 * a book whose chapters are each their own page; `web_capture` a page the extension saved
 		 * from the member's own browser.
 		 */
-		source: text().$type<'url' | 'pdf_url' | 'web_book' | 'web_capture' | 'epub' | 'pdf_upload' | 'paste'>().notNull(),
+		source: text().$type<'url' | 'pdf_url' | 'web_book' | 'web_capture' | 'epub' | 'pdf_upload' | 'paste' | 'sample'>().notNull(),
 		/** The link as the member added it, normalised. The same link always finds the same reading. */
 		requestedUrl: text(),
 		/** The page's canonical address, or where the link ended after redirects. */
@@ -528,6 +528,8 @@ export const preferences = pgTable(
 		/** Background AI work pauses once this month's estimated spend reaches it. */
 		aiMonthlyBudgetUsd: numeric({ precision: 8, scale: 2, mode: 'number' }).notNull().default(5),
 		reviewBatch: integer().notNull().default(20),
+		/** When the sample reading was added, so it is added once and never comes back after removal. */
+		sampleAddedAt: timestamp({ withTimezone: true }),
 		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [ownRows(t.userId)],

@@ -127,6 +127,13 @@
       "when": 1794245773557,
       "tag": "0017_review_log_prev",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794250963002,
+      "tag": "0018_sample_reading",
+      "breakpoints": true
     }
   ]
 }

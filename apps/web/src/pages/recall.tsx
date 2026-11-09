@@ -1,4 +1,5 @@
 import type { AnswerResult, RecallAttempt } from '@life-log-club/contract'
+import type { PointStatus } from '@life-log-club/domain'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -6,6 +7,7 @@ import { quiet } from '../books'
 import { backIn, primary, QuestionForm, RevealTile } from '../answer'
 import { client, errorMessage, orpc } from '../rpc'
 import { ErrorText } from '../ui'
+import { SectionText } from './reader'
 
 const MARK: Record<'covered' | 'vague' | 'missing', { label: string; className: string }> = {
 	covered: { label: 'Covered', className: 'bg-path/15 text-path' },
@@ -75,6 +77,7 @@ function Questions({ attempt }: { attempt: RecallAttempt }) {
 				item={next}
 				mode="recall"
 				attemptId={attempt.id}
+				selfCheck={attempt.selfCheck}
 				onAnswered={() => queryClient.invalidateQueries({ queryKey: orpc.recall.get.queryKey({ input: { id: attempt.id } }) })}
 			/>
 		</div>
@@ -121,14 +124,105 @@ function Retry({ attempt, onDone }: { attempt: RecallAttempt; onDone: () => void
 			<p className="font-sans text-sm text-world-muted">
 				Retry {items.indexOf(next) + 1} of {items.length} · practice, your schedule stays as it is
 			</p>
-			<QuestionForm key={next.cardId} item={next} mode="practice" attemptId={attempt.id} onAnswered={(result, { given }) => setShown({ result, given, cardId: next.cardId })} />
+			<QuestionForm key={next.cardId} item={next} mode="practice" attemptId={attempt.id} selfCheck={attempt.selfCheck} onAnswered={(result, { given }) => setShown({ result, given, cardId: next.cardId })} />
+		</div>
+	)
+}
+
+/** Done: back to the reader, at the section after the ones recalled. */
+function useBackToReading(attempt: RecallAttempt) {
+	const navigate = useNavigate()
+	return async () => {
+		if (attempt.nextSectionId) await client.readings.savePosition({ id: attempt.readingId, sectionId: attempt.nextSectionId, block: 0 })
+		await navigate({ to: '/mind/read/$readingId', params: { readingId: attempt.readingId } })
+	}
+}
+
+const SELF_MARKS: { status: PointStatus; label: string }[] = [
+	{ status: 'covered', label: 'Got it' },
+	{ status: 'vague', label: 'Partly' },
+	{ status: 'missing', label: 'Missed' },
+]
+
+/**
+ * Without an AI key: the dump beside the section's text, then one mark per key idea (Got it,
+ * Partly or Missed, Missed until changed), which leads to the questions as AI grading does. A
+ * section with no key ideas can only be compared.
+ */
+function SelfMark({ attempt }: { attempt: RecallAttempt }) {
+	const queryClient = useQueryClient()
+	const done = useBackToReading(attempt)
+	const ideas = attempt.toMark ?? []
+	const [marks, setMarks] = useState<Record<string, PointStatus>>({})
+	const send = useMutation({
+		mutationFn: () => client.recall.selfMark({ id: attempt.id, marks: ideas.map((i) => ({ cardId: i.cardId, status: marks[i.cardId] ?? 'missing' })) }),
+		onSuccess: (next) => queryClient.setQueryData(orpc.recall.get.queryKey({ input: { id: attempt.id } }), next),
+	})
+	return (
+		<div className="grid gap-6">
+			<div className="grid gap-1">
+				<h2 className="text-xl font-semibold">Compare with the text</h2>
+				<p className="font-sans text-sm text-world-muted">
+					{ideas.length
+						? 'Look back at the section, then mark each key idea. Be strict: naming a term without saying what it means is Partly at best.'
+						: 'There are no key ideas to mark in this section. Add your own AI key in Settings to have them written.'}
+				</p>
+			</div>
+			<div className="grid items-start gap-4 md:grid-cols-2">
+				<section aria-label="What you wrote" className="grid content-start gap-2 rounded-2xl border border-world-line bg-world-card p-4">
+					<h3 className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">What you wrote</h3>
+					<p className="whitespace-pre-wrap">{attempt.text || 'Nothing came to mind.'}</p>
+				</section>
+				<section aria-label="The text" className="grid max-h-[32rem] content-start gap-6 overflow-y-auto rounded-2xl border border-world-line p-4">
+					{attempt.sections.map((s) => (
+						<SectionText key={s.id} id={s.id} />
+					))}
+				</section>
+			</div>
+			{ideas.length > 0 && (
+				<ol aria-label="Key ideas" className="grid gap-3">
+					{ideas.map((idea) => {
+						const current = marks[idea.cardId] ?? 'missing'
+						return (
+							<li key={idea.cardId} className="grid gap-3 rounded-2xl border border-world-line bg-world-card p-4">
+								<p className="text-lg leading-snug">{idea.idea}</p>
+								<div role="radiogroup" aria-label="Your mark" className="flex flex-wrap gap-2">
+									{SELF_MARKS.map((m) => (
+										<button
+											key={m.status}
+											type="button"
+											role="radio"
+											aria-checked={current === m.status}
+											onClick={() => setMarks((all) => ({ ...all, [idea.cardId]: m.status }))}
+											className={`rounded-full border px-3 py-1 font-sans text-sm font-medium ${current === m.status ? `border-transparent font-semibold ${MARK[m.status].className}` : 'border-world-line text-world-muted hover:bg-world'}`}
+										>
+											{m.label}
+										</button>
+									))}
+								</div>
+							</li>
+						)
+					})}
+				</ol>
+			)}
+			<div className="flex flex-wrap gap-3">
+				{ideas.length > 0 ? (
+					<button type="button" className={primary} disabled={send.isPending} onClick={() => send.mutate()}>
+						Go on to the questions
+					</button>
+				) : (
+					<button type="button" className={primary} onClick={done}>
+						Done
+					</button>
+				)}
+			</div>
+			<ErrorText>{send.error && errorMessage(send.error)}</ErrorText>
 		</div>
 	)
 }
 
 /** The recall map: every key idea, how the dump covered it, its quote and when it comes back. */
 function Results({ attempt }: { attempt: RecallAttempt }) {
-	const navigate = useNavigate()
 	const queryClient = useQueryClient()
 	const [retrying, setRetrying] = useState(false)
 	const ideas = attempt.ideas ?? []
@@ -137,11 +231,8 @@ function Results({ attempt }: { attempt: RecallAttempt }) {
 	// Sure but wrong first: the errors most worth fixing (hypercorrection).
 	const sureWrong = ideas.filter((i) => i.answer && !i.answer.correct && i.answer.confidence === 'sure')
 	const retryLeft = (attempt.retry ?? []).some((i) => !i.answered)
+	const done = useBackToReading(attempt)
 	if (retrying) return <Retry attempt={attempt} onDone={() => setRetrying(false)} />
-	const done = async () => {
-		if (attempt.nextSectionId) await client.readings.savePosition({ id: attempt.readingId, sectionId: attempt.nextSectionId, block: 0 })
-		await navigate({ to: '/mind/read/$readingId', params: { readingId: attempt.readingId } })
-	}
 	return (
 		<div className="grid gap-6">
 			<div className="grid gap-1">
@@ -232,15 +323,7 @@ export function Recall({ attemptId }: { attemptId: string }) {
 				</p>
 			)}
 			{a.status === 'graded' && (a.ideas ? <Results attempt={a} /> : <Questions attempt={a} />)}
-			{a.status === 'self' && (
-				<p role="status" className="text-lg">
-					Your recall is saved. Add your own AI key in{' '}
-					<Link to="/settings" className="underline underline-offset-2">
-						Settings
-					</Link>{' '}
-					to have it checked against the key ideas.
-				</p>
-			)}
+			{a.status === 'self' && <SelfMark attempt={a} />}
 			{a.status === 'failed' && (
 				<div className="grid gap-3">
 					<p role="alert">{a.feedback}</p>

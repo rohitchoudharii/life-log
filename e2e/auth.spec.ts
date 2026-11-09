@@ -108,6 +108,9 @@ test('a device unused for 30 days must sign in again, and one used within 30 day
 	await page.reload()
 	await expect(page.getByRole('heading', { name: 'Welcome, Rohit' })).toBeVisible()
 
+	// A device away for 30 days has nothing in flight. A request of this page still running would
+	// meet the aged session, and its answer would clear the cookie before the reload asks.
+	await page.waitForLoadState('networkidle')
 	await ageSessions(email, 31)
 	await page.reload()
 	await expect(page.getByText('You have been away from this device for 30 days, so sign in again.')).toBeVisible()

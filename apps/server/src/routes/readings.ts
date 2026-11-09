@@ -9,6 +9,7 @@ import { ExtractError } from '../import/extract'
 import { readPaste } from '../import/paste'
 import { NOT_A_BOOK, NOT_A_LINK, normaliseUrl, sectionRow } from '../import/reading'
 import { enqueueChapterHeadings, enqueueImport, enqueueWriteSection } from '../jobs'
+import { addSampleReading } from '../seed/sample-reading'
 import { putInBook } from './books'
 import { authed } from '../orpc'
 
@@ -263,6 +264,10 @@ export const readingsRoutes = {
 				}),
 		)
 	}),
+
+	addSample: authed.readings.addSample.handler(({ context }) =>
+		asUser(context.user.id, async (tx) => ({ added: await addSampleReading(tx, context.user.id) })),
+	),
 
 	addText: authed.readings.addText.handler(({ input, context }) => {
 		const userId = context.user.id

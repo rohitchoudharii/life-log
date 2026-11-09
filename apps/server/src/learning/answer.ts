@@ -105,8 +105,8 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
 		gradedBy = 'self'
 	} else {
 		response = input.response
-		const skipped = 'skipped' in input.response
-		gradedBy = skipped ? 'code' : 'ai'
+		// I don't know is graded in code, the learner's own check of the points by them, the rest by the judge.
+		gradedBy = 'skipped' in input.response ? 'code' : 'made' in input.response ? 'self' : 'ai'
 		try {
 			grade =
 				input.ask === 'cue'

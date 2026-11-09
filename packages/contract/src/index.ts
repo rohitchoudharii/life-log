@@ -67,7 +67,14 @@ export type Preferences = z.infer<typeof Preferences>
 const Rating = z.enum(['again', 'hard', 'good', 'easy'])
 const Confidence = z.enum(CONFIDENCES)
 /** A written answer, or I don't know. */
-const Written = z.union([z.object({ answer: z.string().trim().min(1, 'Write an answer, or choose I don’t know.').max(4000) }), z.object({ skipped: z.literal(true) })])
+const Written = z.union([
+	z.object({
+		answer: z.string().trim().min(1, 'Write an answer, or choose I don’t know.').max(4000),
+		/** Without an AI key: which of the checklist's points the learner made, in order. */
+		made: z.array(z.boolean()).max(6).optional(),
+	}),
+	z.object({ skipped: z.literal(true) }),
+])
 const answerOf = {
 	answerId: z.uuid(),
 	cardId: z.uuid(),
@@ -168,6 +175,16 @@ export const RecallAttempt = z.object({
 	retry: z.array(AskItem).nullable(),
 	/** The section after the last one recalled, where Done goes on reading; null at the end. */
 	nextSectionId: z.uuid().nullable(),
+	/**
+	 * The member has no AI key, so they check their answers themselves: each written answer
+	 * against the checklist from `review.checklist`.
+	 */
+	selfCheck: z.boolean(),
+	/**
+	 * While `self`: the key ideas the member marks against their dump with `recall.selfMark`, in
+	 * reading order. Empty when the sections have none; then the dump can only be compared.
+	 */
+	toMark: z.array(z.object({ cardId: z.uuid(), idea: z.string() })).nullable(),
 })
 export type RecallAttempt = z.infer<typeof RecallAttempt>
 
@@ -225,7 +242,7 @@ export const Reading = z.object({
 	 * `url` is an article from a link and `web_capture` one the extension saved from the member's
 	 * browser: the only kinds of reading a member's book can hold.
 	 */
-	source: z.enum(['url', 'pdf_url', 'web_book', 'web_capture', 'epub', 'pdf_upload', 'paste']),
+	source: z.enum(['url', 'pdf_url', 'web_book', 'web_capture', 'epub', 'pdf_upload', 'paste', 'sample']),
 	/** When the member reached the end of its last section. */
 	readAt: z.date().nullable(),
 	/** Where the member stopped reading, which opening the reading goes back to; null before they open it. */
@@ -409,6 +426,14 @@ export const contract = {
 		 * `good`, and the card's schedule is worked out again from the log as if it had been.
 		 */
 		override: oc.input(z.object({ answerId: z.uuid() })).output(AnswerResult),
+		/**
+		 * What a complete answer to a question (or to the card's cue, when `questionId` is null)
+		 * says, for a learner with no AI key to check their own written answer: the model answer
+		 * and the points to tick, in the order `made` takes them.
+		 */
+		checklist: oc
+			.input(z.object({ cardId: z.uuid(), questionId: z.uuid().nullable() }))
+			.output(z.object({ reference: z.string(), points: z.array(z.string()), quote: z.string().nullable() })),
 	},
 	questions: {
 		/**
@@ -431,6 +456,12 @@ export const contract = {
 		 * and comes back `ready`. The title is `title`, else the first heading, else the first
 		 * words. The client picks the id; a retry returns the same reading.
 		 */
+		/**
+		 * Adds the sample reading, "How to remember what you read", with its key ideas and
+		 * questions already written, the first time a member opens Mind. Never again after that,
+		 * even once it is removed. `added` says whether it was added now.
+		 */
+		addSample: oc.output(z.object({ added: z.boolean() })),
 		addText: oc
 			.input(
 				z.object({
@@ -569,6 +600,14 @@ export const contract = {
 		get: oc.input(EntryId).output(RecallAttempt),
 		/** Grades a failed attempt again. */
 		retry: oc.input(EntryId).output(RecallAttempt),
+		/**
+		 * Without an AI key: the member's own marks of each key idea against their dump. Ideas not
+		 * marked count as missed. The questions follow, as after AI grading. Marking again changes
+		 * nothing.
+		 */
+		selfMark: oc
+			.input(z.object({ id: z.uuid(), marks: z.array(z.object({ cardId: z.uuid(), status: z.enum(['covered', 'vague', 'missing']) })).max(200) }))
+			.output(RecallAttempt),
 	},
 	preferences: {
 		get: oc.output(Preferences),

@@ -1,13 +1,13 @@
 import type { EntryType } from '@life-log-club/domain'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import type { ReactNode } from 'react'
+import { type ReactNode, useEffect } from 'react'
 import { useLogEntry } from '../entry-actions'
 import { EntryList } from '../entry-list'
 import { isToday, MOODS, when } from '../entries'
 import { NewBook } from '../books'
 import { AddReading, ReadingNow, useFileDrop } from '../readings'
-import { orpc } from '../rpc'
+import { client, orpc } from '../rpc'
 import { useOpenLog } from '../shell'
 
 function Hero({ title, sub, children }: { title: string; sub: string; children?: ReactNode }) {
@@ -51,11 +51,27 @@ function Stat({ label, value, sub, testId }: { label: string; value: ReactNode; 
 	)
 }
 
+/**
+ * Adds the sample reading on a member's first visit to Mind, so the whole loop can be tried before
+ * they add anything. The server adds it once, ever, so asking on every visit is safe.
+ */
+function useSampleReading() {
+	const queryClient = useQueryClient()
+	const add = useMutation({
+		mutationFn: () => client.readings.addSample(),
+		onSuccess: ({ added }) => added && queryClient.invalidateQueries({ queryKey: orpc.readings.list.queryKey() }),
+	})
+	const { mutate } = add
+	useEffect(() => mutate(), [mutate])
+}
+
 export function Mind() {
 	const due = useQuery(orpc.review.due.queryOptions({ input: { limit: 3 } }))
 	const lessons = useQuery(orpc.entries.list.queryOptions({ input: { pillar: 'mind', limit: 50 } }))
 	const usage = useQuery(orpc.ai.usage.queryOptions())
+	const key = useQuery(orpc.ai.getKey.queryOptions())
 	const drop = useFileDrop()
+	useSampleReading()
 	return (
 		<div className="relative grid gap-8" {...drop.handlers}>
 			{drop.dragging && (
@@ -76,6 +92,15 @@ export function Mind() {
 				</p>
 			)}
 			<AddReading />
+			{key.isSuccess && !key.data && (
+				<p className="-mt-5 font-sans text-sm text-world-muted">
+					Add your own AI key in{' '}
+					<Link to="/settings" className="underline underline-offset-2">
+						Settings
+					</Link>{' '}
+					to get questions on your readings.
+				</p>
+			)}
 			<div className="grid gap-4 md:grid-cols-[16rem_1fr]">
 				<Link to="/mind/review" className="rounded-2xl border border-world-line bg-world-card p-5 transition hover:border-world-accent" aria-label="Review due ideas">
 					<p className="text-xs font-medium tracking-wide text-world-muted uppercase">Due for review</p>

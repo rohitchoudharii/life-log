@@ -1,0 +1,1 @@
+ALTER TABLE "preferences" ADD COLUMN "sample_added_at" timestamp with time zone;

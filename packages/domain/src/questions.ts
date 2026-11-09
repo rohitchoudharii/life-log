@@ -105,18 +105,32 @@ const judged = {
 	misconceptions: z.array(z.string().min(1)).default([]),
 }
 export type Judged = { prompt: string; code?: string; reference: string; mustHave: string[]; misconceptions: string[] }
-/** A written answer, or "I don't know". */
-export const writtenResponse = z.union([z.object({ answer: z.string().trim().min(1).max(4000) }), z.object({ skipped: z.literal(true) })])
+/**
+ * A written answer, or "I don't know". `made` is the learner's own check of each must-have point,
+ * in order, when there is no AI judge: the answer is then graded from it in code.
+ */
+export const writtenResponse = z.union([
+	z.object({ answer: z.string().trim().min(1).max(4000), made: z.array(z.boolean()).max(6).optional() }),
+	z.object({ skipped: z.literal(true) }),
+])
 export type WrittenResponse = z.infer<typeof writtenResponse>
 const withCode = (c: { prompt: string; code?: string }) => (c.code ? `${c.prompt}\n\n${c.code}` : c.prompt)
 
-/** Grades a written answer against its must-have points with the judge. */
+/** The learner's own check: a point they ticked is covered, and every other point is missing. */
+function selfVerdict(mustHave: string[], made: boolean[]): JudgeVerdict {
+	const points = mustHave.map((_, i): PointStatus => (made[i] ? 'covered' : 'missing'))
+	return { score: scoreRubric(points, false), feedback: '', points, misconception: null, marks: [] }
+}
+
+/** Grades a written answer against its must-have points, with the judge or the learner's own check. */
 export async function gradeWritten(c: Judged, r: WrittenResponse, judge: Judge): Promise<Grade> {
 	// "I don't know" is an honest miss; there is nothing for the judge to read.
 	if ('skipped' in r) return { rating: 'again', correct: false, reveal: { reference: c.reference, mustHave: c.mustHave, score: 0, feedback: '' } }
 	// A question without a checklist is graded against its reference answer as one point.
 	const mustHave = c.mustHave.length ? c.mustHave : [c.reference]
-	const verdict = await judge({ question: withCode(c), reference: c.reference, mustHave, misconceptions: c.misconceptions, answer: r.answer })
+	const verdict = r.made
+		? selfVerdict(mustHave, r.made)
+		: await judge({ question: withCode(c), reference: c.reference, mustHave, misconceptions: c.misconceptions, answer: r.answer })
 	return {
 		rating: ratingForScore(verdict.score),
 		correct: verdict.score >= 3,

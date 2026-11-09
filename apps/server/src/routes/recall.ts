@@ -3,7 +3,7 @@ import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { asUser, type Tx } from '../db/client'
 import { readings, recallAttempts, sections } from '../db/schema'
 import { enqueueGrade, enqueueWriteSection } from '../jobs'
-import { attemptView, sealDump } from '../learning/recall'
+import { attemptView, sealDump, selfMark } from '../learning/recall'
 import { authed } from '../orpc'
 
 const NOT_FOUND = 'That recall check does not exist. Start it again from the reading.'
@@ -57,6 +57,13 @@ export const recallRoutes = {
 		if (sent) await enqueueGrade({ userId, attemptId: input.id })
 		return asUser(userId, (tx) => view(tx, input.id))
 	}),
+
+	selfMark: authed.recall.selfMark.handler(({ input, context }) =>
+		asUser(context.user.id, async (tx) => {
+			await selfMark(tx, input.id, input.marks)
+			return view(tx, input.id)
+		}),
+	),
 
 	get: authed.recall.get.handler(({ input, context }) => asUser(context.user.id, (tx) => view(tx, input.id))),
 

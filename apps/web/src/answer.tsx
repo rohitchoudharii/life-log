@@ -1,8 +1,8 @@
 import type { AnswerResult, AskItem } from '@life-log-club/contract'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { quiet } from './books'
-import { client, errorMessage } from './rpc'
+import { client, errorMessage, orpc } from './rpc'
 import { ErrorText } from './ui'
 
 export const primary =
@@ -53,13 +53,16 @@ export type Answered = { answerId: string; given: string | null; confidence: Con
 /**
  * One written question or cue. The confidence buttons are the submit, so saying how sure you are
  * costs no click; I don't know is an honest miss. The answer id is picked once, so a retry of the
- * same answer counts once. With `keys`, 1 to 3 pick the confidence once the box is left.
+ * same answer counts once. With `keys`, 1 to 3 pick the confidence once the box is left. With
+ * `selfCheck` (no AI key), the learner then ticks the model answer's points they made, and the
+ * answer is graded from the ticks.
  */
 export function QuestionForm({
 	item,
 	mode,
 	attemptId,
 	keys = false,
+	selfCheck = false,
 	onAnswered,
 	onError,
 }: {
@@ -67,15 +70,17 @@ export function QuestionForm({
 	mode: 'recall' | 'review' | 'practice'
 	attemptId?: string
 	keys?: boolean
+	selfCheck?: boolean
 	onAnswered: (result: AnswerResult, answer: Answered) => void
 	/** Handles a failed answer instead of showing its message under the form. */
 	onError?: (error: unknown, given: string) => void
 }) {
 	const [answerId] = useState(() => crypto.randomUUID())
 	const [text, setText] = useState('')
+	const [checking, setChecking] = useState<{ confidence: Confidence } | null>(null)
 	const send = useMutation({
-		mutationFn: (choice: { confidence: Confidence | null; skipped?: boolean }) => {
-			const response = choice.skipped ? { skipped: true as const } : { answer: text }
+		mutationFn: (choice: { confidence: Confidence | null; skipped?: boolean; made?: boolean[] }) => {
+			const response = choice.skipped ? { skipped: true as const } : { answer: text, ...(choice.made && { made: choice.made }) }
 			const base = { answerId, cardId: item.cardId, mode, attemptId }
 			return item.questionId
 				? client.review.answer({ ...base, ask: 'question', questionId: item.questionId, response, confidence: choice.confidence })
@@ -86,9 +91,21 @@ export function QuestionForm({
 	})
 	const empty = !text.trim()
 	const pick = (confidence: Confidence) => {
-		if (!empty && !send.isPending) send.mutate({ confidence })
+		if (empty || send.isPending) return
+		if (selfCheck) setChecking({ confidence })
+		else send.mutate({ confidence })
 	}
-	useAnswerKeys(Object.fromEntries(CONFIDENCE.map((c) => [c.key, () => pick(c.value)])), keys)
+	useAnswerKeys(Object.fromEntries(CONFIDENCE.map((c) => [c.key, () => pick(c.value)])), keys && !checking)
+	if (checking)
+		return (
+			<SelfCheck
+				item={item}
+				given={text}
+				pending={send.isPending}
+				error={send.error && !onError ? errorMessage(send.error) : null}
+				onDone={(made) => send.mutate({ confidence: checking.confidence, made })}
+			/>
+		)
 	return (
 		<form className="grid gap-4" onSubmit={(e) => e.preventDefault()}>
 			<p className="text-xl leading-snug" data-testid="question">
@@ -120,6 +137,75 @@ export function QuestionForm({
 			</div>
 			{send.isPending && <p className="animate-pulse font-sans text-sm text-world-muted">Checking your answer…</p>}
 			{!onError && <ErrorText>{send.error && errorMessage(send.error)}</ErrorText>}
+		</form>
+	)
+}
+
+/**
+ * Without an AI key, the learner checks their own written answer: the model answer, then a box
+ * for each point a complete answer makes. A cue's one point is the idea itself.
+ */
+function SelfCheck({
+	item,
+	given,
+	pending,
+	error,
+	onDone,
+}: {
+	item: Pick<AskItem, 'cardId' | 'questionId' | 'prompt'>
+	given: string
+	pending: boolean
+	error: string | null
+	onDone: (made: boolean[]) => void
+}) {
+	const checklist = useQuery(orpc.review.checklist.queryOptions({ input: { cardId: item.cardId, questionId: item.questionId } }))
+	const [made, setMade] = useState<boolean[]>([])
+	const data = checklist.data
+	const onePoint = data?.points.length === 1 && data.points[0] === data.reference
+	return (
+		<form
+			className="grid gap-4"
+			onSubmit={(e) => {
+				e.preventDefault()
+				if (data) onDone(data.points.map((_, i) => made[i] ?? false))
+			}}
+		>
+			<p className="text-xl leading-snug" data-testid="question">
+				{item.prompt}
+			</p>
+			<p className="whitespace-pre-wrap text-world-muted">You wrote: {given}</p>
+			{checklist.isError && <p role="alert">{errorMessage(checklist.error)}</p>}
+			{data && (
+				<div className="grid gap-3 rounded-2xl border border-world-line bg-world-card p-4" data-testid="checklist">
+					{!onePoint && (
+						<p>
+							<span className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">Model answer </span>
+							{data.reference}
+						</p>
+					)}
+					<fieldset className="grid gap-2">
+						<legend className="mb-1 font-sans text-sm font-semibold">{onePoint ? 'Did your answer say this?' : 'Tick each point your answer made'}</legend>
+						{data.points.map((point, i) => (
+							<label key={point} className="flex items-start gap-2">
+								<input
+									type="checkbox"
+									className="mt-1.5 size-4 shrink-0 accent-world-accent"
+									checked={made[i] ?? false}
+									onChange={(e) => setMade((m) => Object.assign([...m], { [i]: e.target.checked }))}
+								/>
+								<span>{point}</span>
+							</label>
+						))}
+					</fieldset>
+					{data.quote && <p className="text-sm text-world-muted italic">From the text: “{data.quote}”</p>}
+				</div>
+			)}
+			<div>
+				<button type="submit" className={primary} disabled={!data || pending}>
+					Done
+				</button>
+			</div>
+			<ErrorText>{error}</ErrorText>
 		</form>
 	)
 }

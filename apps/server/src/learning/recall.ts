@@ -3,7 +3,7 @@ import { gradeRecallRequest, parseRecallVerdict } from '@life-log-club/llm'
 import { and, asc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 import { decrypt, encrypt } from '../crypto'
 import { asUser, type Tx } from '../db/client'
-import { cards, questions, type RecallItem, readings, recallAttempts, reviewLog, sections } from '../db/schema'
+import { aiKeys, cards, questions, type RecallItem, readings, recallAttempts, reviewLog, sections } from '../db/schema'
 import { callAi } from './ai'
 
 export type GradeJob = { userId: string; attemptId: string }
@@ -109,14 +109,40 @@ export async function gradeAttempt({ userId, attemptId }: GradeJob, lastTry = tr
 		// A second job for the same attempt finds it graded and changes nothing.
 		const [current] = await tx.select({ status: recallAttempts.status }).from(recallAttempts).where(eq(recallAttempts.id, attemptId)).for('update')
 		if (current?.status !== 'grading') return
-		const results = ideas.map((c, i) => ({ cardId: c.id, status: marks[i]! }))
-		const items = await prepareItems(tx, results)
-		await tx.update(recallAttempts).set({ status: 'graded', results, items, feedback: feedback || null, gradedBy }).where(eq(recallAttempts.id, attemptId))
-		await tx
-			.update(sections)
-			.set({ recalledAt: sql`coalesce(${sections.recalledAt}, now())` })
-			.where(inArray(sections.id, attempt.sectionIds))
+		await finish(tx, attempt, ideas.map((c, i) => ({ cardId: c.id, status: marks[i]! })), feedback, gradedBy)
 	})
+}
+
+/** Stores the marks of a graded dump with the questions they lead to, and marks its sections recalled. */
+async function finish(
+	tx: Tx,
+	attempt: typeof recallAttempts.$inferSelect,
+	results: { cardId: string; status: PointStatus }[],
+	feedback: string,
+	gradedBy: 'ai' | 'code' | 'self',
+) {
+	const items = await prepareItems(tx, results)
+	await tx.update(recallAttempts).set({ status: 'graded', results, items, feedback: feedback || null, gradedBy }).where(eq(recallAttempts.id, attempt.id))
+	await tx
+		.update(sections)
+		.set({ recalledAt: sql`coalesce(${sections.recalledAt}, now())` })
+		.where(inArray(sections.id, attempt.sectionIds))
+}
+
+/**
+ * The member's own marks of a dump left for them to check (`self`), for each key idea of its
+ * sections. An idea they didn't mark counts as missed, and marks for other cards are ignored.
+ * Then the questions follow, as after AI grading. Returns false when the attempt isn't waiting
+ * for marks, so marking twice changes nothing.
+ */
+export async function selfMark(tx: Tx, attemptId: string, marks: { cardId: string; status: PointStatus }[]) {
+	const [attempt] = await tx.select().from(recallAttempts).where(eq(recallAttempts.id, attemptId)).for('update')
+	if (attempt?.status !== 'self') return false
+	const ideas = await ideasOf(tx, attempt.sectionIds)
+	if (!ideas.length) return false
+	const results = ideas.map((c) => ({ cardId: c.id, status: marks.find((m) => m.cardId === c.id)?.status ?? ('missing' as const) }))
+	await finish(tx, attempt, results, '', 'self')
+	return true
 }
 
 const promptOf = (content: Record<string, unknown>) => ({
@@ -156,6 +182,8 @@ export async function attemptView(tx: Tx, attemptId: string) {
 		text: openDump(attempt.id, attempt.textCt),
 		feedback: attempt.feedback,
 		nextSectionId: next?.id ?? null,
+		selfCheck: !(await tx.select({ id: aiKeys.userId }).from(aiKeys)).length,
+		toMark: attempt.status === 'self' ? (await ideasOf(tx, attempt.sectionIds)).map((c) => ({ cardId: c.id, idea: c.answer })) : null,
 		items: null,
 		ideas: null,
 		retry: null,

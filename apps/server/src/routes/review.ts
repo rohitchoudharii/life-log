@@ -1,8 +1,8 @@
-import { defaultScheduler } from '@life-log-club/domain'
+import { defaultScheduler, isQuestionType, questionTypes } from '@life-log-club/domain'
 import { ORPCError } from '@orpc/server'
 import { and, asc, count, eq, isNull } from 'drizzle-orm'
 import { asUser } from '../db/client'
-import { cards, entries } from '../db/schema'
+import { cards, entries, questions } from '../db/schema'
 import { answerCard, overrideAnswer, reportQuestion } from '../learning/answer'
 import { dueNow, minutesFor, nextBatch } from '../learning/review'
 import { authed } from '../orpc'
@@ -64,6 +64,21 @@ export const reviewRoutes = {
 	answer: authed.review.answer.handler(({ input, context }) => answerCard(context.user.id, input)),
 
 	override: authed.review.override.handler(({ input, context }) => overrideAnswer(context.user.id, input.answerId)),
+
+	checklist: authed.review.checklist.handler(({ input, context }) =>
+		asUser(context.user.id, async (tx) => {
+			const [card] = await tx.select().from(cards).where(and(eq(cards.id, input.cardId), isNull(cards.deletedAt)))
+			if (!card) throw new ORPCError('NOT_FOUND', { message: 'That card does not exist. It may have been removed.' })
+			// A cue is checked against the idea itself, as one point.
+			if (!input.questionId) return { reference: card.answer, points: [card.answer], quote: card.quote }
+			const [question] = await tx.select().from(questions).where(and(eq(questions.id, input.questionId), eq(questions.cardId, card.id)))
+			const parsed = question && isQuestionType(question.type) ? questionTypes[question.type].content.safeParse(question.content) : null
+			if (!parsed?.success) throw new ORPCError('NOT_FOUND', { message: 'That question does not exist.' })
+			const { reference, mustHave } = parsed.data
+			// The same points the answer is graded against: a question with none is one point, its model answer.
+			return { reference, points: mustHave.length ? mustHave : [reference], quote: card.quote }
+		}),
+	),
 }
 
 export const questionRoutes = {

@@ -297,6 +297,24 @@ function SectionView({
 	)
 }
 
+/** A section's title and text, to read beside something else, such as a brain dump. */
+export function SectionText({ id }: { id: string }) {
+	const section = useQuery(orpc.readings.section.queryOptions({ input: { id } }))
+	const [openNote, setOpenNote] = useState<Note | null>(null)
+	if (section.isError) return <p role="alert">{errorMessage(section.error)}</p>
+	if (!section.data) return <p className="text-world-muted">Loading…</p>
+	const marks: NoteMarks = { notes: new Map(section.data.notes.map((n) => [n.id, n])), open: setOpenNote }
+	return (
+		<article className="grid gap-3 leading-relaxed">
+			<h2 className="text-xl font-semibold tracking-tight">{section.data.title}</h2>
+			{section.data.blocks.map((b, i) => (
+				<BlockView key={i} block={b} marks={marks} />
+			))}
+			{openNote && <NoteDialog note={openNote} onClose={() => setOpenNote(null)} />}
+		</article>
+	)
+}
+
 function Contents({ reading, current, onPick }: { reading: ReadingWithContents; current: number; onPick: (i: number) => void }) {
 	return (
 		<ol className="grid gap-0.5 font-sans text-sm">
