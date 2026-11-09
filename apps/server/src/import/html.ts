@@ -75,6 +75,21 @@ function runsOf(n: DomNode, baseUrl: string, notes = false, href: string | null 
 const textOf = (n: DomNode) => runsOf(n, '').map((r) => r.text).join('')
 
 /**
+ * A heading's text. A section number set in <small> (Crafting Interpreters) is kept apart from the
+ * title, a number spaced with hair spaces ("4 . 1") is closed up, and zero-width spaces and a
+ * trailing "¶" anchor (Docusaurus, Sphinx) are dropped.
+ */
+function headingText(n: DomNode): string {
+	const parts = (x: DomNode): string =>
+		children(x)
+			.map((c) => (c.nodeType === TEXT ? (c.textContent ?? '') : c.nodeType === ELEMENT && !SKIP.has(tag(c)) ? parts(c) + (tag(c) === 'SMALL' ? ' ' : '') : ''))
+			.join('')
+	return squash(parts(n).replace(/[\u200B-\u200D\uFEFF]/g, ''))
+		.replace(/(\d)\s*\.\s*(?=\d)/g, '$1.')
+		.replace(/\s*¶$/, '')
+}
+
+/**
  * Joins runs into one line of text, with whitespace squashed as `squash` does, the ranges of it
  * that are links, and where its note markers are. A space between two words of the same link
  * belongs to the link.
@@ -214,7 +229,7 @@ export function htmlToBlocks(
 				else inline.push(...runsOf(c, baseUrl, notes))
 			} else if (/^H[1-6]$/.test(name)) {
 				flush()
-				const text = squash(textOf(c))
+				const text = headingText(c)
 				if (text) out.push({ type: 'heading', level: Number(name[1]), text })
 			} else if (name === 'PRE') {
 				flush()

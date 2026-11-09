@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { blockText, splitSections } from '@life-log-club/domain'
+import { blockText, countWords, splitSections } from '@life-log-club/domain'
 import { describe, expect, it } from 'vitest'
 import { type Article, decodeHtml, extractArticle, SIGN_IN } from './extract'
 
@@ -65,6 +65,37 @@ describe('extractArticle on saved pages', () => {
 		const tree = sections(article).map((s) => [s.title, s.level])
 		expect(tree).toEqual(expect.arrayContaining([['Job queue and event loop', 1], ['Never blocking', 2]]))
 		expect(allText(article)).toContain('JavaScript execution requires the cooperation of two pieces of software: the JavaScript engine and the host environment.')
+	})
+})
+
+describe('extractArticle on chapters of web books', () => {
+	const read = (name: string, url: string) => {
+		const article = extractArticle(load(name), url)
+		return { article, text: allText(article), headings: article.blocks.flatMap((b) => (b.type === 'heading' ? [b.text] : [])) }
+	}
+
+	it('Eloquent JavaScript: reads a page written without <html>, <head> or <body>', () => {
+		const { article, text } = read('ejs-02.html', 'https://eloquentjavascript.net/02_program_structure.html')
+		expect(article.title).toBe('Program Structure')
+		expect(text).toContain('In this chapter, we will start to do things that can actually be called programming.')
+		expect(countWords(text)).toBeGreaterThan(4000)
+	})
+
+	it("The Rust Book (mdBook): the chapter's own title, without the help popup and menus", () => {
+		const { article, text, headings } = read('rust-ch04-01.html', 'https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html')
+		expect(article.title).toBe('What Is Ownership?')
+		expect(headings[0]).toBe('The Stack and the Heap')
+		expect(text).toMatch(/^Ownership is a set of rules that govern how a Rust program manages memory\./)
+		expect(text).not.toMatch(/Keyboard shortcuts|Previous chapter|Next chapter/)
+	})
+
+	it('Crafting Interpreters: section numbers kept apart from their titles, no chapter number or next links', () => {
+		const { article, text, headings } = read('ci-scanning.html', 'https://craftinginterpreters.com/scanning.html')
+		expect(article.title).toBe('Scanning')
+		expect(headings.slice(0, 2)).toEqual(['4.1 The Interpreter Framework', '4.1.1 Error handling'])
+		expect(text).toMatch(/^Take big bites\./)
+		expect(text).toContain('The first step in any compiler or interpreter is scanning.')
+		expect(text).not.toMatch(/Next Chapter|Representing Code/)
 	})
 })
 

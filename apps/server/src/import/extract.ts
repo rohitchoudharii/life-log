@@ -97,6 +97,26 @@ function normaliseMedia(document: Doc, url: string) {
 }
 
 const squashLower = (s: string | null | undefined) => squash(s).toLowerCase()
+
+/**
+ * A site's furniture around the text, which Readability can mistake for part of it: book sites'
+ * help popups and menus (mdBook), the links to the chapter before and after (mdBook, Crafting
+ * Interpreters, Docusaurus), "Edit this page", and the "¶" link beside each heading (Sphinx).
+ */
+const FURNITURE = [
+	'#mdbook-help-container',
+	'#mdbook-menu-bar',
+	'#mdbook-search-wrapper',
+	'.nav-chapters',
+	'.mobile-nav-chapters',
+	'.prev-next',
+	'footer a.next',
+	'.pagination-nav',
+	'.theme-edit-this-page',
+	'a.headerlink',
+	'a[rel~="next"]',
+	'a[rel~="prev"]',
+].join(', ')
 const bareHost = (u: URL) => u.hostname.replace(/^www\./, '')
 
 /** The page's own canonical address, when it names one on the same site. Another site's is ignored. */
@@ -136,9 +156,16 @@ export type Article = {
  */
 export function extractArticle(html: string, url: string): Article {
 	const { document } = parseHTML(html)
+	// A page that leaves out its <html>, <head> and <body> tags (Eloquent JavaScript) has its text
+	// outside the empty body in linkedom, where Readability never looks.
+	if (document.body && !squash(document.body.textContent))
+		for (const el of Array.from(document.children) as El[]) if (el !== document.documentElement) document.body.append(el)
 	const canonical = canonicalUrl(document, url)
 	const paid = markedPaid(document)
 	const signInForm = Boolean(document.querySelector('input[type="password"]'))
+	for (const el of Array.from(document.querySelectorAll(FURNITURE)) as El[]) el.remove()
+	// Readability reads the title from <head>, which a page without one (Eloquent JavaScript) lacks.
+	const pageTitle = squash(document.querySelector('title')?.textContent)
 	const h1s = document.querySelectorAll('h1')
 	const h1 = h1s.length === 1 ? squash(h1s[0]!.textContent) : ''
 	normaliseMedia(document, url)
@@ -166,8 +193,13 @@ export function extractArticle(html: string, url: string): Article {
 	const { document: doc } = parseHTML(`<!doctype html><html><body><div id="life-log-club-article">${article.content}</div></body></html>`)
 	const blocks = htmlToBlocks(doc.getElementById('life-log-club-article') as unknown as DomNode, url)
 	// A title like "Execution model - JavaScript | MDN" adds the site's name to the page's own heading.
-	const found = squash(article.title)
-	const title = (h1.length >= 3 && found.startsWith(h1) ? h1 : found) || new URL(url).hostname
+	const found = squash(article.title) || pageTitle
+	// A chapter number set above the chapter's heading (Crafting Interpreters' "4") is no paragraph.
+	while (blocks[0]?.type === 'paragraph' && /^(\d{1,3}|[IVXLC]{1,7})\.?$/.test(blocks[0].text)) blocks.shift()
+	// The same, when the page's heading is not an <h1> (mdBook): its first heading and then a separator.
+	const lead = blocks[0]?.type === 'heading' ? blocks[0].text : ''
+	const named = [h1, lead].find((h) => h.length >= 3 && squashLower(found).startsWith(squashLower(h)) && /^(\s*[-|:·–—]|$)/.test(found.slice(h.length)))
+	const title = named || found || new URL(url).hostname
 	// The page's title repeated as its first heading would make an empty first section.
 	const first = blocks[0]
 	if (first?.type === 'heading' && squashLower(first.text) === squashLower(title)) blocks.shift()

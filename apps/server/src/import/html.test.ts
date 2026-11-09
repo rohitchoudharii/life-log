@@ -10,6 +10,11 @@ const convert = (html: string) => {
 }
 
 describe('htmlToBlocks', () => {
+	it('cleans up headings: numbers in <small>, hair-spaced numbers, zero-width spaces and "¶" anchors', () => {
+		const headings = convert(`<h2><small>4&#8202;.&#8202;1</small>The Interpreter Framework</h2><h2>Sources&#8203;</h2><h2>9.1. Names<a href="#names">¶</a></h2><h2>C# in 2.5 hours</h2>`)
+		expect(headings.map((b) => b.type === 'heading' && b.text)).toEqual(['4.1 The Interpreter Framework', 'Sources', '9.1. Names', 'C# in 2.5 hours'])
+	})
+
 	it("keeps the EPUB reader's note markers as points in the text, without their labels", () => {
 		const html = `<p>Rome fell<ll-note data-note="n1">1</ll-note> in <a href="/476">476</a>.<sup><ll-note data-note="n2">2</ll-note></sup></p>
 			<ul><li>first</li><li>second<ll-note data-note="n3">3</ll-note></li></ul>`
