@@ -2,7 +2,8 @@ import { defaultScheduler } from '@life-log-club/domain'
 import { ORPCError } from '@orpc/server'
 import { and, asc, count, eq, isNotNull, isNull, lte } from 'drizzle-orm'
 import { asUser } from '../db/client'
-import { cards, entries, reviewLog } from '../db/schema'
+import { cards, entries } from '../db/schema'
+import { answerCard } from '../learning/answer'
 import { authed } from '../orpc'
 
 const toCard = (c: typeof cards.$inferSelect) => ({
@@ -57,24 +58,5 @@ export const reviewRoutes = {
 		}),
 	),
 
-	answer: authed.review.answer.handler(({ input, context }) =>
-		asUser(context.user.id, async (tx) => {
-			const now = new Date()
-			// Locking the row makes a double-tapped answer count once: the second one finds the
-			// card no longer due.
-			const [card] = await tx.select().from(cards).where(eq(cards.id, input.id)).for('update')
-			if (!card) throw new ORPCError('NOT_FOUND', { message: 'That card does not exist.' })
-			if (card.dueAt > now) throw new ORPCError('CONFLICT', { message: 'This card is not due yet.' })
-			const { state, dueAt } = defaultScheduler.next(card.state, input.rating, now)
-			await tx.update(cards).set({ state, dueAt }).where(eq(cards.id, card.id))
-			await tx.insert(reviewLog).values({
-				userId: context.user.id,
-				cardId: card.id,
-				rating: input.rating,
-				reviewedAt: now,
-				nextDueAt: dueAt,
-			})
-			return { dueAt }
-		}),
-	),
+	answer: authed.review.answer.handler(({ input, context }) => answerCard(context.user.id, input)),
 }

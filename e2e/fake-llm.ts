@@ -82,7 +82,25 @@ function gradeRecall(user: string) {
 	return { ideas: marks, feedback: 'You brought back the main point. Look again at what you missed.' }
 }
 
+/**
+ * Marks each must-have point for "Task: judge-answer" by the long words the answer shares with
+ * it: most of them is covered, one or more is vague, none is missing. A test picks a verdict by
+ * what it types.
+ */
+function judgeAnswer(user: string) {
+	const points = [...(user.split('Must-have points:')[1]?.split('Known misconceptions:')[0] ?? '').matchAll(/^\d+\. (.+)$/gm)].map((m) => m[1]!)
+	const given = new Set(longWords(user.split('<answer>')[1] ?? ''))
+	const marks = points.map((point) => {
+		const words = longWords(point)
+		const shared = words.filter((w) => given.has(w)).length
+		return shared >= Math.max(1, words.length * 0.6) ? 'covered' : shared >= 1 ? 'vague' : 'missing'
+	})
+	const feedback = marks.every((m) => m === 'covered') ? 'You made the main point clearly.' : 'Part of the point is missing. Look at the model answer.'
+	return { points: marks, misconception: null, feedback, marks: [] }
+}
+
 function answer(system: string, user: string) {
+	if (system.startsWith('Task: judge-answer')) return JSON.stringify(judgeAnswer(user))
 	if (system.startsWith('Task: grade-recall')) return JSON.stringify(gradeRecall(user))
 	if (system.startsWith('Task: headings')) return JSON.stringify(headings(user))
 	if (system.startsWith('Task: write-section')) return JSON.stringify(writeSection(user))

@@ -1,28 +1,16 @@
-import type { RecallAttempt } from '@life-log-club/contract'
+import type { AnswerResult, RecallAttempt } from '@life-log-club/contract'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { quiet } from '../books'
+import { backIn, primary, QuestionForm, RevealTile } from '../answer'
 import { client, errorMessage, orpc } from '../rpc'
 import { ErrorText } from '../ui'
-
-const primary = 'rounded-xl bg-world-accent px-5 py-2 font-sans text-sm font-semibold text-world-on-accent transition hover:opacity-90 disabled:opacity-60'
 
 const MARK: Record<'covered' | 'vague' | 'missing', { label: string; className: string }> = {
 	covered: { label: 'Covered', className: 'bg-path/15 text-path' },
 	vague: { label: 'Vague', className: 'bg-heart/25 text-ink' },
 	missing: { label: 'Missed', className: 'bg-red/10 text-red' },
-}
-
-/** When a card comes back, in words: "Back in 10 minutes", "Back tomorrow", "Back in 3 days". */
-export function backIn(dueAt: Date, now = new Date()) {
-	// Rounded up, so a card due 10 minutes after grading still reads as 10 minutes a few seconds later.
-	const minutes = Math.ceil((dueAt.getTime() - now.getTime()) / 60_000)
-	if (minutes <= 1) return 'Back now'
-	if (minutes < 60) return `Back in ${minutes} minutes`
-	const days = Math.round(minutes / (24 * 60))
-	if (days < 1) return `Back in ${Math.round(minutes / 60)} hours`
-	return days === 1 ? 'Back tomorrow' : `Back in ${days} days`
 }
 
 /** The brain dump: the text hidden, one box for everything the member remembers. */
@@ -67,11 +55,88 @@ function Dump({ attempt }: { attempt: RecallAttempt }) {
 	)
 }
 
+/**
+ * The questions after the dump, one per key idea, missed ideas first. No result shows until the
+ * last answer, because the questions share one section and one answer could hint at the next.
+ */
+function Questions({ attempt }: { attempt: RecallAttempt }) {
+	const queryClient = useQueryClient()
+	const items = attempt.items ?? []
+	const next = items.find((i) => !i.answered)
+	if (!next) return null
+	const n = items.indexOf(next) + 1
+	return (
+		<div className="grid gap-3">
+			<p className="font-sans text-sm text-world-muted">
+				Question {n} of {items.length}
+			</p>
+			<QuestionForm
+				key={next.cardId}
+				item={next}
+				mode="recall"
+				attemptId={attempt.id}
+				onAnswered={() => queryClient.invalidateQueries({ queryKey: orpc.recall.get.queryKey({ input: { id: attempt.id } }) })}
+			/>
+		</div>
+	)
+}
+
+/** Retry missed ideas: each one asked again through its cue, with its result at once. Practice only: the schedule stays. */
+function Retry({ attempt, onDone }: { attempt: RecallAttempt; onDone: () => void }) {
+	const queryClient = useQueryClient()
+	const items = attempt.retry ?? []
+	const [shown, setShown] = useState<{ result: AnswerResult; given: string | null; cardId: string } | null>(null)
+	const next = items.find((i) => !i.answered)
+	if (shown)
+		return (
+			<div className="grid gap-4">
+				<RevealTile result={shown.result} given={shown.given} prompt={items.find((i) => i.cardId === shown.cardId)?.prompt} showDue={false} />
+				<div>
+					<button
+						type="button"
+						className={primary}
+						onClick={async () => {
+							await queryClient.invalidateQueries({ queryKey: orpc.recall.get.queryKey({ input: { id: attempt.id } }) })
+							setShown(null)
+						}}
+					>
+						Next
+					</button>
+				</div>
+			</div>
+		)
+	if (!next)
+		return (
+			<div className="grid gap-3">
+				<p className="text-lg">That was every missed idea. They still come back on their own schedule.</p>
+				<div>
+					<button type="button" className={quiet} onClick={onDone}>
+						Back to the results
+					</button>
+				</div>
+			</div>
+		)
+	return (
+		<div className="grid gap-3">
+			<p className="font-sans text-sm text-world-muted">
+				Retry {items.indexOf(next) + 1} of {items.length} · practice, your schedule stays as it is
+			</p>
+			<QuestionForm key={next.cardId} item={next} mode="practice" attemptId={attempt.id} onAnswered={(result, given) => setShown({ result, given, cardId: next.cardId })} />
+		</div>
+	)
+}
+
 /** The recall map: every key idea, how the dump covered it, its quote and when it comes back. */
 function Results({ attempt }: { attempt: RecallAttempt }) {
 	const navigate = useNavigate()
+	const [retrying, setRetrying] = useState(false)
 	const ideas = attempt.ideas ?? []
 	const covered = ideas.filter((i) => i.status === 'covered').length
+	const right = ideas.filter((i) => i.answer?.correct).length
+	// Sure but wrong first: the errors most worth fixing (hypercorrection).
+	const sureWrong = ideas.filter((i) => i.answer && !i.answer.correct && i.answer.confidence === 'sure')
+	const retryLeft = (attempt.retry ?? []).some((i) => !i.answered)
+	if (retrying) return <Retry attempt={attempt} onDone={() => setRetrying(false)} />
 	const done = async () => {
 		if (attempt.nextSectionId) await client.readings.savePosition({ id: attempt.readingId, sectionId: attempt.nextSectionId, block: 0 })
 		await navigate({ to: '/mind/read/$readingId', params: { readingId: attempt.readingId } })
@@ -80,10 +145,18 @@ function Results({ attempt }: { attempt: RecallAttempt }) {
 		<div className="grid gap-6">
 			<div className="grid gap-1">
 				<p className="font-sans text-sm text-world-muted">
-					You brought back {covered} of {ideas.length} key {ideas.length === 1 ? 'idea' : 'ideas'}.
+					You brought back {covered} of {ideas.length} key {ideas.length === 1 ? 'idea' : 'ideas'}, and answered {right} of {ideas.length} questions right.
 				</p>
 				{attempt.feedback && <p className="text-lg">{attempt.feedback}</p>}
 			</div>
+			{sureWrong.length > 0 && (
+				<section aria-label="You were sure about these" className="grid gap-2 rounded-2xl border border-red/30 bg-red/5 p-4">
+					<h2 className="font-sans text-sm font-semibold">You were sure about these</h2>
+					{sureWrong.map((i) => (
+						<p key={i.cardId}>{i.idea}</p>
+					))}
+				</section>
+			)}
 			<ol aria-label="Recall map" className="grid gap-3">
 				{ideas.map((idea) => (
 					<li key={idea.cardId} className="grid gap-2 rounded-2xl border border-world-line bg-world-card p-4">
@@ -91,8 +164,14 @@ function Results({ attempt }: { attempt: RecallAttempt }) {
 							<p className="text-lg leading-snug">{idea.idea}</p>
 							<span className={`rounded-full px-2.5 py-0.5 font-sans text-xs font-semibold ${MARK[idea.status].className}`}>{MARK[idea.status].label}</span>
 						</div>
-						{idea.quote && <p className="text-sm text-world-muted italic">From the text: “{idea.quote}”</p>}
-						<p className="font-sans text-xs text-world-muted">{backIn(idea.dueAt)}</p>
+						{idea.answer ? (
+							<RevealTile result={{ ...idea.answer, rating: 'good', dueAt: idea.dueAt }} given={idea.answer.given} prompt={idea.answer.prompt} />
+						) : (
+							<>
+								{idea.quote && <p className="text-sm text-world-muted italic">From the text: “{idea.quote}”</p>}
+								<p className="font-sans text-xs text-world-muted">{backIn(idea.dueAt)}</p>
+							</>
+						)}
 					</li>
 				))}
 			</ol>
@@ -102,10 +181,15 @@ function Results({ attempt }: { attempt: RecallAttempt }) {
 					<p className="mt-2 whitespace-pre-wrap">{attempt.text}</p>
 				</details>
 			) : null}
-			<div>
+			<div className="flex flex-wrap gap-3">
 				<button type="button" className={primary} onClick={done}>
 					Done
 				</button>
+				{retryLeft && (
+					<button type="button" className={quiet} onClick={() => setRetrying(true)}>
+						Retry missed ideas
+					</button>
+				)}
 			</div>
 		</div>
 	)
@@ -140,7 +224,7 @@ export function Recall({ attemptId }: { attemptId: string }) {
 					Checking against the text…
 				</p>
 			)}
-			{a.status === 'graded' && <Results attempt={a} />}
+			{a.status === 'graded' && (a.ideas ? <Results attempt={a} /> : <Questions attempt={a} />)}
 			{a.status === 'self' && (
 				<p role="status" className="text-lg">
 					Your recall is saved. Add your own AI key in{' '}

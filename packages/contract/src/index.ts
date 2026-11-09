@@ -1,4 +1,4 @@
-import { Block, EntryData, EntryText, Note, PILLARS, RECALL_STATUSES, WRITE_STATUSES } from '@life-log-club/domain'
+import { Block, CONFIDENCES, EntryData, EntryText, Note, PILLARS, RECALL_STATUSES, WRITE_STATUSES } from '@life-log-club/domain'
 import { oc } from '@orpc/contract'
 import { z } from 'zod'
 
@@ -64,6 +64,58 @@ export const Preferences = z.object({
 })
 export type Preferences = z.infer<typeof Preferences>
 
+const Rating = z.enum(['again', 'hard', 'good', 'easy'])
+const Confidence = z.enum(CONFIDENCES)
+/** A written answer, or I don't know. */
+const Written = z.union([z.object({ answer: z.string().trim().min(1, 'Write an answer, or choose I don’t know.').max(4000) }), z.object({ skipped: z.literal(true) })])
+const answerOf = {
+	answerId: z.uuid(),
+	cardId: z.uuid(),
+	mode: z.enum(['recall', 'review', 'practice']),
+	/** The recall check the answer is part of. */
+	attemptId: z.uuid().optional(),
+}
+/** One answer: to a stored question, to the card's cue (written recall), or a self-rating. */
+export const Answer = z.discriminatedUnion('ask', [
+	z.object({ ...answerOf, ask: z.literal('question'), questionId: z.uuid(), response: z.record(z.string(), z.unknown()), confidence: Confidence.nullable().default(null) }),
+	z.object({ ...answerOf, ask: z.literal('cue'), response: Written, confidence: Confidence.nullable().default(null) }),
+	z.object({ ...answerOf, ask: z.literal('self'), rating: Rating }),
+])
+export type Answer = z.infer<typeof Answer>
+
+/** What a checked answer showed: the verdict, the model answer, and the points made or missed. */
+export const Reveal = z.object({
+	/** The model answer, or the idea itself for a cue. */
+	reference: z.string().nullable(),
+	/** The judge's feedback, 1 to 3 sentences. */
+	feedback: z.string(),
+	/** The points a complete answer makes, each with how this answer made it. */
+	points: z.array(z.object({ point: z.string(), status: z.enum(['covered', 'vague', 'missing']) })),
+	misconception: z.string().nullable(),
+	/** The quote from the text the idea rests on. */
+	quote: z.string().nullable(),
+})
+export type Reveal = z.infer<typeof Reveal>
+export const AnswerResult = z.object({
+	correct: z.boolean(),
+	rating: Rating,
+	reveal: Reveal,
+	/** When the card comes back; for a practice answer, when it was due already. */
+	dueAt: z.date(),
+})
+export type AnswerResult = z.infer<typeof AnswerResult>
+
+/** One thing to ask: a stored question on a card, or the card's cue when `questionId` is null. */
+export const AskItem = z.object({
+	cardId: z.uuid(),
+	questionId: z.uuid().nullable(),
+	prompt: z.string(),
+	/** Code the question is about, shown as code. */
+	code: z.string().nullable(),
+	answered: z.boolean(),
+})
+export type AskItem = z.infer<typeof AskItem>
+
 /** A recall check: the brain dump after reading, and how it covered each key idea. */
 export const RecallAttempt = z.object({
 	id: z.uuid(),
@@ -78,7 +130,15 @@ export const RecallAttempt = z.object({
 	/** The dump as written; empty for Nothing comes to mind, null before it is sent. */
 	text: z.string().nullable(),
 	feedback: z.string().nullable(),
-	/** The recall map, once graded: every key idea with its mark and when it comes back. */
+	/**
+	 * The questions after the dump, once it is graded: one per key idea, missed ideas first. The
+	 * results come only after the last one is answered.
+	 */
+	items: z.array(AskItem).nullable(),
+	/**
+	 * The results, once every question is answered: every key idea with its dump mark, its answer
+	 * and when it comes back.
+	 */
 	ideas: z
 		.array(
 			z.object({
@@ -87,9 +147,21 @@ export const RecallAttempt = z.object({
 				quote: z.string().nullable(),
 				status: z.enum(['covered', 'vague', 'missing']),
 				dueAt: z.date(),
+				answer: z
+					.object({
+						prompt: z.string(),
+						/** What the learner wrote; null for I don't know. */
+						given: z.string().nullable(),
+						correct: z.boolean(),
+						confidence: Confidence.nullable(),
+						reveal: Reveal,
+					})
+					.nullable(),
 			}),
 		)
 		.nullable(),
+	/** Retry missed ideas: a new question, or the cue, for each idea answered wrong. Practice only. */
+	retry: z.array(AskItem).nullable(),
 	/** The section after the last one recalled, where Done goes on reading; null at the end. */
 	nextSectionId: z.uuid().nullable(),
 })
@@ -274,10 +346,13 @@ export const contract = {
 		due: oc
 			.input(z.object({ limit: z.int().min(1).max(100).default(20) }))
 			.output(z.object({ cards: z.array(Card), total: z.int() })),
-		/** Records how well a due card was remembered and returns when it comes back. */
-		answer: oc
-			.input(z.object({ id: z.uuid(), rating: z.enum(['again', 'hard', 'good', 'easy']) }))
-			.output(z.object({ dueAt: z.date() })),
+		/**
+		 * Records one answer and returns its result and when the card comes back. `answerId` is
+		 * chosen by the client, so the same answer sent twice counts once. In `review` mode only a
+		 * due card can be answered (`CONFLICT` otherwise); `recall` mode answers right after reading,
+		 * and starts a card not started yet; `practice` is logged but leaves the schedule as it is.
+		 */
+		answer: oc.input(Answer).output(AnswerResult),
 	},
 	readings: {
 		/**

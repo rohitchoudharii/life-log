@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { answerIdea, pickQuestion } from './ideas'
-import { gradeResponse, parseQuestionContent, scoreRubric, toPrompt } from './questions'
+import { type Grade, gradeResponse, orderForTest, parseQuestionContent, scoreRubric, toPrompt, withConfidence } from './questions'
 import { stepsThenEase } from './scheduler'
 
 // Ported from the previous app (packages/core/src/core.test.ts at 4051df5^).
@@ -98,5 +98,35 @@ describe('pickQuestion', () => {
 		expect(pickQuestion(asked, 2, 'b')).toBeNull()
 		expect(pickQuestion(asked, 2, 'b', true)).toBe('c')
 		expect(pickQuestion([q('a', 'apply', '2026-01-03')], 2, 'a', true)).toBe('a')
+	})
+})
+
+describe('withConfidence', () => {
+	const grade = (rating: Grade['rating'], correct: boolean): Grade => ({ rating, correct, reveal: {} })
+
+	it('only ever lowers credit: a right guess is hard, and easy needs Sure or no confidence', () => {
+		expect(withConfidence(grade('good', true), 'guessing').rating).toBe('hard')
+		expect(withConfidence(grade('easy', true), 'guessing').rating).toBe('hard')
+		expect(withConfidence(grade('easy', true), 'think_so').rating).toBe('good')
+		expect(withConfidence(grade('easy', true), 'sure').rating).toBe('easy')
+		expect(withConfidence(grade('easy', true), null).rating).toBe('easy')
+		// A wrong answer stays a miss however sure the learner was.
+		expect(withConfidence(grade('again', false), 'guessing').rating).toBe('again')
+		expect(withConfidence(grade('hard', false), 'sure').rating).toBe('hard')
+	})
+})
+
+describe('orderForTest', () => {
+	it('asks missed ideas first, then vague, then covered', () => {
+		const marks = new Map([
+			['a', 'covered'],
+			['b', 'missing'],
+			['c', 'vague'],
+			['d', 'missing'],
+		] as const)
+		const items = ['a', 'b', 'c', 'd'].map((cardId) => ({ cardId, type: cardId === 'b' ? null : ('short_answer' as const) }))
+		const order = orderForTest(items, marks).map((q) => q.cardId)
+		expect(order.slice(0, 2).sort()).toEqual(['b', 'd'])
+		expect(order.slice(2)).toEqual(['c', 'a'])
 	})
 })

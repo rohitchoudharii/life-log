@@ -1,4 +1,5 @@
 import type { Block, Confidence, Note, PointStatus, QuestionLevel, Rating, RecallStatus, ReviewState, SectionKind, WriteStatus } from '@life-log-club/domain'
+import type { Reveal } from '@life-log-club/contract'
 import { type AnyColumn, sql } from 'drizzle-orm'
 import {
 	type AnyPgColumn,
@@ -212,7 +213,11 @@ export const reviewLog = pgTable(
 		confidence: text().$type<Confidence>(),
 		/** The judge's feedback. */
 		feedback: text(),
+		/** What the result showed: the model answer, the points made or missed, the quote. */
+		reveal: jsonb().$type<Reveal>(),
 		gradedBy: text().$type<'code' | 'ai' | 'self'>().notNull().default('self'),
+		/** The recall check this answer was part of, so its results can list it. */
+		attemptId: uuid().references((): AnyPgColumn => recallAttempts.id, { onDelete: 'set null' }),
 		/** Set when the learner tapped Count it as right. */
 		overriddenAt: timestamp({ withTimezone: true }),
 		/** The scheduler's predicted chance of recall at the moment of answering. */
@@ -222,7 +227,7 @@ export const reviewLog = pgTable(
 		reviewedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 		nextDueAt: timestamp({ withTimezone: true }).notNull(),
 	},
-	(t) => [index().on(t.cardId), ownRows(t.userId)],
+	(t) => [index().on(t.cardId), index().on(t.attemptId), ownRows(t.userId)],
 )
 
 /** Each member's own AI key, encrypted. */
@@ -523,6 +528,9 @@ export const preferences = pgTable(
 	(t) => [ownRows(t.userId)],
 )
 
+/** One thing a recall check asks: a stored question on the card, or its cue when `questionId` is null. */
+export type RecallItem = { cardId: string; questionId: string | null }
+
 /**
  * One recall check: the member's brain dump after reading one or more sections, and how it
  * covered their key ideas. The dump can be personal, so it is stored encrypted.
@@ -549,6 +557,8 @@ export const recallAttempts = pgTable(
 		status: text().$type<RecallStatus>().notNull().default('open'),
 		/** One mark per key idea, once graded. */
 		results: jsonb().$type<{ cardId: string; status: PointStatus }[]>(),
+		/** What to ask after the dump, in order: one item per key idea, a question or its cue. */
+		items: jsonb().$type<RecallItem[]>(),
 		feedback: text(),
 		gradedBy: text().$type<'code' | 'ai' | 'self'>(),
 		submittedAt: timestamp({ withTimezone: true }),

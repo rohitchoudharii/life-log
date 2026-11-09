@@ -1,9 +1,9 @@
-import { answerIdea, defaultScheduler, levelIndex, type PointStatus, type Rating, type RecallStatus } from '@life-log-club/domain'
+import { isQuestionType, levelIndex, orderForTest, type PointStatus, type QuestionType, type RecallStatus } from '@life-log-club/domain'
 import { gradeRecallRequest, parseRecallVerdict } from '@life-log-club/llm'
 import { and, asc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 import { decrypt, encrypt } from '../crypto'
 import { asUser, type Tx } from '../db/client'
-import { cards, questions, readings, recallAttempts, reviewLog, sections } from '../db/schema'
+import { cards, questions, type RecallItem, readings, recallAttempts, reviewLog, sections } from '../db/schema'
 import { callAi } from './ai'
 
 export type GradeJob = { userId: string; attemptId: string }
@@ -14,9 +14,6 @@ const openDump = (attemptId: string, textCt: string | null) => (textCt === null 
 
 const NO_IDEAS = 'No key ideas could be found in this section, so your recall can’t be checked. Try again later.'
 export const GRADE_FAILED = 'Checking your recall failed. Try again in a few minutes.'
-
-/** A dump mark as a first rating: covered is right, vague is hard, missed is forgotten. */
-const RATING: Record<PointStatus, Rating> = { covered: 'good', vague: 'hard', missing: 'again' }
 
 /**
  * The level a card starts at from its dump mark: a missed idea at recall (its cue), a vague one
@@ -37,41 +34,28 @@ async function ideasOf(tx: Tx, sectionIds: string[]) {
 }
 
 /**
- * Applies the marks: each card's schedule moves as one answer from the dump. A card not started
- * yet starts now, at the level its mark sets, so a covered idea is back in a day and a missed one
- * in 10 minutes.
+ * Picks what to ask on each key idea after the dump, and sets the level a card not started yet
+ * starts at. A missed idea is asked its cue; a vague one its lowest stored question; a covered one
+ * its highest, so it is asked something harder than the dump already gave. Missed ideas first.
+ * The cards start from their first answer.
  */
-async function applyMarks(tx: Tx, userId: string, marks: { cardId: string; status: PointStatus }[], gradedBy: 'ai' | 'code', now: Date) {
+async function prepareItems(tx: Tx, marks: { cardId: string; status: PointStatus }[]): Promise<RecallItem[]> {
 	const ids = marks.map((m) => m.cardId)
 	const rows = await tx.select().from(cards).where(inArray(cards.id, ids)).for('update')
-	const levels = await tx
-		.select({ cardId: questions.cardId, level: questions.level })
+	const stored = await tx
+		.select({ id: questions.id, cardId: questions.cardId, type: questions.type, level: questions.level })
 		.from(questions)
 		.where(and(inArray(questions.cardId, ids), isNull(questions.retiredAt)))
+	const items: (RecallItem & { type: QuestionType | null })[] = []
 	for (const { cardId, status } of marks) {
 		const card = rows.find((c) => c.id === cardId)
 		if (!card) continue
-		const grade = { correct: status === 'covered', rating: RATING[status] }
-		const next = answerIdea({ state: card.state, level: card.level, dueAt: card.dueAt }, grade, now, defaultScheduler)
-		const highest = levels.filter((q) => q.cardId === cardId).map((q) => levelIndex(q.level))
-		const level = card.startedAt ? next.level : startLevel(status, highest.length ? Math.max(...highest) : undefined)
-		await tx
-			.update(cards)
-			.set({ state: next.state, dueAt: next.dueAt, level, startedAt: card.startedAt ?? now })
-			.where(eq(cards.id, cardId))
-		await tx.insert(reviewLog).values({
-			userId,
-			cardId,
-			ask: 'self',
-			mode: 'recall',
-			rating: grade.rating,
-			correct: grade.correct,
-			response: { dump: status },
-			gradedBy,
-			reviewedAt: now,
-			nextDueAt: next.dueAt,
-		})
+		const own = stored.filter((q) => q.cardId === cardId).sort((a, b) => levelIndex(a.level) - levelIndex(b.level))
+		const question = status === 'missing' ? undefined : status === 'vague' ? own[0] : own.at(-1)
+		if (!card.startedAt) await tx.update(cards).set({ level: startLevel(status, own.length ? levelIndex(own.at(-1)!.level) : undefined) }).where(eq(cards.id, cardId))
+		items.push({ cardId, questionId: question?.id ?? null, type: question && isQuestionType(question.type) ? question.type : null })
 	}
+	return orderForTest(items, new Map(marks.map((m) => [m.cardId, m.status]))).map(({ cardId, questionId }) => ({ cardId, questionId }))
 }
 
 /**
@@ -121,14 +105,13 @@ export async function gradeAttempt({ userId, attemptId }: GradeJob, lastTry = tr
 		}
 	}
 
-	const now = new Date()
 	await asUser(userId, async (tx) => {
 		// A second job for the same attempt finds it graded and changes nothing.
 		const [current] = await tx.select({ status: recallAttempts.status }).from(recallAttempts).where(eq(recallAttempts.id, attemptId)).for('update')
 		if (current?.status !== 'grading') return
 		const results = ideas.map((c, i) => ({ cardId: c.id, status: marks[i]! }))
-		await applyMarks(tx, userId, results, gradedBy, now)
-		await tx.update(recallAttempts).set({ status: 'graded', results, feedback: feedback || null, gradedBy }).where(eq(recallAttempts.id, attemptId))
+		const items = await prepareItems(tx, results)
+		await tx.update(recallAttempts).set({ status: 'graded', results, items, feedback: feedback || null, gradedBy }).where(eq(recallAttempts.id, attemptId))
 		await tx
 			.update(sections)
 			.set({ recalledAt: sql`coalesce(${sections.recalledAt}, now())` })
@@ -136,7 +119,15 @@ export async function gradeAttempt({ userId, attemptId }: GradeJob, lastTry = tr
 	})
 }
 
-/** An attempt as the member sees it: the recall map only once it is graded. */
+const promptOf = (content: Record<string, unknown>) => ({
+	prompt: typeof content.prompt === 'string' ? content.prompt : '',
+	code: typeof content.code === 'string' ? content.code : null,
+})
+
+/**
+ * An attempt as the member sees it. Once graded: the questions to ask, then, once every one is
+ * answered, the results and the retry round. Nothing of the results shows before the last answer.
+ */
 export async function attemptView(tx: Tx, attemptId: string) {
 	const [row] = await tx
 		.select({ attempt: recallAttempts, readingTitle: readings.title })
@@ -156,15 +147,7 @@ export async function attemptView(tx: Tx, attemptId: string) {
 		.where(and(eq(sections.readingId, attempt.readingId), gt(sections.position, shown.at(-1)?.position ?? -1)))
 		.orderBy(asc(sections.position))
 		.limit(1)
-	let ideas = null
-	if (attempt.status === 'graded' && attempt.results) {
-		const rows = await tx.select().from(cards).where(inArray(cards.id, attempt.results.map((r) => r.cardId)))
-		ideas = attempt.results.flatMap((r) => {
-			const card = rows.find((c) => c.id === r.cardId)
-			return card ? [{ cardId: card.id, idea: card.answer, quote: card.quote, status: r.status, dueAt: card.dueAt }] : []
-		})
-	}
-	return {
+	const base = {
 		id: attempt.id,
 		readingId: attempt.readingId,
 		readingTitle: row.readingTitle,
@@ -172,7 +155,48 @@ export async function attemptView(tx: Tx, attemptId: string) {
 		status: attempt.status,
 		text: openDump(attempt.id, attempt.textCt),
 		feedback: attempt.feedback,
-		ideas,
 		nextSectionId: next?.id ?? null,
+		items: null,
+		ideas: null,
+		retry: null,
 	}
+	if (attempt.status !== 'graded' || !attempt.results) return base
+
+	const ids = attempt.results.map((r) => r.cardId)
+	const rows = ids.length ? await tx.select().from(cards).where(inArray(cards.id, ids)) : []
+	const asked = attempt.items ?? []
+	const qIds = asked.flatMap((i) => (i.questionId ? [i.questionId] : []))
+	const qs = qIds.length ? await tx.select().from(questions).where(inArray(questions.id, qIds)) : []
+	const log = await tx.select().from(reviewLog).where(eq(reviewLog.attemptId, attempt.id)).orderBy(asc(reviewLog.reviewedAt))
+	const answerOf = (cardId: string, mode: 'recall' | 'practice') => log.find((l) => l.cardId === cardId && l.mode === mode)
+	const ask = (cardId: string, questionId: string | null, mode: 'recall' | 'practice') => {
+		const q = questionId ? qs.find((x) => x.id === questionId) : undefined
+		const card = rows.find((c) => c.id === cardId)
+		const { prompt, code } = q ? promptOf(q.content) : { prompt: card?.prompt ?? '', code: null }
+		return { cardId, questionId: q ? questionId : null, prompt, code, answered: Boolean(answerOf(cardId, mode)) }
+	}
+	const items = asked.map((i) => ask(i.cardId, i.questionId, 'recall'))
+	if (items.some((i) => !i.answered)) return { ...base, items }
+
+	const ideas = attempt.results.flatMap((r) => {
+		const card = rows.find((c) => c.id === r.cardId)
+		if (!card) return []
+		const log = answerOf(card.id, 'recall')
+		const item = items.find((i) => i.cardId === card.id)
+		const given = log?.response && typeof log.response.answer === 'string' ? log.response.answer : null
+		const answer =
+			log && item
+				? {
+						prompt: item.prompt,
+						given,
+						correct: log.correct ?? false,
+						confidence: log.confidence,
+						reveal: log.reveal ?? { reference: card.answer, feedback: '', points: [], misconception: null, quote: card.quote },
+					}
+				: null
+		return [{ cardId: card.id, idea: card.answer, quote: card.quote, status: r.status, dueAt: card.dueAt, answer }]
+	})
+	// Retry missed ideas asks each one through its cue again; its written questions stay unasked for Review.
+	const retry = ideas.filter((i) => i.answer && !i.answer.correct).map((i) => ask(i.cardId, null, 'practice'))
+	return { ...base, items, ideas, retry }
 }

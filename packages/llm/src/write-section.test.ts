@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { parseJudgeVerdict } from './judge'
 import { parseRecallVerdict } from './recall'
 import { type Complete, MAX_IDEAS, writeSection } from './write-section'
 
@@ -99,5 +100,21 @@ describe('parseRecallVerdict', () => {
 			feedback: 'Good.',
 		})
 		expect(parseRecallVerdict('I think you did well.', 2)).toBeNull()
+	})
+})
+
+describe('parseJudgeVerdict', () => {
+	const input = { question: 'Why?', reference: 'r', mustHave: ['first point', 'second point', 'third point'], misconceptions: [], answer: 'Gaps make recall harder. Memory is a tape.' }
+
+	it('scores in code, counts unreadable points missing, caps a misconception at 1, and drops marks not in the answer', () => {
+		const reply = (body: unknown) => JSON.stringify(body)
+		expect(parseJudgeVerdict(reply({ points: ['covered', 'covered', 'covered'], feedback: 'Good.' }), input)).toMatchObject({ score: 4 })
+		expect(parseJudgeVerdict(reply({ points: ['covered', 'nope'] }), input)).toMatchObject({ score: 1, points: ['covered', 'missing', 'missing'] })
+		const wrong = parseJudgeVerdict(
+			reply({ points: ['covered', 'covered', 'covered'], misconception: 'Memory is a recording', marks: [{ quote: 'Memory is a tape.', right: false }, { quote: 'not there', right: true }] }),
+			input,
+		)
+		expect(wrong).toMatchObject({ score: 1, marks: [{ quote: 'Memory is a tape.', right: false }] })
+		expect(parseJudgeVerdict('no json here', input)).toBeNull()
 	})
 })

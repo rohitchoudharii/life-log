@@ -15,6 +15,9 @@ const code = (promise: Promise<unknown>) =>
 /** Days from now to `date`, rounded to a tenth. */
 const daysUntil = (date: Date) => Math.round(((date.getTime() - Date.now()) / DAY) * 10) / 10
 /** Moves the card's due time into the past, as if the days had passed. */
+/** A self-rated answer from the queue, with a fresh answer id. */
+const rate = (cardId: string, rating: 'again' | 'hard' | 'good' | 'easy', answerId = randomUUID()) =>
+	({ answerId, cardId, mode: 'review', ask: 'self', rating }) as const
 const makeDue = (id: string) => sql(`update cards set due_at = now() - interval '1 second' where id = $1`, [id])
 
 test('a new card is due at once, then comes back after 1, 2 and 3 days, then a longer gap', async () => {
@@ -29,7 +32,7 @@ test('a new card is due at once, then comes back after 1, 2 and 3 days, then a l
 
 	const gaps: number[] = []
 	for (let i = 0; i < 4; i++) {
-		const { dueAt } = await client.review.answer({ id: card.id, rating: 'good' })
+		const { dueAt } = await client.review.answer(rate(card.id, 'good'))
 		gaps.push(daysUntil(dueAt))
 		expect((await client.review.due({})).total).toBe(0)
 		await makeDue(card.id)
@@ -48,10 +51,13 @@ test('a new card is due at once, then comes back after 1, 2 and 3 days, then a l
 test('a forgotten card comes back in 10 minutes, and an answer to a card not yet due is refused', async () => {
 	const { client } = await newMember()
 	const card = await client.review.add({ id: randomUUID(), kind: 'lesson', prompt: 'Say the number first', answer: 'In salary talks, anchor high.' })
-	const { dueAt } = await client.review.answer({ id: card.id, rating: 'again' })
+	const first = rate(card.id, 'again')
+	const { dueAt } = await client.review.answer(first)
 	expect(Math.round((dueAt.getTime() - Date.now()) / 60_000)).toBe(10)
-	// A double tap on the same answer counts once.
-	expect(await code(client.review.answer({ id: card.id, rating: 'again' }))).toBe('CONFLICT')
+	// A double tap or a retry of the same answer counts once and gives the same result.
+	expect((await client.review.answer(first)).dueAt).toEqual(dueAt)
+	// Another answer to a card that is no longer due is refused.
+	expect(await code(client.review.answer(rate(card.id, 'again')))).toBe('CONFLICT')
 	expect(await sql('select 1 from review_log where card_id = $1', [card.id])).toHaveLength(1)
 })
 
@@ -78,7 +84,7 @@ test("a member can't review another member's cards or link a card to their entri
 	const card = await a.client.review.add({ id: randomUUID(), kind: 'idea', prompt: 'A prompt', answer: 'A answer' })
 
 	expect(await b.client.review.due({})).toEqual({ cards: [], total: 0 })
-	expect(await code(b.client.review.answer({ id: card.id, rating: 'easy' }))).toBe('NOT_FOUND')
+	expect(await code(b.client.review.answer(rate(card.id, 'easy')))).toBe('NOT_FOUND')
 	expect(
 		await code(b.client.review.add({ id: randomUUID(), kind: 'lesson', prompt: 'x', answer: 'y', entryId: entry.id })),
 	).toBe('NOT_FOUND')

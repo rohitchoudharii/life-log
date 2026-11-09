@@ -68,6 +68,16 @@ export const CONFIDENCES = ['guessing', 'think_so', 'sure'] as const
 export type Confidence = (typeof CONFIDENCES)[number]
 
 /**
+ * Confidence only ever lowers credit. A right answer called a guess is spaced like a hard one, so
+ * a lucky guess doesn't push its idea far out, and `easy` needs Sure or no confidence at all.
+ */
+export function withConfidence(grade: Grade, confidence: Confidence | null | undefined): Grade {
+	if (grade.correct && confidence === 'guessing') return { ...grade, rating: 'hard' }
+	if (grade.rating === 'easy' && confidence === 'think_so') return { ...grade, rating: 'good' }
+	return grade
+}
+
+/**
  * A question type owns the shape of its stored content, what the learner may see before
  * answering, the response it accepts, and how that response is graded. Add a type by adding an
  * entry here and a renderer in the app.
@@ -161,4 +171,24 @@ export function toPrompt(type: QuestionType, content: unknown): QuestionPrompt {
 export function gradeResponse(type: QuestionType, content: unknown, response: unknown, judge: Judge): Promise<Grade> {
 	const t = questionTypes[type] as QuestionTypeDef<z.ZodType, z.ZodType, unknown>
 	return t.grade(content, t.response.parse(response), judge)
+}
+
+/**
+ * Orders the questions of a recall check. Written ones come before ones with options or steps,
+ * because seeing options hints at later answers. Within each, ideas the dump missed come first,
+ * then vague ones, then the rest, shuffled so topics mix. `type` is null for a cue.
+ */
+export function orderForTest<Q extends { type: QuestionType | null; cardId: string }>(
+	questions: Q[],
+	marks: ReadonlyMap<string, PointStatus>,
+	random = Math.random,
+): Q[] {
+	const rank = (q: Q) => {
+		const mark = marks.get(q.cardId)
+		return (q.type && showsChoices(q.type) ? 3 : 0) + (mark === 'missing' ? 0 : mark === 'vague' ? 1 : 2)
+	}
+	return questions
+		.map((q) => ({ q, rank: rank(q), r: random() }))
+		.sort((a, b) => a.rank - b.rank || a.r - b.r)
+		.map(({ q }) => q)
 }
