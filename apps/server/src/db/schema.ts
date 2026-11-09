@@ -185,9 +185,10 @@ export const readings = pgTable(
 		author: text(),
 		/**
 		 * `pdf_url` is a link that turned out to be a PDF; `web_book` a link to the contents page of
-		 * a book whose chapters are each their own page.
+		 * a book whose chapters are each their own page; `web_capture` a page the extension saved
+		 * from the member's own browser.
 		 */
-		source: text().$type<'url' | 'pdf_url' | 'web_book' | 'epub' | 'pdf_upload'>().notNull(),
+		source: text().$type<'url' | 'pdf_url' | 'web_book' | 'web_capture' | 'epub' | 'pdf_upload'>().notNull(),
 		/** The link as the member added it, normalised. The same link always finds the same reading. */
 		requestedUrl: text(),
 		/** The page's canonical address, or where the link ended after redirects. */

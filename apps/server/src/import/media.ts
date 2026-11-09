@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import type { Block } from '@life-log-club/domain'
 import sharp from 'sharp'
 
 const ACCEPTED = new Set(['jpeg', 'png', 'webp', 'gif', 'avif', 'heif', 'tiff'])
@@ -27,4 +29,40 @@ export async function prepareImage(input: Uint8Array): Promise<PreparedImage | n
 	} catch {
 		return null
 	}
+}
+
+const BATCH = 4
+
+/**
+ * Gets each image's bytes with `bytesOf`, four at a time, and re-encodes them with prepareImage.
+ * `withImages` then points an image block at its stored image by id, the same id for every block
+ * with the same source; an image that can't be used keeps its description, if it has one.
+ * `images` holds the re-encoded images to store, by id.
+ */
+export async function prepareImages(srcs: Iterable<string>, bytesOf: (src: string) => Uint8Array | null | Promise<Uint8Array | null>) {
+	const unique = [...new Set(srcs)]
+	const prepared = new Map<string, PreparedImage | null>()
+	for (let k = 0; k < unique.length; k += BATCH)
+		await Promise.all(
+			unique.slice(k, k + BATCH).map(async (src) => {
+				const bytes = await bytesOf(src)
+				prepared.set(src, bytes ? await prepareImage(bytes) : null)
+			}),
+		)
+	const images = new Map<string, PreparedImage>()
+	const ids = new Map<string, string>()
+	const withImages = (b: Block): Block[] => {
+		if (b.type !== 'image') return [b]
+		const image = b.src ? prepared.get(b.src) : null
+		// An image that can't be shown (an icon, an SVG) keeps its description, if it has one.
+		if (!image) return b.alt ? [{ type: 'image', mediaId: null, alt: b.alt }] : []
+		let id = ids.get(b.src!)
+		if (!id) {
+			id = randomUUID()
+			ids.set(b.src!, id)
+			images.set(id, image)
+		}
+		return [{ type: 'image', mediaId: id, alt: b.alt, width: image.width, height: image.height }]
+	}
+	return { images, withImages }
 }

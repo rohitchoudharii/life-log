@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import { MAX_FILE_BYTES } from '@life-log-club/contract'
 import {
 	ARTICLE_HEADINGS_MIN_WORDS,
@@ -19,7 +18,7 @@ import { type Book, bookKind, parseBook } from './book'
 import { decodeHtml, ExtractError, extractArticle, SIGN_IN } from './extract'
 import { FetchError, safeFetch, TOO_LARGE } from './fetch'
 import { addAiHeadings } from './headings'
-import { type PreparedImage, prepareImage } from './media'
+import { type PreparedImage, prepareImages } from './media'
 import { robotsFor } from './robots'
 import { findBook, MAX_BOOK_PAGES, type WebBook } from './web-book'
 
@@ -250,32 +249,14 @@ async function readWebBook(userId: string, readingId: string): Promise<Step> {
 	return { title: reading.title, author: null, publishedAt: null, sourceUrl: reading.sourceUrl, sections: splitBook(chapters), images: new Map() }
 }
 
-const IMAGE_BATCH = 4
-
 /** Reads the member's uploaded file, and re-encodes the book's own images for the reader. */
 async function readFile(userId: string, readingId: string): Promise<Imported> {
 	const [file] = await asUser(userId, (tx) => tx.select().from(readingFiles).where(eq(readingFiles.readingId, readingId)))
 	const kind = file && bookKind(file.data)
 	if (!kind) throw new ExtractError(NOT_A_BOOK)
 	const book = await parseBook(kind, new Uint8Array(file.data), file.name.replace(/\.(epub|pdf)$/i, '') || 'Untitled')
-	const prepared = new Map<string, PreparedImage | null>()
-	for (let k = 0; k < book.images.length; k += IMAGE_BATCH)
-		await Promise.all(book.images.slice(k, k + IMAGE_BATCH).map(async ([src, bytes]) => prepared.set(src, await prepareImage(bytes))))
-	const images = new Map<string, PreparedImage>()
-	const ids = new Map<string, string>()
-	const withImages = (b: Block): Block[] => {
-		if (b.type !== 'image') return [b]
-		const image = b.src ? prepared.get(b.src) : null
-		// An image that can't be shown (an icon, an SVG) keeps its description, if it has one.
-		if (!image) return b.alt ? [{ type: 'image', mediaId: null, alt: b.alt }] : []
-		let id = ids.get(b.src!)
-		if (!id) {
-			id = randomUUID()
-			ids.set(b.src!, id)
-			images.set(id, image)
-		}
-		return [{ type: 'image', mediaId: id, alt: b.alt, width: image.width, height: image.height }]
-	}
+	const files = new Map(book.images)
+	const { images, withImages } = await prepareImages(files.keys(), (src) => files.get(src) ?? null)
 	const chapters: Chapter[] = book.chapters.map((c) => ({ ...c, blocks: c.blocks.flatMap(withImages) }))
 	return { title: book.title, author: book.author, publishedAt: null, sourceUrl: null, sections: bookSections({ ...book, chapters }), images }
 }
@@ -451,7 +432,7 @@ export async function addChapterHeadings({ userId, readingId, chapter }: { userI
 }
 
 /** The row for a section at `position` in its reading. */
-const sectionRow = (userId: string, readingId: string, position: number, s: BookSection) => ({
+export const sectionRow = (userId: string, readingId: string, position: number, s: BookSection) => ({
 	userId,
 	readingId,
 	position,

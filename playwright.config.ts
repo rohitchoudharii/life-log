@@ -8,8 +8,10 @@ export default defineConfig({
 	globalSetup: './e2e/global-setup.ts',
 	use: { baseURL: `http://localhost:${WEB_PORT}`, trace: 'retain-on-failure' },
 	projects: [
-		{ name: 'desktop', use: { ...devices['Desktop Chrome'] } },
-		{ name: 'phone', use: { ...devices['Pixel 7'] } },
+		{ name: 'desktop', use: { ...devices['Desktop Chrome'] }, testIgnore: /extension\.spec\.ts/ },
+		{ name: 'phone', use: { ...devices['Pixel 7'] }, testIgnore: /extension\.spec\.ts/ },
+		// The Chrome extension, in a Chromium it launches itself; a popup has no phone size.
+		{ name: 'extension', testMatch: /extension\.spec\.ts/ },
 	],
 	webServer: [
 		{

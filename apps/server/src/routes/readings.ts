@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto'
 import { ORPCError } from '@orpc/server'
-import { and, asc, desc, eq, isNull, or, type SQL, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, or, type SQL, sql } from 'drizzle-orm'
 import { asUser, type Tx } from '../db/client'
-import { aiKeys, media, readingFiles, readings, sections } from '../db/schema'
+import { aiKeys, bookChapters, books, media, readingFiles, readings, sections } from '../db/schema'
 import { bookKind } from '../import/book'
-import { NOT_A_BOOK, NOT_A_LINK, normaliseUrl } from '../import/reading'
+import { type Captured, readCapture } from '../import/capture'
+import { ExtractError } from '../import/extract'
+import { NOT_A_BOOK, NOT_A_LINK, normaliseUrl, sectionRow } from '../import/reading'
 import { enqueueChapterHeadings, enqueueImport } from '../jobs'
+import { putInBook } from './books'
 import { authed } from '../orpc'
 
 // Written out in full: inside a subquery Drizzle leaves column names unqualified, and `id` would
@@ -96,7 +99,139 @@ async function addReading(userId: string, values: NewReading, same: SQL, created
 	return toReading(row)
 }
 
+/** The kinds of reading a saved page can replace: articles, not books or files. */
+const ARTICLE_SOURCES = ['url', 'web_capture', 'pdf_url'] as const
+
+/**
+ * The article the member already has from this page: added from the same link, or with the same
+ * own address. A link merged into another reading means that reading.
+ */
+async function savedPage(tx: Tx, url: string, sourceUrl = url) {
+	const [found] = await tx
+		.select({ id: readings.id })
+		.from(readings)
+		.where(
+			and(
+				inArray(readings.source, [...ARTICLE_SOURCES]),
+				or(eq(readings.requestedUrl, url), inArray(readings.sourceUrl, [url, sourceUrl])),
+			),
+		)
+		.orderBy(sql`${readings.requestedUrl} = ${url} desc nulls last`, desc(readings.createdAt))
+		.limit(1)
+	const row = found && (await resolve(tx, found.id))
+	// A chapter link merged into a whole web book is that book, which a saved page can't replace.
+	return row && (ARTICLE_SOURCES as readonly string[]).includes(row.reading.source) ? row : undefined
+}
+
+/** Stores a saved page's sections and images, replacing whatever the reading held. */
+async function storeCapture(tx: Tx, userId: string, readingId: string, page: Captured) {
+	await tx.delete(sections).where(eq(sections.readingId, readingId))
+	await tx.delete(media).where(eq(media.readingId, readingId))
+	if (page.images.size)
+		await tx.insert(media).values(
+			[...page.images].map(([id, image]) => ({
+				id,
+				userId,
+				readingId,
+				contentType: 'image/webp',
+				bytes: image.data.length,
+				width: image.width,
+				height: image.height,
+				data: image.data,
+			})),
+		)
+	await tx.insert(sections).values(page.sections.map((s, position) => sectionRow(userId, readingId, position, s)))
+}
+
 export const readingsRoutes = {
+	capture: authed.readings.capture.handler(async ({ input, context }) => {
+		const userId = context.user.id
+		let page: Captured
+		try {
+			page = await readCapture(input)
+		} catch (error) {
+			if (error instanceof ExtractError) throw new ORPCError('BAD_REQUEST', { message: error.message })
+			throw error
+		}
+		return asUser(userId, async (tx) => {
+			const content = {
+				title: page.title,
+				author: page.author,
+				publishedAt: page.publishedAt,
+				source: 'web_capture' as const,
+				sourceUrl: page.sourceUrl,
+				status: 'ready' as const,
+				error: null,
+				wordCount: page.wordCount,
+			}
+			const saved = await savedPage(tx, page.url, page.sourceUrl)
+			let readingId = saved?.reading.id
+			if (readingId) {
+				// Saving again always replaces the page, and the member reads it afresh.
+				await tx.select({ id: readings.id }).from(readings).where(eq(readings.id, readingId)).for('update')
+				await tx
+					.update(readings)
+					.set({ ...content, readAt: null, deletedAt: null, partOfBook: null })
+					.where(eq(readings.id, readingId))
+			} else {
+				const [inserted] = await tx
+					.insert(readings)
+					.values({ id: input.id, userId, requestedUrl: page.url, ...content })
+					.onConflictDoNothing()
+					.returning({ id: readings.id })
+				// The id is someone else's, or the link is already one of the member's books or files.
+				if (!inserted) throw new ORPCError('CONFLICT', { message: 'Life Log Club already has this page as a book or a file. Open it there.' })
+				readingId = inserted.id
+			}
+			await storeCapture(tx, userId, readingId, page)
+			if (input.bookId) await putInBook(tx, userId, input.bookId, readingId)
+			else await tx.delete(bookChapters).where(eq(bookChapters.readingId, readingId))
+			const row = await live(tx, readingId)
+			return { reading: toReading(row), updated: Boolean(saved) }
+		})
+	}),
+
+	captureTarget: authed.readings.captureTarget.handler(({ input, context }) =>
+		asUser(context.user.id, async (tx) => {
+			const url = normaliseUrl(input.url)
+			if (!url) throw new ORPCError('BAD_REQUEST', { message: NOT_A_LINK })
+			const saved = await savedPage(tx, url)
+			const reading = saved && !saved.reading.deletedAt ? saved : null
+			let book = reading?.book ?? null
+			if (!book) {
+				// The book the member last added a chapter to from the same site.
+				const host = (u: string | null) => (u ? (URL.parse(u)?.hostname.replace(/^www\./, '') ?? '') : '')
+				const recent = await tx
+					.select({ id: books.id, title: books.title, requestedUrl: readings.requestedUrl, sourceUrl: readings.sourceUrl })
+					.from(bookChapters)
+					.innerJoin(books, eq(books.id, bookChapters.bookId))
+					.innerJoin(readings, eq(readings.id, bookChapters.readingId))
+					.where(and(isNull(books.deletedAt), isNull(readings.deletedAt)))
+					.orderBy(desc(bookChapters.addedAt))
+					.limit(200)
+				const same = recent.find((r) => [r.requestedUrl, r.sourceUrl].some((u) => host(u) === host(url)))
+				book = same ? { id: same.id, title: same.title } : null
+			}
+			const words = book
+				? (
+						await tx
+							.select({ words: readings.wordCount })
+							.from(bookChapters)
+							.innerJoin(readings, eq(readings.id, bookChapters.readingId))
+							.where(and(eq(bookChapters.bookId, book.id), isNull(readings.deletedAt), eq(readings.status, 'ready')))
+					)
+						.map((r) => r.words)
+						.sort((a, b) => a - b)
+				: []
+			return {
+				readingId: reading?.reading.id ?? null,
+				words: reading?.reading.status === 'ready' ? reading.reading.wordCount : null,
+				book,
+				bookWords: words.length ? words[Math.floor(words.length / 2)]! : null,
+			}
+		}),
+	),
+
 	add: authed.readings.add.handler(({ input, context }) => {
 		const userId = context.user.id
 		const url = normaliseUrl(input.url)

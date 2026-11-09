@@ -118,7 +118,7 @@ test("books hold only the member's own articles from links", async ({}, info) =>
 	})
 	const aBook = await a.client.books.create({ id: randomUUID(), title: 'Mine' })
 	expect(await code(a.client.books.addChapter({ bookId: aBook.id, readingId: file.id }))).toBe(
-		'BAD_REQUEST: Only articles added from a link can be chapters of a book.',
+		'BAD_REQUEST: Only articles can be chapters of a book, not a file or another book.',
 	)
 	// B can't see A's book, put A's article in a book of B's, or reuse A's book id.
 	const bBook = await b.client.books.create({ id: randomUUID(), title: 'Theirs' })

@@ -260,7 +260,7 @@ function ReadingItem({ reading }: { reading: Reading }) {
 					</div>
 				)}
 				{/* Only an article from a link can be a chapter of the member's book. */}
-				{reading.source === 'url' && (
+				{(reading.source === 'url' || reading.source === 'web_capture') && (
 					<div className="flex flex-wrap items-center gap-2 border-t border-world-line px-4 py-3">
 						<AddToBook reading={reading} />
 					</div>

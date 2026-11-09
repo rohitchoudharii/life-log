@@ -25,7 +25,9 @@ const toBook = ({ book: b, chapterCount, readCount, continueId }: BookRow) => ({
 	createdAt: b.createdAt,
 })
 
-export const NOT_AN_ARTICLE = 'Only articles added from a link can be chapters of a book.'
+export const NOT_AN_ARTICLE = 'Only articles can be chapters of a book, not a file or another book.'
+/** Articles from a link, and pages the extension saved. */
+const ARTICLES = new Set(['url', 'web_capture'])
 const notFound = () => new ORPCError('NOT_FOUND', { message: 'That book does not exist. It may have been removed.' })
 
 async function liveBook(tx: Tx, id: string) {
@@ -46,6 +48,28 @@ async function withChapters(tx: Tx, id: string) {
 		.where(and(eq(bookChapters.bookId, id), isNull(readings.deletedAt)))
 		.orderBy(asc(bookChapters.position), asc(bookChapters.addedAt))
 	return { ...toBook(book), chapters: rows.map(toReading) }
+}
+
+/**
+ * Puts a reading at the end of a live book, or moves it there from another book. A reading already
+ * in this book stays where it is. Only articles; `bookId` and `readingId` must be the member's.
+ */
+export async function putInBook(tx: Tx, userId: string, bookId: string, readingId: string) {
+	await liveBook(tx, bookId)
+	await tx.select({ id: books.id }).from(books).where(eq(books.id, bookId)).for('update')
+	// A link merged into another reading is that reading.
+	const { reading } = await liveReading(tx, readingId)
+	if (!ARTICLES.has(reading.source)) throw new ORPCError('BAD_REQUEST', { message: NOT_AN_ARTICLE })
+	const [current] = await tx.select().from(bookChapters).where(eq(bookChapters.readingId, reading.id))
+	if (current?.bookId === bookId) return
+	const [{ next } = { next: 0 }] = await tx
+		.select({ next: sql<number>`coalesce(max(${bookChapters.position}) + 1, 0)::int` })
+		.from(bookChapters)
+		.where(eq(bookChapters.bookId, bookId))
+	await tx
+		.insert(bookChapters)
+		.values({ readingId: reading.id, bookId, userId, position: next })
+		.onConflictDoUpdate({ target: bookChapters.readingId, set: { bookId, position: next, addedAt: new Date() } })
 }
 
 /** The chapter row of a reading, with its book locked so moves in it happen one at a time. */
@@ -103,22 +127,7 @@ export const booksRoutes = {
 
 	addChapter: authed.books.addChapter.handler(({ input, context }) =>
 		asUser(context.user.id, async (tx) => {
-			await liveBook(tx, input.bookId)
-			await tx.select({ id: books.id }).from(books).where(eq(books.id, input.bookId)).for('update')
-			// A link merged into another reading is that reading.
-			const { reading } = await liveReading(tx, input.readingId)
-			if (reading.source !== 'url') throw new ORPCError('BAD_REQUEST', { message: NOT_AN_ARTICLE })
-			const [current] = await tx.select().from(bookChapters).where(eq(bookChapters.readingId, reading.id))
-			if (current?.bookId !== input.bookId) {
-				const [{ next } = { next: 0 }] = await tx
-					.select({ next: sql<number>`coalesce(max(${bookChapters.position}) + 1, 0)::int` })
-					.from(bookChapters)
-					.where(eq(bookChapters.bookId, input.bookId))
-				await tx
-					.insert(bookChapters)
-					.values({ readingId: reading.id, bookId: input.bookId, userId: context.user.id, position: next })
-					.onConflictDoUpdate({ target: bookChapters.readingId, set: { bookId: input.bookId, position: next, addedAt: new Date() } })
-			}
+			await putInBook(tx, context.user.id, input.bookId, input.readingId)
 			return withChapters(tx, input.bookId)
 		}),
 	),

@@ -65,8 +65,11 @@ export const Reading = z.object({
 	progress: z.object({ done: z.int(), total: z.int() }).nullable(),
 	/** For a chapter page of a web book: the book it belongs to, which `addBook` adds whole. */
 	partOfBook: z.object({ title: z.string(), pages: z.int() }).nullable(),
-	/** `url` is an article from a link, the only kind of reading a member's book can hold. */
-	source: z.enum(['url', 'pdf_url', 'web_book', 'epub', 'pdf_upload']),
+	/**
+	 * `url` is an article from a link and `web_capture` one the extension saved from the member's
+	 * browser: the only kinds of reading a member's book can hold.
+	 */
+	source: z.enum(['url', 'pdf_url', 'web_book', 'web_capture', 'epub', 'pdf_upload']),
 	/** When the member reached the end of its last section. */
 	readAt: z.date().nullable(),
 	/** The member's book this reading is a chapter of. */
@@ -129,6 +132,12 @@ export const Section = z.object({
 	sourceUrl: z.string().nullable(),
 })
 export type Section = z.infer<typeof Section>
+
+/** Limits on a page the extension saves: its HTML, and the images read in the member's tab. */
+export const MAX_CAPTURE_HTML_CHARS = 5 * 1024 * 1024
+export const MAX_CAPTURE_IMAGES = 40
+export const MAX_CAPTURE_IMAGE_BYTES = 5 * 1024 * 1024
+export const MAX_CAPTURE_IMAGES_BYTES = 20 * 1024 * 1024
 
 /** The largest EPUB or PDF a member can add. */
 export const MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -242,6 +251,40 @@ export const contract = {
 		/** Hides the reading; `restore` brings it back (undo). Removed readings are deleted for good after 30 days. */
 		remove: oc.input(EntryId).output(Ok),
 		restore: oc.input(EntryId).output(Reading),
+		/**
+		 * Saves a page from the member's own browser (the extension), for pages the server can't
+		 * open, such as one behind a login. `html` is the rendered page and `images` the bytes of
+		 * its images, read in the tab, by the address they load from; the server never fetches
+		 * the page. Saving the same page again replaces it and marks it not read. `bookId` puts
+		 * it in that book, and null takes it out of any. The client picks the id of a new reading.
+		 */
+		capture: oc
+			.input(
+				z.object({
+					id: z.uuid(),
+					url: z.string().trim().min(1).max(2000),
+					html: z.string().max(MAX_CAPTURE_HTML_CHARS, 'This page is too large to save.'),
+					bookId: z.uuid().nullable(),
+					images: z
+						.array(z.object({ src: z.string().max(4000), file: z.file().max(MAX_CAPTURE_IMAGE_BYTES) }))
+						.max(MAX_CAPTURE_IMAGES)
+						.refine((images) => images.reduce((n, i) => n + i.file.size, 0) <= MAX_CAPTURE_IMAGES_BYTES, 'These images are too large to save.'),
+				}),
+			)
+			.output(z.object({ reading: Reading, updated: z.boolean() })),
+		/**
+		 * What the extension's popup needs before Save: the reading already saved from this page
+		 * and its words, and the book to offer: the page's own book, else the book the member last
+		 * added to from the same site, with the usual length of its chapters.
+		 */
+		captureTarget: oc.input(z.object({ url: z.string().trim().min(1).max(2000) })).output(
+			z.object({
+				readingId: z.uuid().nullable(),
+				words: z.int().nullable(),
+				book: z.object({ id: z.uuid(), title: z.string() }).nullable(),
+				bookWords: z.int().nullable(),
+			}),
+		),
 		/** Marks the reading read: the member reached the end of its last section. The first time counts. */
 		markRead: oc.input(EntryId).output(Ok),
 	},

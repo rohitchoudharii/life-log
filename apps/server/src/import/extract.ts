@@ -152,9 +152,10 @@ export type Article = {
  * Finds the article in a page with Mozilla Readability, as Firefox Reader View does, and turns it
  * into our blocks, with its title, author, published date and canonical address. The page's HTML
  * is only parsed here, never stored or shown. A sign-in form with little else, or a short text the
- * page marks as for subscribers, is refused as a page behind a sign-in.
+ * page marks as for subscribers, is refused as a page behind a sign-in, unless the page was
+ * `captured` from the member's own browser, where they are signed in.
  */
-export function extractArticle(html: string, url: string): Article {
+export function extractArticle(html: string, url: string, { captured = false }: { captured?: boolean } = {}): Article {
 	const { document } = parseHTML(html)
 	// A page that leaves out its <html>, <head> and <body> tags (Eloquent JavaScript) has its text
 	// outside the empty body in linkedom, where Readability never looks.
@@ -188,7 +189,7 @@ export function extractArticle(html: string, url: string): Article {
 			el.setAttribute('style', (el.getAttribute('style') ?? '').replace(/visibility\s*:\s*hidden\s*;?/gi, ''))
 	const pageWords = countWords(document.body?.textContent ?? '')
 	const article = new Readability(document as unknown as ConstructorParameters<typeof Readability>[0], { charThreshold: 300, keepClasses: true }).parse()
-	if (signInForm && pageWords < 200) throw new ExtractError(SIGN_IN)
+	if (signInForm && pageWords < 200 && !captured) throw new ExtractError(SIGN_IN)
 	if (!article?.content) throw new ExtractError("We couldn't find an article on this page.")
 	const { document: doc } = parseHTML(`<!doctype html><html><body><div id="life-log-club-article">${article.content}</div></body></html>`)
 	const blocks = htmlToBlocks(doc.getElementById('life-log-club-article') as unknown as DomNode, url)
@@ -198,14 +199,16 @@ export function extractArticle(html: string, url: string): Article {
 	while (blocks[0]?.type === 'paragraph' && /^(\d{1,3}|[IVXLC]{1,7})\.?$/.test(blocks[0].text)) blocks.shift()
 	// The same, when the page's heading is not an <h1> (mdBook): its first heading and then a separator.
 	const lead = blocks[0]?.type === 'heading' ? blocks[0].text : ''
-	const named = [h1, lead].find((h) => h.length >= 3 && squashLower(found).startsWith(squashLower(h)) && /^(\s*[-|:·–—]|$)/.test(found.slice(h.length)))
+	// Readability can also cut a title at its own colon ("Chapter 1: Why…"); the page's <title> still has it whole.
+	const opens = (t: string, h: string) => squashLower(t).startsWith(squashLower(h)) && /^(\s*[-|:·–—]|$)/.test(t.slice(h.length))
+	const named = [h1, lead].find((h) => h.length >= 3 && (opens(found, h) || opens(pageTitle, h)))
 	const title = named || found || new URL(url).hostname
 	// The page's title repeated as its first heading would make an empty first section.
 	const first = blocks[0]
 	if (first?.type === 'heading' && squashLower(first.text) === squashLower(title)) blocks.shift()
 	const words = blocks.reduce((n, b) => n + countWords(blockText(b)), 0)
 	if (!words) throw new ExtractError("We couldn't find an article on this page.")
-	if (paid && words < 600) throw new ExtractError(SIGN_IN)
+	if (paid && words < 600 && !captured) throw new ExtractError(SIGN_IN)
 	const published = article.publishedTime ? new Date(article.publishedTime) : null
 	return {
 		title: title.slice(0, 200),

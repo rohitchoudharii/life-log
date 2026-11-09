@@ -11,7 +11,8 @@ Life Log Club makes sure you don't forget what life teaches you, and lets you lo
 - `packages/contract`: the typed API contract that every client uses.
 - `packages/domain`: product rules shared by the server and the clients: entry types and the review schedule.
 - `packages/llm`: the Anthropic and OpenAI providers, used with each member's own key.
-- `apps/mobile/assets`, `apps/extension`: brand assets for the phone app and the Chrome extension, which come later.
+- `apps/extension`: the Chrome extension, built with WXT, that saves the page in the current tab.
+- `apps/mobile/assets`: brand assets for the phone app, which comes later.
 - `e2e`: end-to-end tests with Playwright.
 
 ## Run it on your computer
@@ -60,15 +61,31 @@ Paste a link into **Add a reading** on Mind. The reading shows at once as "Impor
 
 - The server fetches only public web pages. It refuses private and local addresses, checked again on every redirect and when it connects, and pages over 5 MB.
 - The same link added twice is one reading, and so are two links to the same page.
-- A page behind a sign-in fails with a message. The Chrome extension will capture those later.
+- A page behind a sign-in fails with a message. The Chrome extension saves those (below).
 - **Add a file** (or drop one on Mind) adds an EPUB or PDF of up to 25 MB. The file is kept, its images are stored as WebP and shown only to the member who added it, and it is read in a worker thread so a large book can't stall the server. DRM-protected books and scanned PDFs are refused with a message. A link to a PDF is read the same way.
 - A book is split by its own outline: the EPUB table of contents or the PDF bookmarks, up to three levels, with a part page kept as the parent of its chapters. A PDF without bookmarks is split at its headings, and one with neither reads as an article. Front and back matter is recognised from the book's EPUB semantics, then by title (`import/matter.ts`): the cover, copyright, contents, index and similar pages are left out, and a bibliography is kept to read as a reference, with no recall.
 - A book's footnotes and endnotes open in a popup from their marker in the text, and are never part of the text a section is recalled from. In an EPUB, a note link is one the book marks as a note, or a short superscript label that points at a footnote, an aside or a notes file. In a PDF, it is a small raised number with a footnote of the same number in the small lines at the foot of its page.
 - A link to the contents page of a book with one page per chapter adds the whole book (`import/web-book.ts`). It knows the lists that mdBook, Sphinx and O'Reilly's HTMLBook write, and a list a site labels as its contents. Each chapter page becomes a section, fetched one at a time with a pause between them, in batches of 20, and the card counts the pages as they come. Life Log Club obeys the site's robots.txt and refuses a book longer than 200 pages. A page that can't be added is kept as a short reference section that says why and links to it. **Open original** opens the page a section came from.
 - A link to one chapter of such a book adds that chapter as an article. Its card names the book ("Part of *The Rust Programming Language* · 111 pages") with **Add the whole book**, which turns the chapter into the book. The book is found through the chapter's Up or Contents link, two links up at most. A chapter of a book the member already has opens that book.
 - **New book** on Mind makes a book from articles, such as a book behind a login with one page per chapter. **Add to book** on an article from a link puts it in a book (a book can't hold a file or another book). A book shows on Mind as one card, with "2 of 5 chapters read" and **Continue**, which opens the first chapter not read. On the book's page the chapters are dragged, or moved with the arrows, into order, and **Remove from book** makes a chapter an article again. A reading counts as read when the end of its last section comes into view.
+- **New book** on Mind and **Add to book** also take pages the Chrome extension saved.
 - A long article with no headings of its own gets headings from the member's AI key. The AI only says where headings go; the text never changes. A long book chapter with none is cut by length at import, and gets its AI headings when the member first opens it, so a book costs AI calls only for the chapters that are read.
 - Import tests use saved real pages and books in `apps/server/src/import/fixtures/`. The e2e tests fetch from a local test site (`e2e/fake-site.ts`).
+
+## Chrome extension
+
+The extension saves the page in the current tab, for pages the server can't open, such as a book on a site behind a login. Click its button, pick the book (it starts on the last book you added to from the same site, or **No book**, or **New book…**), and **Save**.
+
+- It uses your Life Log Club session in the same browser: sign in to the web app first. Chrome sends the app's cookie with the extension's requests because the extension has access to the app's site. Your cookies for other sites never leave the browser.
+- The tab sends the page as you see it and the bytes of its images. The server reads the article with the same code as a pasted link, and fetches only the images the tab couldn't read (a site that blocks other sites from reading them).
+- Saving the same page again replaces it and marks it not read.
+- Before Save, the popup warns when the page looks like a preview: it stops at a subscribe box, or it is much shorter than the page says, than the book's chapters usually are, or than the copy you saved.
+
+Build it for your app's address, then load `apps/extension/.output/chrome-mv3` in `chrome://extensions` with **Developer mode** on and **Load unpacked**:
+
+```bash
+WXT_APP_ORIGIN=http://localhost:5173 pnpm --filter @life-log-club/extension build
+```
 
 ## Review
 
@@ -98,4 +115,4 @@ pnpm test        # unit and integration tests
 pnpm e2e         # end-to-end tests in a browser, on desktop and phone sizes
 ```
 
-`pnpm e2e` starts its own API and web app on ports 8788 and 5174, with a separate `lifelog_e2e` database. Run `pnpm exec playwright install chromium` once before the first run.
+`pnpm e2e` starts its own API and web app on ports 8788 and 5174, with a separate `lifelog_e2e` database. The `extension` project builds the extension for them and loads it into its own Chromium. Run `pnpm exec playwright install chromium` once before the first run.
