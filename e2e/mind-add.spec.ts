@@ -4,6 +4,7 @@ import { ORPCError } from '@orpc/client'
 import { expect, type Page, test } from '@playwright/test'
 import { newMember } from './api'
 import { FAKE_SITE, GOOD_ANTHROPIC_KEY } from './env'
+import { proof } from './proof'
 import { blankPdf, testEpub } from '../apps/server/src/import/test-books'
 import { joinAs } from './session'
 
@@ -78,6 +79,82 @@ test('links the server must not or cannot open fail with a message saying what t
 	await addLink(page, 'hello world')
 	await expect(page.getByRole('status')).toContainText("That isn't a web address. Check the link and try again.")
 	await expect(readings(page)).toHaveCount(4)
+})
+
+const PASTED = `## Feedback
+
+Practice without **feedback** repeats the same mistakes. A teacher, or a [clear result](https://example.com/results#top), shows what to fix.
+
+## Mental models
+
+- Experts see patterns where beginners see pieces.
+- The patterns come from years of focused practice.`
+
+test('pasted text with two headings opens at once as a reading with two sections', async ({ page, isMobile }, testInfo) => {
+	await joinAs(page)
+	await page.goto('/mind')
+	await page.getByRole('button', { name: 'Paste text' }).click()
+	await page.getByLabel('Text to read').fill(PASTED)
+	await proof(page, testInfo, 'paste-text')
+	await page.getByRole('button', { name: 'Add', exact: true }).click()
+
+	await expect(page).toHaveURL(/\/mind\/read\//)
+	await expect(page.getByRole('heading', { level: 1, name: 'Feedback' })).toBeVisible()
+	await expect(page.getByText('Practice without feedback repeats the same mistakes.')).toBeVisible()
+	await expect(page.getByRole('link', { name: 'clear result' })).toHaveAttribute('href', 'https://example.com/results')
+	if (isMobile) await page.getByRole('button', { name: /^Contents/ }).click()
+	const contents = page.getByRole('navigation', { name: 'Contents' })
+	await expect(contents.getByRole('button')).toHaveText(['Feedback', 'Mental models'])
+	await proof(page, testInfo, 'pasted-reading')
+	await contents.getByRole('button', { name: 'Mental models' }).click()
+	await expect(page.getByRole('heading', { level: 2, name: 'Mental models' })).toBeVisible()
+	await expect(page.getByRole('listitem').filter({ hasText: 'Experts see patterns where beginners see pieces.' })).toBeVisible()
+
+	await page.goto('/mind')
+	await expect(readings(page)).toHaveCount(1)
+	await expect(readings(page)).toContainText('2 sections')
+	await proof(page, testInfo, 'pasted-on-mind')
+})
+
+test('text pasted into the link box turns it into a text box, line breaks kept; Paste a link instead turns it back', async ({ page }) => {
+	await joinAs(page)
+	await page.goto('/mind')
+	await page.getByLabel('Add a reading').focus()
+	await page.evaluate((text) => {
+		const data = new DataTransfer()
+		data.setData('text/plain', text)
+		document.activeElement!.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+	}, PASTED)
+	await expect(page.getByLabel('Text to read')).toHaveValue(PASTED)
+	await expect(page.getByLabel('Text to read')).toBeFocused()
+	await page.getByRole('button', { name: 'Paste a link instead' }).click()
+	await expect(page.getByLabel('Add a reading')).toHaveValue('')
+	// A link pasted into the box stays a link.
+	await page.getByLabel('Add a reading').focus()
+	await page.evaluate(() => {
+		const data = new DataTransfer()
+		data.setData('text/plain', 'https://example.com/article')
+		document.activeElement!.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+	})
+	await expect(page.getByLabel('Text to read')).toHaveCount(0)
+})
+
+test('pasted text: a retry returns the same reading, a title can be given, empty text is refused, and another member can\'t read it', async ({}, info) => {
+	test.skip(info.project.name !== 'desktop', 'API only')
+	const a = await newMember('A')
+	const b = await newMember('B')
+	const code = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => (e instanceof ORPCError ? e.code : String(e)))
+	const id = randomUUID()
+	const reading = await a.client.readings.addText({ id, text: PASTED })
+	expect(reading).toMatchObject({ id, title: 'Feedback', source: 'paste', status: 'ready', sectionCount: 2 })
+	expect((await a.client.readings.addText({ id, text: 'Something else entirely, typed again.' })).title).toBe('Feedback')
+	expect(await a.client.readings.list()).toHaveLength(1)
+	const titled = await a.client.readings.addText({ id: randomUUID(), text: 'Rest days count as training, not as time lost.', title: 'Rest' })
+	expect(titled).toMatchObject({ title: 'Rest', sectionCount: 1 })
+	expect(await code(a.client.readings.addText({ id: randomUUID(), text: '   ' }))).toBe('BAD_REQUEST')
+	expect(await code(a.client.readings.addText({ id: randomUUID(), text: '## Only a heading' }))).toBe('BAD_REQUEST')
+	expect(await code(b.client.readings.get({ id }))).toBe('NOT_FOUND')
+	expect(await code(b.client.readings.addText({ id, text: PASTED }))).toBe('CONFLICT')
 })
 
 test("a member can't see another member's reading, by id or in their list", async ({}, info) => {

@@ -197,6 +197,9 @@ export const ReviewItem = z.object({
 })
 export type ReviewItem = z.infer<typeof ReviewItem>
 
+/** About 80,000 words: a long report, not a book. Books come as files. */
+export const MAX_PASTE_CHARS = 500_000
+
 /** Why a member reports a question. */
 export const REPORT_REASONS = ['wrong_answer', 'unclear', 'not_in_text'] as const
 
@@ -222,7 +225,7 @@ export const Reading = z.object({
 	 * `url` is an article from a link and `web_capture` one the extension saved from the member's
 	 * browser: the only kinds of reading a member's book can hold.
 	 */
-	source: z.enum(['url', 'pdf_url', 'web_book', 'web_capture', 'epub', 'pdf_upload']),
+	source: z.enum(['url', 'pdf_url', 'web_book', 'web_capture', 'epub', 'pdf_upload', 'paste']),
 	/** When the member reached the end of its last section. */
 	readAt: z.date().nullable(),
 	/** Where the member stopped reading, which opening the reading goes back to; null before they open it. */
@@ -423,6 +426,20 @@ export const contract = {
 		 * removed one is restored, and a failed one is tried again.
 		 */
 		add: oc.input(z.object({ id: z.uuid(), url: z.string().trim().min(1, 'Paste a link').max(2000) })).output(Reading),
+		/**
+		 * Adds pasted text or Markdown to read. It is split into sections at once, like an article,
+		 * and comes back `ready`. The title is `title`, else the first heading, else the first
+		 * words. The client picks the id; a retry returns the same reading.
+		 */
+		addText: oc
+			.input(
+				z.object({
+					id: z.uuid(),
+					text: z.string().trim().min(1, 'Paste some text to read.').max(MAX_PASTE_CHARS, 'That is too much text to paste at once. Paste one part at a time.'),
+					title: z.string().trim().max(200).optional(),
+				}),
+			)
+			.output(Reading),
 		/**
 		 * Adds an EPUB or PDF file, which the server reads in the background, like `add`. The file
 		 * type comes from its bytes, not its name. The same file added twice is one reading.

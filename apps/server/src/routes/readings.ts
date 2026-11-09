@@ -6,6 +6,7 @@ import { aiKeys, bookChapters, books, cards, media, readingFiles, readings, read
 import { bookKind } from '../import/book'
 import { type Captured, readCapture } from '../import/capture'
 import { ExtractError } from '../import/extract'
+import { readPaste } from '../import/paste'
 import { NOT_A_BOOK, NOT_A_LINK, normaliseUrl, sectionRow } from '../import/reading'
 import { enqueueChapterHeadings, enqueueImport, enqueueWriteSection } from '../jobs'
 import { putInBook } from './books'
@@ -261,6 +262,29 @@ export const readingsRoutes = {
 					data,
 				}),
 		)
+	}),
+
+	addText: authed.readings.addText.handler(({ input, context }) => {
+		const userId = context.user.id
+		let paste: ReturnType<typeof readPaste>
+		try {
+			paste = readPaste(input.text, input.title)
+		} catch (error) {
+			if (error instanceof ExtractError) throw new ORPCError('BAD_REQUEST', { message: error.message })
+			throw error
+		}
+		return asUser(userId, async (tx) => {
+			const [inserted] = await tx
+				.insert(readings)
+				.values({ id: input.id, userId, title: paste.title, source: 'paste', status: 'ready', wordCount: paste.wordCount })
+				.onConflictDoNothing()
+				.returning({ id: readings.id })
+			if (inserted) await tx.insert(sections).values(paste.sections.map((s, position) => sectionRow(userId, input.id, position, s)))
+			// A retry finds the reading the first try added. An id that belongs to someone else is invisible here.
+			else if (!(await tx.select({ id: readings.id }).from(readings).where(eq(readings.id, input.id))).length)
+				throw new ORPCError('CONFLICT', { message: 'That reading id is taken. Try again.' })
+			return toReading(await live(tx, input.id))
+		})
 	}),
 
 	addBook: authed.readings.addBook.handler(async ({ input, context }) => {

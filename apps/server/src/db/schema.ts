@@ -270,7 +270,7 @@ export const readings = pgTable(
 		 * a book whose chapters are each their own page; `web_capture` a page the extension saved
 		 * from the member's own browser.
 		 */
-		source: text().$type<'url' | 'pdf_url' | 'web_book' | 'web_capture' | 'epub' | 'pdf_upload'>().notNull(),
+		source: text().$type<'url' | 'pdf_url' | 'web_book' | 'web_capture' | 'epub' | 'pdf_upload' | 'paste'>().notNull(),
 		/** The link as the member added it, normalised. The same link always finds the same reading. */
 		requestedUrl: text(),
 		/** The page's canonical address, or where the link ended after redirects. */

@@ -143,12 +143,83 @@ export function useFileDrop() {
 	}
 }
 
-/** One box to paste a link into, and Add; and a button to add an EPUB or PDF file. */
+/**
+ * Adds pasted text. It is ready at once, so the reader opens on it straight away. The client
+ * picks the id, so a retry can't make a second one.
+ */
+function useAddText(done: () => void) {
+	const queryClient = useQueryClient()
+	const navigate = useNavigate()
+	const toast = useToast()
+	return useMutation({
+		mutationFn: (text: string) => client.readings.addText({ id: crypto.randomUUID(), text }),
+		onError: (error) => toast({ text: errorMessage(error) }),
+		onSuccess: (reading) => {
+			done()
+			void navigate({ to: '/mind/read/$readingId', params: { readingId: reading.id } })
+		},
+		onSettled: () => queryClient.invalidateQueries({ queryKey: listKey }),
+	})
+}
+
+/** Anything with a space or a line break in it is text to read, not a link. */
+const isText = (pasted: string) => /\s/.test(pasted.trim())
+
+const box = 'min-w-0 flex-1 basis-full rounded-xl bg-transparent px-3 py-2 font-sans text-base outline-none placeholder:text-world-muted md:basis-0'
+const primary =
+	'rounded-xl bg-world-accent px-5 py-2 font-sans text-sm font-semibold text-world-on-accent transition hover:opacity-90 active:scale-[0.97] disabled:opacity-60'
+const secondary = 'rounded-xl border border-world-line px-4 py-2 font-sans text-sm font-medium whitespace-nowrap transition hover:bg-world active:scale-[0.97]'
+
+/**
+ * One box to paste a link into, and Add; a button to add an EPUB or PDF file; and Paste text,
+ * which turns the box into a text area. Text pasted into the link box turns it too.
+ */
 export function AddReading() {
 	const [url, setUrl] = useState('')
+	const [text, setText] = useState<string | null>(null)
 	const add = useAddReading()
 	const addFile = useAddFile()
+	const addText = useAddText(() => setText(null))
 	const picker = useRef<HTMLInputElement>(null)
+	const area = useRef<HTMLTextAreaElement>(null)
+	const toText = (value: string) => {
+		setText(value)
+		requestAnimationFrame(() => area.current?.focus())
+	}
+
+	if (text !== null)
+		return (
+			<form
+				className="grid gap-2 rounded-2xl border border-world-line bg-world-card p-2"
+				onSubmit={(e) => {
+					e.preventDefault()
+					if (text.trim()) addText.mutate(text)
+				}}
+			>
+				<label className="sr-only" htmlFor="add-text">
+					Text to read
+				</label>
+				<textarea
+					id="add-text"
+					ref={area}
+					required
+					rows={8}
+					placeholder="Paste text or Markdown. The first heading, or the first words, becomes the title."
+					value={text}
+					onChange={(e) => setText(e.target.value)}
+					className={`${box} min-h-40 resize-y`}
+				/>
+				<div className="flex flex-wrap gap-2">
+					<button type="submit" disabled={addText.isPending} className={primary}>
+						{addText.isPending ? 'Adding…' : 'Add'}
+					</button>
+					<button type="button" onClick={() => setText(null)} className={secondary}>
+						Paste a link instead
+					</button>
+				</div>
+			</form>
+		)
+
 	return (
 		<form
 			className="flex flex-wrap gap-2 rounded-2xl border border-world-line bg-world-card p-2 md:flex-nowrap"
@@ -167,22 +238,25 @@ export function AddReading() {
 				type="text"
 				inputMode="url"
 				autoComplete="off"
-				placeholder="Paste a link, or drop an EPUB or PDF"
+				placeholder="Paste a link or text, or drop an EPUB or PDF"
 				value={url}
 				onChange={(e) => setUrl(e.target.value)}
-				className="min-w-0 flex-1 basis-full rounded-xl bg-transparent px-3 py-2 font-sans text-base outline-none placeholder:text-world-muted md:basis-0"
+				onPaste={(e) => {
+					const pasted = e.clipboardData.getData('text')
+					if (!url && isText(pasted)) {
+						e.preventDefault()
+						toText(pasted)
+					}
+				}}
+				className={box}
 			/>
-			<button
-				type="submit"
-				className="rounded-xl bg-world-accent px-5 py-2 font-sans text-sm font-semibold text-world-on-accent transition hover:opacity-90 active:scale-[0.97]"
-			>
+			<button type="submit" className={primary}>
 				Add
 			</button>
-			<button
-				type="button"
-				onClick={() => picker.current?.click()}
-				className="rounded-xl border border-world-line px-4 py-2 font-sans text-sm font-medium whitespace-nowrap transition hover:bg-world active:scale-[0.97]"
-			>
+			<button type="button" onClick={() => toText('')} className={secondary}>
+				Paste text
+			</button>
+			<button type="button" onClick={() => picker.current?.click()} className={secondary}>
 				Add a file
 			</button>
 			<input
