@@ -12,15 +12,22 @@ export const Link = z.object({
 })
 export type Link = z.infer<typeof Link>
 
+/**
+ * A note marker in a block's text: note `id` opens at character `at` (of item `item`, in a list).
+ * The marker's own label ("3") is not in the text, so it never reaches recall or word counts.
+ */
+export const NoteRef = z.object({ at: z.number().int().min(0), id: z.string(), item: z.number().int().min(0).optional() })
+export type NoteRef = z.infer<typeof NoteRef>
+
 // Content is stored as our own blocks, never as foreign HTML, so clients render it natively and
 // nothing from a page can run when it is shown.
 export const Block = z.discriminatedUnion('type', [
 	/** `source: 'ai'` marks a heading the AI added to an article that had none (issue #1). */
 	z.object({ type: z.literal('heading'), level: z.number().int().min(1).max(6), text: z.string(), source: z.literal('ai').optional() }),
-	z.object({ type: z.literal('paragraph'), text: z.string(), links: z.array(Link).optional() }),
-	z.object({ type: z.literal('list'), ordered: z.boolean(), items: z.array(z.string()), links: z.array(Link).optional() }),
+	z.object({ type: z.literal('paragraph'), text: z.string(), links: z.array(Link).optional(), notes: z.array(NoteRef).optional() }),
+	z.object({ type: z.literal('list'), ordered: z.boolean(), items: z.array(z.string()), links: z.array(Link).optional(), notes: z.array(NoteRef).optional() }),
 	z.object({ type: z.literal('code'), language: z.string().optional(), text: z.string() }),
-	z.object({ type: z.literal('quote'), text: z.string(), links: z.array(Link).optional() }),
+	z.object({ type: z.literal('quote'), text: z.string(), links: z.array(Link).optional(), notes: z.array(NoteRef).optional() }),
 	/**
 	 * An image the server stores and serves itself. `mediaId` is null until it is saved; until then
 	 * clients show the alt text. `src` is where it came from and is never rendered.
@@ -37,6 +44,13 @@ export const Block = z.discriminatedUnion('type', [
 	z.object({ type: z.literal('page'), number: z.number().int().positive() }),
 ])
 export type Block = z.infer<typeof Block>
+
+/** A footnote or endnote, which opens from its markers. `label` is what the marker shows ("3", "*"). */
+export const Note = z.object({ id: z.string(), label: z.string(), blocks: z.array(Block) })
+export type Note = z.infer<typeof Note>
+
+/** The ids of the notes a block's markers open, in order. */
+export const noteIds = (block: Block) => ('notes' in block ? (block.notes ?? []).map((n) => n.id) : [])
 
 /**
  * `body` sections are read and recalled. `reference` sections (a bibliography) are kept to read,
@@ -124,7 +138,7 @@ export type Chapter = { title: string; level: number; kind: SectionKind; blocks:
  * section of a chapter that has no headings and was cut by length alone, so the AI can add
  * headings when the member opens it.
  */
-export type BookSection = SectionDraft & { chapter: number; headingsPending: boolean }
+export type BookSection = SectionDraft & { chapter: number; headingsPending: boolean; notes: Note[] }
 
 /**
  * Splits a book chapter by chapter: each chapter is split like an article (issue #1), under a
@@ -134,9 +148,16 @@ export type BookSection = SectionDraft & { chapter: number; headingsPending: boo
  *
  * A body chapter with no headings is marked `headingsPending` when it is longer than
  * `headingsFrom` words: by default only chapters long enough to be cut, and for a PDF that
- * reads as one article, ARTICLE_HEADINGS_MIN_WORDS.
+ * reads as one article, ARTICLE_HEADINGS_MIN_WORDS. `notes` are the book's notes; each section
+ * gets the ones its markers open.
  */
-export function splitBook(chapters: readonly Chapter[], { headingsFrom = MAX_SECTION_WORDS + 1 } = {}): BookSection[] {
+export function splitBook(
+	chapters: readonly Chapter[],
+	{ headingsFrom = MAX_SECTION_WORDS + 1, notes = [] }: { headingsFrom?: number; notes?: readonly Note[] } = {},
+): BookSection[] {
+	const byId = new Map(notes.map((n) => [n.id, n]))
+	// Each section keeps the notes its own markers open, so its text and notes travel together.
+	const notesOf = (blocks: Block[]) => [...new Set(blocks.flatMap(noteIds))].flatMap((id) => byId.get(id) ?? [])
 	return withParents(chapters).flatMap((chapter, index) => {
 		const top = Math.min(6, ...chapter.blocks.flatMap((b) => (b.type === 'heading' ? [b.level] : [])))
 		// The chapter's title is the top heading, so its own headings start one level below it.
@@ -152,6 +173,7 @@ export function splitBook(chapters: readonly Chapter[], { headingsFrom = MAX_SEC
 			kind: chapter.kind,
 			chapter: index,
 			headingsPending,
+			notes: notesOf(s.blocks),
 		}))
 	})
 }

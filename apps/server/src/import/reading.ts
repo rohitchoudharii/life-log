@@ -96,15 +96,15 @@ type Imported = {
 }
 
 const asArticle = (blocks: Block[], title: string): BookSection[] =>
-	splitSections(blocks, title).map((s) => ({ ...s, chapter: 0, headingsPending: false }))
+	splitSections(blocks, title).map((s) => ({ ...s, chapter: 0, headingsPending: false, notes: [] }))
 
 /**
  * A book's sections. Long chapters with no headings are only cut by length here; the AI adds
  * their headings when the member first opens one (see addChapterHeadings), so a long novel
  * doesn't cost an AI call for every chapter the member may never read.
  */
-const bookSections = (book: Pick<Book, 'chapters' | 'article'>) =>
-	splitBook(book.chapters, book.article ? { headingsFrom: ARTICLE_HEADINGS_MIN_WORDS } : {})
+const bookSections = (book: Pick<Book, 'chapters' | 'article' | 'notes'>) =>
+	splitBook(book.chapters, { notes: book.notes, ...(book.article && { headingsFrom: ARTICLE_HEADINGS_MIN_WORDS }) })
 
 async function readLink(userId: string, url: string): Promise<Imported> {
 	const page = await readPage(url)
@@ -146,7 +146,7 @@ async function readFile(userId: string, readingId: string): Promise<Imported> {
 		return [{ type: 'image', mediaId: id, alt: b.alt, width: image.width, height: image.height }]
 	}
 	const chapters: Chapter[] = book.chapters.map((c) => ({ ...c, blocks: c.blocks.flatMap(withImages) }))
-	return { title: book.title, author: book.author, publishedAt: null, sourceUrl: null, sections: bookSections({ chapters, article: book.article }), images }
+	return { title: book.title, author: book.author, publishedAt: null, sourceUrl: null, sections: bookSections({ ...book, chapters }), images }
 }
 
 /**
@@ -250,7 +250,11 @@ export async function addChapterHeadings({ userId, readingId, chapter }: { userI
 	const replaced =
 		withHeadings === blocks
 			? null
-			: splitBook([{ title: first.title, level: first.level, kind: 'body', blocks: withHeadings }]).map((s) => ({ ...s, chapter, headingsPending: false }))
+			: splitBook([{ title: first.title, level: first.level, kind: 'body', blocks: withHeadings }], { notes: parts.flatMap((p) => p.notes) }).map((s) => ({
+					...s,
+					chapter,
+					headingsPending: false,
+				}))
 
 	await asUser(userId, async (tx) => {
 		// One change to a reading's sections at a time.
@@ -292,6 +296,7 @@ const sectionRow = (userId: string, readingId: string, position: number, s: Book
 	kind: s.kind,
 	chapter: s.chapter,
 	headingsPending: s.headingsPending,
+	notes: s.notes,
 })
 
 function fail(userId: string, readingId: string, error: string) {

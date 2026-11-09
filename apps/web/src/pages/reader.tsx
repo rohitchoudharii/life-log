@@ -1,38 +1,70 @@
 import type { ReadingWithContents } from '@life-log-club/contract'
-import type { Block, Link as TextLink } from '@life-log-club/domain'
+import type { Block, Note, NoteRef, Link as TextLink } from '@life-log-club/domain'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { errorMessage, orpc } from '../rpc'
 
-/** Text with its link ranges as links that open the original page in a new tab. */
-function withLinks(text: string, links: TextLink[] = []): ReactNode {
-	if (!links.length) return text
+type NoteMarks = { notes: Map<string, Note>; open: (note: Note) => void }
+
+/**
+ * Text with its link ranges as links that open the original page in a new tab, and its note
+ * markers as small buttons that open the note.
+ */
+function Inline({ text, links = [], refs = [], marks }: { text: string; links?: TextLink[]; refs?: NoteRef[]; marks: NoteMarks }) {
+	const cuts = [...new Set([0, text.length, ...links.flatMap((l) => [l.start, l.end]), ...refs.map((r) => r.at)])].sort((a, b) => a - b)
 	const out: ReactNode[] = []
-	let at = 0
-	for (const link of links) {
-		if (link.start < at) continue
-		out.push(text.slice(at, link.start))
+	cuts.forEach((at, i) => {
+		for (const ref of refs.filter((r) => r.at === at)) {
+			const note = marks.notes.get(ref.id)
+			if (!note) continue
+			out.push(
+				<sup key={`n${at}${ref.id}`}>
+					<button
+						type="button"
+						aria-label={`Note ${note.label}`}
+						onClick={() => marks.open(note)}
+						className="rounded px-0.5 font-sans text-xs font-semibold text-world-accent hover:bg-world-card focus-visible:outline-2 focus-visible:outline-world-accent"
+					>
+						{note.label}
+					</button>
+				</sup>,
+			)
+		}
+		const end = cuts[i + 1]
+		if (end === undefined || end === at) return
+		const piece = text.slice(at, end)
+		const link = links.find((l) => l.start <= at && end <= l.end)
 		out.push(
-			<a key={link.start} href={link.href} target="_blank" rel="noopener noreferrer nofollow" className="text-world-accent underline underline-offset-2">
-				{text.slice(link.start, link.end)}
-			</a>,
+			link ? (
+				<a key={at} href={link.href} target="_blank" rel="noopener noreferrer nofollow" className="text-world-accent underline underline-offset-2">
+					{piece}
+				</a>
+			) : (
+				piece
+			),
 		)
-		at = link.end
-	}
-	out.push(text.slice(at))
+	})
 	return out
 }
 
 /** Renders our own blocks as plain elements; nothing from the original page's HTML is used. */
-function BlockView({ block }: { block: Block }) {
+function BlockView({ block, marks }: { block: Block; marks: NoteMarks }) {
 	switch (block.type) {
 		case 'heading':
 			return <h3 className="mt-6 text-xl font-semibold">{block.text}</h3>
 		case 'paragraph':
-			return <p>{withLinks(block.text, block.links)}</p>
+			return (
+				<p>
+					<Inline text={block.text} links={block.links} refs={block.notes} marks={marks} />
+				</p>
+			)
 		case 'quote':
-			return <blockquote className="border-l-2 border-world-line pl-4 italic">{withLinks(block.text, block.links)}</blockquote>
+			return (
+				<blockquote className="border-l-2 border-world-line pl-4 italic">
+					<Inline text={block.text} links={block.links} refs={block.notes} marks={marks} />
+				</blockquote>
+			)
 		case 'code':
 			return (
 				<pre className="overflow-x-auto rounded-xl bg-world-card p-4 font-mono text-sm leading-relaxed whitespace-pre-wrap ring-1 ring-world-line">
@@ -44,7 +76,9 @@ function BlockView({ block }: { block: Block }) {
 			return (
 				<List className={`grid gap-1 pl-6 ${block.ordered ? 'list-decimal' : 'list-disc'}`}>
 					{block.items.map((item, i) => (
-						<li key={i}>{withLinks(item, block.links?.filter((l) => l.item === i))}</li>
+						<li key={i}>
+							<Inline text={item} links={block.links?.filter((l) => l.item === i)} refs={block.notes?.filter((n) => n.item === i)} marks={marks} />
+						</li>
 					))}
 				</List>
 			)
@@ -63,6 +97,36 @@ function BlockView({ block }: { block: Block }) {
 	}
 }
 
+/** A footnote or endnote, over the text it belongs to. Esc, Close, or a click outside closes it. */
+function NoteDialog({ note, onClose }: { note: Note; onClose: () => void }) {
+	const ref = useRef<HTMLDialogElement>(null)
+	useEffect(() => {
+		ref.current?.showModal()
+	}, [])
+	const none: NoteMarks = { notes: new Map(), open: () => {} }
+	return (
+		<dialog
+			ref={ref}
+			aria-label={`Note ${note.label}`}
+			onClose={onClose}
+			onClick={(e) => e.target === ref.current && onClose()}
+			className="m-auto w-[min(100%-2rem,36rem)] rounded-2xl bg-world p-0 font-world text-world-ink shadow-2xl ring-1 ring-world-line backdrop:bg-black/30"
+		>
+			<div className="grid gap-3 p-5 text-base leading-relaxed">
+				<div className="flex items-center justify-between font-sans">
+					<p className="text-sm font-semibold">Note {note.label}</p>
+					<button type="button" onClick={onClose} className="rounded-lg px-2 py-1 text-sm text-world-muted hover:bg-world-card">
+						Close <kbd className="ml-1 rounded border border-world-line px-1 text-xs">Esc</kbd>
+					</button>
+				</div>
+				{note.blocks.map((b, i) => (
+					<BlockView key={i} block={b} marks={none} />
+				))}
+			</div>
+		</dialog>
+	)
+}
+
 function SectionView({ id, readingId }: { id: string; readingId: string }) {
 	const queryClient = useQueryClient()
 	const section = useQuery({
@@ -78,8 +142,11 @@ function SectionView({ id, readingId }: { id: string; readingId: string }) {
 		wasPending.current = pending === true
 	}, [pending, queryClient, readingId])
 
+	const [openNote, setOpenNote] = useState<Note | null>(null)
+
 	if (section.isError) return <p role="alert">{errorMessage(section.error)}</p>
 	if (!section.data) return <p className="text-world-muted">Loading…</p>
+	const marks: NoteMarks = { notes: new Map(section.data.notes.map((n) => [n.id, n])), open: setOpenNote }
 	const note = section.data.headingsPending
 		? 'Adding headings to this long chapter…'
 		: section.data.kind === 'reference'
@@ -94,8 +161,9 @@ function SectionView({ id, readingId }: { id: string; readingId: string }) {
 				{note && <p className={`font-sans text-xs text-world-muted ${section.data.headingsPending ? 'animate-pulse' : ''}`}>{note}</p>}
 			</header>
 			{section.data.blocks.map((b, i) => (
-				<BlockView key={i} block={b} />
+				<BlockView key={i} block={b} marks={marks} />
 			))}
+			{openNote && <NoteDialog note={openNote} onClose={() => setOpenNote(null)} />}
 		</article>
 	)
 }

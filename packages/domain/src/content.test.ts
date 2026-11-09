@@ -110,6 +110,19 @@ describe('splitBook', () => {
 		expect(splitBook([ch('Paper', 1, [p(1200)])], { headingsFrom: 1000 })).toMatchObject([{ headingsPending: true, wordCount: 1200 }])
 		expect(splitBook([ch('Bibliography', 1, [p(3000)], 'reference')]).every((s) => !s.headingsPending)).toBe(true)
 	})
+
+	it('gives each section the notes its own markers open', () => {
+		const note = (id: string) => ({ id, label: id, blocks: [p(3)] })
+		const marked = (ids: string[]): Block => ({ type: 'paragraph', text: 'text', notes: ids.map((id) => ({ at: 4, id })) })
+		const sections = splitBook([ch('One', 1, [marked(['a']), h(2, 'Inside'), marked(['b', 'a'])]), ch('Two', 1, [p(5)])], {
+			notes: [note('a'), note('b'), note('unused')],
+		})
+		expect(sections.map((s) => [s.title, s.notes.map((n) => n.id)])).toEqual([
+			['One', ['a']],
+			['Inside', ['b', 'a']],
+			['Two', []],
+		])
+	})
 })
 
 describe('insertHeadings', () => {

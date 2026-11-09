@@ -50,6 +50,13 @@
       "when": 1794192632423,
       "tag": "0006_book_outline",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794201786037,
+      "tag": "0007_notes",
+      "breakpoints": true
     }
   ]
 }

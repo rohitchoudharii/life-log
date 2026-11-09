@@ -1,4 +1,4 @@
-import type { Block, Link } from '@life-log-club/domain'
+import type { Block, Link, NoteRef } from '@life-log-club/domain'
 
 /** The few DOM members the converter reads, so any DOM (browser, linkedom, jsdom) works. */
 export type DomNode = {
@@ -12,6 +12,12 @@ export type DomNode = {
 const ELEMENT = 1
 const TEXT = 3
 
+/**
+ * A note marker the EPUB reader puts where a note link was: `<ll-note data-note="id">`. With
+ * `notes` on, it becomes a marker with no text; otherwise (a web page) it is dropped.
+ */
+export const NOTE_TAG = 'LL-NOTE'
+
 /** Never content: dropped with everything inside them. */
 const SKIP = new Set([
 	'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'IFRAME', 'FRAME', 'OBJECT', 'EMBED', 'SVG', 'MATH', 'CANVAS',
@@ -20,7 +26,7 @@ const SKIP = new Set([
 /** Text-level elements: their text joins the paragraph around them. */
 const INLINE = new Set([
 	'A', 'SPAN', 'EM', 'STRONG', 'B', 'I', 'U', 'S', 'CODE', 'SUB', 'SUP', 'MARK', 'SMALL', 'ABBR', 'TIME', 'Q',
-	'CITE', 'KBD', 'SAMP', 'VAR', 'DEL', 'INS', 'LABEL', 'BDI', 'BDO', 'DFN', 'FONT', 'BR', 'WBR',
+	'CITE', 'KBD', 'SAMP', 'VAR', 'DEL', 'INS', 'LABEL', 'BDI', 'BDO', 'DFN', 'FONT', 'BR', 'WBR', NOTE_TAG,
 ])
 const MAX_IMAGES = 40
 /** Pages may embed small images inline; anything else must be a web address the server fetches. */
@@ -28,13 +34,14 @@ const DATA_IMAGE = /^data:image\/(png|jpeg|gif|webp);base64,[a-z0-9+/=\s]+$/i
 
 const WEB = ['http:', 'https:'] as const
 
+
 const tag = (n: DomNode) => n.nodeName.toUpperCase()
 const attr = (n: DomNode, name: string) => n.getAttribute?.(name) ?? null
 const squash = (s: string | null) => (s ?? '').replace(/\s+/g, ' ').trim()
 const children = (n: DomNode) => Array.from(n.childNodes)
 
-/** Text with the address it links to, if it is inside a link. */
-type Run = { text: string; href: string | null }
+/** Text with the address it links to, if it is inside a link; or a note marker, with no text. */
+type Run = { text: string; href: string | null; note?: string }
 
 /** Where a link goes: an http(s) page other than this one, without its #fragment. */
 function linkHref(a: DomNode, baseUrl: string): string | null {
@@ -53,25 +60,32 @@ function linkHref(a: DomNode, baseUrl: string): string | null {
 }
 
 /** Text of a subtree without skipped elements, so a script inside a paragraph adds nothing. */
-function runsOf(n: DomNode, baseUrl: string, href: string | null = null): Run[] {
+function runsOf(n: DomNode, baseUrl: string, notes = false, href: string | null = null): Run[] {
 	if (n.nodeType === TEXT) return [{ text: n.textContent ?? '', href }]
 	if (n.nodeType !== ELEMENT || SKIP.has(tag(n))) return []
 	if (tag(n) === 'BR') return [{ text: '\n', href }]
+	if (tag(n) === NOTE_TAG) {
+		const note = notes && attr(n, 'data-note')
+		return note ? [{ text: '', href, note }] : []
+	}
 	const inner = tag(n) === 'A' ? (linkHref(n, baseUrl) ?? href) : href
-	return children(n).flatMap((c) => runsOf(c, baseUrl, inner))
+	return children(n).flatMap((c) => runsOf(c, baseUrl, notes, inner))
 }
 
 const textOf = (n: DomNode) => runsOf(n, '').map((r) => r.text).join('')
 
 /**
- * Joins runs into one line of text, with whitespace squashed as `squash` does, and the ranges of
- * it that are links. A space between two words of the same link belongs to the link.
+ * Joins runs into one line of text, with whitespace squashed as `squash` does, the ranges of it
+ * that are links, and where its note markers are. A space between two words of the same link
+ * belongs to the link.
  */
-function squashRuns(runs: Run[]): { text: string; links: Link[] } {
+function squashRuns(runs: Run[]): { text: string; links: Link[]; notes: NoteRef[] } {
 	let text = ''
 	const owner: (string | null)[] = []
+	const notes: NoteRef[] = []
 	let gap = false
-	for (const run of runs)
+	for (const run of runs) {
+		if (run.note) notes.push({ at: text.length, id: run.note })
 		for (let i = 0; i < run.text.length; i++) {
 			const ch = run.text[i]!
 			if (/\s/.test(ch)) {
@@ -86,6 +100,7 @@ function squashRuns(runs: Run[]): { text: string; links: Link[] } {
 			text += ch
 			owner.push(run.href)
 		}
+	}
 	const links: Link[] = []
 	for (let i = 0; i < owner.length; i++) {
 		const href = owner[i]
@@ -95,7 +110,7 @@ function squashRuns(runs: Run[]): { text: string; links: Link[] } {
 		links.push({ start: i, end, href })
 		i = end - 1
 	}
-	return { text, links }
+	return { text, links, notes }
 }
 
 function has(n: DomNode, test: (el: DomNode) => boolean): boolean {
@@ -142,15 +157,20 @@ function mathText(n: DomNode): string | null {
  * addresses its links point at: no markup, attributes, or styles, so nothing from the page can
  * run or load when it is shown.
  * Images become image blocks with their source address, for the server to download. A book's
- * own images use its archive's scheme, given in `imageSchemes`.
+ * own images use its archive's scheme, given in `imageSchemes`. With `notes`, the EPUB reader's
+ * note markers are kept as markers.
  */
-export function htmlToBlocks(root: DomNode, baseUrl: string, { imageSchemes = WEB }: { imageSchemes?: readonly string[] } = {}): Block[] {
+export function htmlToBlocks(
+	root: DomNode,
+	baseUrl: string,
+	{ imageSchemes = WEB, notes = false }: { imageSchemes?: readonly string[]; notes?: boolean } = {},
+): Block[] {
 	const out: Block[] = []
 	let inline: Run[] = []
 	let images = 0
 	const flush = () => {
-		const { text, links } = squashRuns(inline)
-		if (text) out.push({ type: 'paragraph', text, ...(links.length && { links }) })
+		const { text, links, notes: refs } = squashRuns(inline)
+		if (text) out.push({ type: 'paragraph', text, ...(links.length && { links }), ...(refs.length && { notes: refs }) })
 		inline = []
 	}
 	const image = (n: DomNode) => {
@@ -191,7 +211,7 @@ export function htmlToBlocks(root: DomNode, baseUrl: string, { imageSchemes = WE
 			} else if (INLINE.has(name)) {
 				// A linked image (<a><img></a>) is common; anything else inline is just text.
 				if (has(c, (el) => tag(el) === 'IMG')) walk(c)
-				else inline.push(...runsOf(c, baseUrl))
+				else inline.push(...runsOf(c, baseUrl, notes))
 			} else if (/^H[1-6]$/.test(name)) {
 				flush()
 				const text = squash(textOf(c))
@@ -207,15 +227,18 @@ export function htmlToBlocks(root: DomNode, baseUrl: string, { imageSchemes = WE
 				// An image in an item ends the list there, shows the image, and the list goes on after it.
 				let items: string[] = []
 				let links: Link[] = []
+				let refs: NoteRef[] = []
 				const push = () => {
-					if (items.length) out.push({ type: 'list', ordered: name === 'OL', items, ...(links.length && { links }) })
+					if (items.length) out.push({ type: 'list', ordered: name === 'OL', items, ...(links.length && { links }), ...(refs.length && { notes: refs }) })
 					items = []
 					links = []
+					refs = []
 				}
 				for (const li of children(c).filter((x) => x.nodeType === ELEMENT && tag(x) === 'LI')) {
-					const line = squashRuns(runsOf(li, baseUrl))
+					const line = squashRuns(runsOf(li, baseUrl, notes))
 					if (line.text) {
 						links.push(...line.links.map((l) => ({ ...l, item: items.length })))
+						refs.push(...line.notes.map((n) => ({ ...n, item: items.length })))
 						items.push(line.text)
 					}
 					const imgs = imagesIn(li)
@@ -227,8 +250,8 @@ export function htmlToBlocks(root: DomNode, baseUrl: string, { imageSchemes = WE
 				push()
 			} else if (name === 'BLOCKQUOTE') {
 				flush()
-				const { text, links } = squashRuns(runsOf(c, baseUrl))
-				if (text) out.push({ type: 'quote', text, ...(links.length && { links }) })
+				const quote = squashRuns(runsOf(c, baseUrl, notes))
+				if (quote.text) out.push({ type: 'quote', text: quote.text, ...(quote.links.length && { links: quote.links }), ...(quote.notes.length && { notes: quote.notes }) })
 				imagesIn(c).forEach(image)
 			} else if (name === 'TABLE') {
 				flush()

@@ -75,6 +75,41 @@ describe('readEpub', () => {
 		])
 	})
 
+	it('opens notes from their markers, and takes the notes out of the text', () => {
+		const book = readEpub(
+			epub({
+				'OEBPS/text/a.xhtml': `<html xmlns:epub="http://www.idpf.org/2007/ops"><body><h2 id="c1">Chapter One</h2>
+					<p>Fact<a epub:type="noteref" href="notes.xhtml#n-1" id="r1">1</a> here, and more<sup><a href="notes.xhtml#n-2" id="r2">2</a></sup>.</p>
+					<p>Claim<a href="#fn3"><sup>*</sup></a>, <a href="b.xhtml#top">see three</a>.</p>
+					<aside id="fn3"><p>An aside note.</p></aside>
+					<h2 id="c2">Chapter Two</h2><p>${para(80, 'two')}</p></body></html>`,
+				// Not in the spine: notes files often aren't.
+				'OEBPS/text/notes.xhtml': `<html xmlns:epub="http://www.idpf.org/2007/ops"><body><ol>
+					<li id="n-1"><p>First note. <a epub:type="backlink" href="a.xhtml#r1">↩</a></p></li>
+					<li id="n-2"><p><a href="a.xhtml#r2">2</a> Second note.</p></li></ol></body></html>`,
+			}),
+		)
+		const [one] = book.chapters
+		expect(one!.blocks.slice(0, 2)).toEqual([
+			{
+				type: 'paragraph',
+				text: 'Fact here, and more.',
+				notes: [
+					{ at: 4, id: 'n1' },
+					{ at: 19, id: 'n2' },
+				],
+			},
+			// A link to another place in the book is no note.
+			{ type: 'paragraph', text: 'Claim, see three.', notes: [{ at: 5, id: 'n3' }] },
+		])
+		expect(book.notes).toEqual([
+			{ id: 'n1', label: '1', blocks: [{ type: 'paragraph', text: 'First note.' }] },
+			{ id: 'n2', label: '2', blocks: [{ type: 'paragraph', text: 'Second note.' }] },
+			{ id: 'n3', label: '*', blocks: [{ type: 'paragraph', text: 'An aside note.' }] },
+		])
+		expect(JSON.stringify(book.chapters)).not.toContain('aside note')
+	})
+
 	it('refuses a DRM-protected book but allows obfuscated fonts', () => {
 		const enc = (uri: string) => `<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" xmlns:enc="http://www.w3.org/2001/04/xmlenc#"><enc:EncryptedData><enc:CipherData><enc:CipherReference URI="${uri}"/></enc:CipherData></enc:EncryptedData></encryption>`
 		expect(() => readEpub(epub({ 'META-INF/encryption.xml': enc('OEBPS/text/a.xhtml') }))).toThrow(/DRM/)
@@ -138,6 +173,37 @@ describe('layoutPdf', () => {
 		])
 		expect(blocks.filter((b) => b.type === 'heading')).toEqual([])
 		expect(JSON.stringify(blocks)).toMatch(/cl\. 2\. ?1 But there is little reason/)
+	})
+
+	it('opens a footnote from its raised marker, and keeps the text of markers and notes that match nothing', () => {
+		const lead = run('Body text before the marker', 50, 700)
+		const exponent = run('Ten to the', 50, 680)
+		const second = run(`${para(12)} again`, 50, 700)
+		const body = Array.from({ length: 10 }, (_, i) => run(`${para(12)}.`, 50, 600 - i * 12))
+		const pages = [
+			page(1, [
+				lead,
+				{ str: '1', x: 50 + lead.width, y: 703, size: 6, width: 3 },
+				run('and after it.', 50 + lead.width + 5, 700),
+				exponent,
+				{ str: '6', x: 50 + exponent.width, y: 683, size: 6, width: 3 },
+				...body,
+				run('1 The note says this much', 50, 100, 8),
+				run('and goes on here.', 50, 90, 8),
+			]),
+			page(2, [second, { str: '3', x: 50 + second.width, y: 703, size: 6, width: 3 }, ...body, run('still the first note.', 50, 100, 8), run('3 Third note.', 50, 90, 8), run('4 Nobody points here.', 50, 80, 8)]),
+		]
+		const { chapters, notes } = pdfChapters(pages, [], 'Doc')
+		expect(notes).toEqual([
+			{ id: 'p1-1', label: '1', blocks: [{ type: 'paragraph', text: 'The note says this much and goes on here. still the first note.' }] },
+			{ id: 'p2-3', label: '3', blocks: [{ type: 'paragraph', text: 'Third note.' }] },
+		])
+		const blocks = chapters.flatMap((c) => c.blocks)
+		expect(blocks).toContainEqual({ type: 'paragraph', text: 'Body text before the marker and after it.', notes: [{ at: 27, id: 'p1-1' }] })
+		// No note 6 on the page: the raised 6 is an exponent, and stays in the text.
+		expect(blocks).toContainEqual({ type: 'paragraph', text: 'Ten to the6' })
+		expect(blocks).toContainEqual({ type: 'paragraph', text: '4 Nobody points here.' })
+		expect(JSON.stringify(blocks)).not.toMatch(/note says|Third note/)
 	})
 
 	it('reads the same large line near the top of three pages as a running title, not a heading', () => {
@@ -256,6 +322,11 @@ describe('saved books', () => {
 		// Chapter I opens with its text, not its subtitle again (the book sets "I" and the subtitle as an hgroup).
 		expect(blockText(book.chapters[6]!.blocks[0]!)).toMatch(/^All states, all powers/)
 		expect(text(book.chapters.flatMap((c) => c.blocks))).toContain('All states, all powers, that have held and hold rule over men have been and are either republics or principalities.')
+		// 47 of the 48 endnotes are opened from the chapters kept; the endnotes file is no chapter.
+		const opened = new Set(book.chapters.flatMap((c) => c.blocks.flatMap((b) => ('notes' in b ? (b.notes ?? []).map((n) => n.id) : []))))
+		expect([book.notes.length, opened.size]).toEqual([48, 47])
+		expect(book.notes[0]).toEqual({ id: 'n1', label: '1', blocks: [{ type: 'paragraph', text: expect.stringMatching(/^Duke Lodovico was Lodovico Moro, .* died in 1510\.$/) }] })
+		expect(text(book.chapters.flatMap((c) => c.blocks))).not.toContain('Duke Lodovico was Lodovico Moro')
 		// The three long chapters without headings wait for the AI; the others are split now.
 		expect([...new Set(splitBook(book.chapters).filter((s) => s.headingsPending).map((s) => s.title.replace(/ \(part \d\)$/, '')))]).toEqual([
 			'III: Concerning Mixed Principalities',
@@ -275,5 +346,13 @@ describe('saved books', () => {
 		const pages = blocks.flatMap((b) => (b.type === 'page' ? [b.number] : []))
 		expect(pages).toEqual(Array.from({ length: 20 }, (_, i) => i + 1))
 		expect(text(blocks)).toMatch(/Section 3 of the Fourteenth Amendment/)
+		// Its footnotes open from their markers, and are no longer read as body text.
+		expect(pdf.notes.map((n) => [n.label, blockText(n.blocks[0]!)])).toEqual([
+			['1', expect.stringMatching(/^The Elections Clause directs, in relevant part/)],
+			['2', expect.stringMatching(/^Shortly after the Fourteenth Amendment was ratified/)],
+			['3', expect.stringMatching(/^We are aware of just one example of state enforcement/)],
+		])
+		expect(text(blocks)).not.toContain('The Elections Clause directs')
+		expect(blocks).toContainEqual(expect.objectContaining({ text: expect.stringContaining('Art. II, §1, cl. 2. But there is little reason'), notes: expect.arrayContaining([expect.objectContaining({ id: 'p8-1' })]) }))
 	})
 })

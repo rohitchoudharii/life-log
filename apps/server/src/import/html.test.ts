@@ -10,6 +10,26 @@ const convert = (html: string) => {
 }
 
 describe('htmlToBlocks', () => {
+	it("keeps the EPUB reader's note markers as points in the text, without their labels", () => {
+		const html = `<p>Rome fell<ll-note data-note="n1">1</ll-note> in <a href="/476">476</a>.<sup><ll-note data-note="n2">2</ll-note></sup></p>
+			<ul><li>first</li><li>second<ll-note data-note="n3">3</ll-note></li></ul>`
+		const { document } = parseHTML(`<!doctype html><html><body><article>${html}</article></body></html>`)
+		expect(htmlToBlocks(document.querySelector('article') as unknown as DomNode, BASE, { notes: true })).toEqual([
+			{
+				type: 'paragraph',
+				text: 'Rome fell in 476.',
+				links: [{ start: 13, end: 16, href: 'https://example.com/476' }],
+				notes: [
+					{ at: 9, id: 'n1' },
+					{ at: 17, id: 'n2' },
+				],
+			},
+			{ type: 'list', ordered: false, items: ['first', 'second'], notes: [{ at: 6, id: 'n3', item: 1 }] },
+		])
+		// A web page can't make markers: the element and its text are dropped.
+		expect(convert(html)[0]).toEqual({ type: 'paragraph', text: 'Rome fell in 476.', links: [{ start: 13, end: 16, href: 'https://example.com/476' }] })
+	})
+
 	it('keeps the structure of an article as plain-text blocks', () => {
 		const blocks = convert(`
 			<h2>Tasks <em>and</em> microtasks</h2>

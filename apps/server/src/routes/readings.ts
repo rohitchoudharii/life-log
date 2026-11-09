@@ -156,6 +156,7 @@ export const readingsRoutes = {
 					headingsPending: sections.headingsPending,
 					chapter: sections.chapter,
 					blocks: sections.blocks,
+					notes: sections.notes,
 				})
 					.from(sections)
 					.innerJoin(readings, eq(readings.id, sections.readingId))

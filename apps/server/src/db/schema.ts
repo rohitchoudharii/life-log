@@ -1,4 +1,4 @@
-import type { Block, ReviewState, SectionKind } from '@life-log-club/domain'
+import type { Block, Note, ReviewState, SectionKind } from '@life-log-club/domain'
 import { type AnyColumn, sql } from 'drizzle-orm'
 import {
 	type AnyPgColumn,
@@ -282,6 +282,8 @@ export const sections = pgTable(
 		 * until the AI adds its headings when the member opens it.
 		 */
 		headingsPending: boolean().notNull().default(false),
+		/** The footnotes and endnotes this section's note markers open. */
+		notes: jsonb().$type<Note[]>().notNull().default([]),
 		createdAt: createdAt(),
 	},
 	(t) => [uniqueIndex().on(t.readingId, t.position), index().on(t.readingId, t.chapter), ownRows(t.userId)],

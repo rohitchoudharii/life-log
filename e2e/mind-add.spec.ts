@@ -152,6 +152,16 @@ test('an EPUB added as a file shows as importing, then opens to its chapters', a
 	await contents.getByRole('button', { name: 'II: Concerning Hereditary Principalities' }).click()
 	await expect(page.getByRole('heading', { level: 2, name: 'II: Concerning Hereditary Principalities' })).toBeVisible()
 
+	// A note opens from its marker in the text, and Esc closes it.
+	if (isMobile) await page.getByRole('button', { name: /^Contents/ }).click()
+	await contents.getByRole('button', { name: 'III: Concerning Mixed Principalities', exact: true }).click()
+	await page.getByRole('button', { name: 'Note 1', exact: true }).click()
+	const note = page.getByRole('dialog', { name: 'Note 1' })
+	await expect(note).toContainText('Duke Lodovico was Lodovico Moro')
+	await page.keyboard.press('Escape')
+	await expect(note).toBeHidden()
+	await expect(page.getByText('Duke Lodovico was Lodovico Moro')).toHaveCount(0)
+
 	// The same file again is the same reading.
 	await page.goto('/mind')
 	await pickFile(page, books('the-prince.epub'))

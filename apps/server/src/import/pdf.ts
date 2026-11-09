@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { type Block, type Chapter, countWords } from '@life-log-club/domain'
+import { type Block, type Chapter, countWords, type Note, type NoteRef } from '@life-log-club/domain'
 import { ExtractError } from './extract'
 import { matterOf } from './matter'
 
@@ -14,16 +14,27 @@ type Line = { text: string; x: number; right: number; y: number; size: number; p
 const round = (n: number) => Math.round(n * 2) / 2
 const words = countWords
 
+/** A raised note marker inside a line's text, with its label: "\u00013\u0002". Neither character is in real text. */
+const MARK_OPEN = '\u0001'
+const MARK_CLOSE = '\u0002'
+const MARK = /\u0001([^\u0002]*)\u0002/g
+/** A line's text with its markers' labels put back as plain text ("10⁶" reads "106", as before). */
+const unmarked = (text: string) => text.replace(MARK, '$1')
+
 /** Joins a page's text runs into lines, top to bottom and left to right. */
 function linesOf(page: PdfPage): Line[] {
 	const items = page.items.filter((i) => i.str.trim()).map((i) => ({ ...i }))
 	// A note marker is set small and raised above the line it belongs to; read on its own, it
 	// would start a line ("1 But there is…") that looks like a numbered heading.
+	// It is kept as a marker (see MARK) for layout to link to its note.
+	const markers = new Set<PdfItem>()
 	for (const it of items) {
 		if (!/^[\d*†‡]{1,3}$/.test(it.str.trim())) continue
 		const hosts = items.filter((o) => o.size > it.size * 1.25 && it.y > o.y && it.y - o.y < o.size * 0.6)
 		const host = hosts.sort((a, b) => Math.abs(a.x - it.x) - Math.abs(b.x - it.x))[0]
-		if (host) it.y = host.y
+		if (!host) continue
+		it.y = host.y
+		markers.add(it)
 	}
 	// Runs on one line can differ in height by a rounding error, so they are grouped into rows
 	// first and each row is read left to right.
@@ -40,12 +51,13 @@ function linesOf(page: PdfPage): Line[] {
 		// Words are well under a character apart; a gap wider than that is a column gutter, except
 		// after a section number ("3.1   Attention"), which is set apart from its heading.
 		const reach = line && /^\d{1,2}(\.\d{1,2})*\.?$/.test(line.text.trim()) ? it.size * 4 : it.size
+		const str = markers.has(it) ? `${MARK_OPEN}${it.str.trim()}${MARK_CLOSE}` : it.str
 		if (line && it.x - line.right < reach && it.x > line.right - it.size) {
 			const gap = it.x - line.right
-			line.text += (gap > it.size * 0.15 && !line.text.endsWith(' ') && !it.str.startsWith(' ') ? ' ' : '') + it.str
+			line.text += (gap > it.size * 0.15 && !markers.has(it) && !line.text.endsWith(' ') && !it.str.startsWith(' ') ? ' ' : '') + str
 			line.right = Math.max(line.right, it.x + it.width)
 			line.size = Math.max(line.size, it.size)
-		} else lines.push({ text: it.str, x: it.x, right: it.x + it.width, y: it.y, size: it.size, page: page.number })
+		} else lines.push({ text: str, x: it.x, right: it.x + it.width, y: it.y, size: it.size, page: page.number })
 	}
 	for (const l of lines) l.text = l.text.replace(/\s+/g, ' ').trim()
 	// Lines without a letter are figure axes, table numbers, or stray symbols.
@@ -103,7 +115,7 @@ const LEADER = /(\.\s?){3,}\s*[\divxlc]+$/i
 type Placed = { block: Block; page: number; y: number }
 
 /** Turns positioned text into blocks, keeping where each starts. See layoutPdf. */
-function layout(pages: PdfPage[]): Placed[] {
+function layout(pages: PdfPage[]): { placed: Placed[]; notes: Note[] } {
 	const perPage = pages.map(linesOf)
 	const drop = repeatedMargins(pages, perPage)
 	// A table of contents page is the book's own index of itself, not text to read.
@@ -146,27 +158,47 @@ function layout(pages: PdfPage[]): Placed[] {
 	}
 
 	const out: Placed[] = []
+	const notes: Note[] = []
+	// This page's footnotes, by label, and whether a marker in the text opens each.
+	let footnotes = new Map<string, { note: Note; lines: Line[]; used: boolean }>()
 	let para: Line[] = []
 	const flush = () => {
 		if (!para.length) return
-		let text = ''
-		for (const l of para) text = /\p{L}-$/u.test(text) && /^\p{Ll}/u.test(l.text) ? text.slice(0, -1) + l.text : text ? `${text} ${l.text}` : l.text
-		out.push({ block: { type: 'paragraph', text }, page: para[0]!.page, y: para[0]!.y })
+		const { text, notes: refs } = markersOf(joinLines(para), (label) => {
+			const found = footnotes.get(label)
+			if (!found) return null
+			found.used = true
+			return found.note.id
+		})
+		out.push({ block: { type: 'paragraph', text, ...(refs.length && { notes: refs }) }, page: para[0]!.page, y: para[0]!.y })
 		para = []
 	}
-	ordered.forEach((lines, i) => {
+	let lastNote: { note: Note; lines: Line[] } | null = null
+	ordered.forEach((all, i) => {
 		flush()
-		out.push({ block: { type: 'page', number: pages[i]!.number }, page: pages[i]!.number, y: Number.POSITIVE_INFINITY })
+		const page = pages[i]!.number
+		const { body: lines, notes: found, continued } = footnoteZone(all, body)
+		// Small lines at the top of the zone with no label go on with the last note of the page before.
+		if (lastNote && continued.length) {
+			lastNote.lines.push(...continued)
+			lastNote.note.blocks = [{ type: 'paragraph', text: markersOf(joinLines(lastNote.lines), () => null).text }]
+		} else lines.push(...continued)
+		footnotes = new Map()
+		for (const f of found)
+			if (!footnotes.has(f.label))
+				footnotes.set(f.label, { note: { id: `p${page}-${f.label}`, label: f.label, blocks: [{ type: 'paragraph', text: markersOf(joinLines(f.lines), () => null).text }] }, lines: f.lines, used: false })
+		out.push({ block: { type: 'page', number: page }, page, y: Number.POSITIVE_INFINITY })
 		lines.forEach((l, k) => {
 			if (isHeading(l)) {
 				flush()
 				const last = out.at(-1)
 				// A heading set on two lines arrives as two lines of the same size; much longer is a
 				// passage set large (a notice on the title page), which reads as a paragraph.
+				const text = unmarked(l.text)
 				if (last?.block.type === 'heading' && k > 0 && Math.abs(lines[k - 1]!.size - l.size) < 0.5 && isHeading(lines[k - 1]!)) {
-					if (last.block.text.length + l.text.length < 150) last.block.text += ` ${l.text}`
-					else last.block = { type: 'paragraph', text: `${last.block.text} ${l.text}` }
-				} else out.push({ block: { type: 'heading', level: levelOf(l), text: l.text }, page: l.page, y: l.y })
+					if (last.block.text.length + text.length < 150) last.block.text += ` ${text}`
+					else last.block = { type: 'paragraph', text: `${last.block.text} ${text}` }
+				} else out.push({ block: { type: 'heading', level: levelOf(l), text }, page: l.page, y: l.y })
 				return
 			}
 			const prev = para.at(-1)
@@ -175,18 +207,76 @@ function layout(pages: PdfPage[]): Placed[] {
 			if (prev && (gap > prev.size * 1.8 || gap < 0 || l.x - prev.x > l.size * 1.2)) flush()
 			para.push(l)
 		})
+		flush()
+		// A footnote no marker opens stays in the text, where the page printed it.
+		for (const f of footnotes.values()) {
+			if (f.used) notes.push(f.note)
+			else out.push({ block: { type: 'paragraph', text: `${f.note.label} ${unmarked(joinLines(f.lines))}` }, page, y: f.lines[0]!.y })
+		}
+		const last = [...footnotes.values()].at(-1)
+		lastNote = last?.used ? last : null
 	})
 	flush()
-	return out
+	return { placed: out, notes }
+}
+
+/** Joins lines into a paragraph's text, putting back together words broken by a hyphen at a line end. */
+function joinLines(lines: Line[]) {
+	let text = ''
+	for (const l of lines) text = /\p{L}-$/u.test(text) && /^\p{Ll}/u.test(l.text) ? text.slice(0, -1) + l.text : text ? `${text} ${l.text}` : l.text
+	return text
+}
+
+/**
+ * Takes the markers out of a paragraph's text. `open` returns the id of the note a label opens on
+ * this page; a marker with none (an exponent, or a note on another page) keeps its label as text.
+ */
+function markersOf(text: string, open: (label: string) => string | null): { text: string; notes: NoteRef[] } {
+	let out = ''
+	const notes: NoteRef[] = []
+	let last = 0
+	for (const m of text.matchAll(MARK)) {
+		out += text.slice(last, m.index)
+		const id = open(m[1]!)
+		if (id) notes.push({ at: out.length, id })
+		else out += m[1]
+		last = m.index + m[0].length
+	}
+	return { text: out + text.slice(last), notes }
+}
+
+/** A footnote's first line: its label, raised or not, then its text. */
+const NOTE_START = /^(?:\u0001([\d*†‡]{1,3})\u0002\s*|(\d{1,3}|[*†‡])\s+)(?=\p{L}|[“"‘(])/u
+
+/**
+ * Splits a page's lines into its body and its footnotes: the lines at the foot of the page set
+ * smaller than the body text, each note starting at a line that begins with its label.
+ * `continued` are the small lines before the first label, which go on with a note from the page
+ * before.
+ */
+function footnoteZone(lines: Line[], body: number) {
+	let start = lines.length
+	while (start > 0 && round(lines[start - 1]!.size) < body - 0.5) start--
+	const zone = lines.slice(start)
+	const first = zone.findIndex((l) => NOTE_START.test(l.text))
+	if (first < 0) return { body: lines, notes: [], continued: [] }
+	const notes: { label: string; lines: Line[] }[] = []
+	for (const l of zone.slice(first)) {
+		const m = NOTE_START.exec(l.text)
+		if (m) notes.push({ label: m[1] ?? m[2]!, lines: [{ ...l, text: l.text.slice(m[0].length) }] })
+		else notes.at(-1)!.lines.push(l)
+	}
+	return { body: lines.slice(0, start), notes, continued: zone.slice(0, first) }
 }
 
 /**
  * Turns a PDF's positioned text into blocks. Headings are lines set larger than the body text, or
  * short numbered lines like "3.1 Encoder", nested by size or numbering depth. Paragraphs are
  * joined across lines, with words broken by a hyphen at a line end put back together. Table of
- * contents pages are left out.
+ * contents pages are left out. A footnote opened by a raised marker in the text is taken out of
+ * the text, and the marker opens it (see pdfChapters for the notes).
  */
-export const layoutPdf = (pages: PdfPage[]): Block[] => layout(pages).map((p) => p.block)
+export const layoutPdf = (pages: PdfPage[]): Block[] => layout(pages).placed.map((p) => p.block)
 
 /** An entry of a PDF's outline (its bookmarks): a chapter's title, depth, page, and the height it starts at when the PDF says. */
 export type OutlineEntry = { title: string; level: number; page: number; y: number | null }
@@ -207,8 +297,8 @@ const sameTitle = (heading: string, entry: string) =>
  *
  * `article` is true for a PDF with no outline and no headings at all: it is split like an article.
  */
-export function pdfChapters(pages: PdfPage[], outline: OutlineEntry[], title: string): { chapters: Chapter[]; article: boolean } {
-	const placed = layout(pages)
+export function pdfChapters(pages: PdfPage[], outline: OutlineEntry[], title: string): { chapters: Chapter[]; article: boolean; notes: Note[] } {
+	const { placed, notes } = layout(pages)
 	const starts: { at: number; title: string; level: number }[] = []
 	// Headings that only repeat a chapter's title, which the chapter's section already shows.
 	const repeated = new Set<number>()
@@ -263,7 +353,7 @@ export function pdfChapters(pages: PdfPage[], outline: OutlineEntry[], title: st
 		if (matter === 'drop' || matter === 'notes') return
 		chapters.push({ title: s.title, level: s.level, kind: matter === 'reference' ? 'reference' : 'body', blocks: blocksIn(s.at, starts[k + 1]?.at ?? placed.length) })
 	})
-	return { chapters, article: !starts.length }
+	return { chapters, article: !starts.length, notes }
 }
 
 /** The largest text on the first page, joined across its lines. */
@@ -271,14 +361,14 @@ function titleOf(page: PdfPage | undefined): string {
 	if (!page) return ''
 	const lines = linesOf(page)
 	const top = Math.max(0, ...lines.map((l) => l.size))
-	const text = lines.filter((l) => l.size >= top - 0.5).map((l) => l.text).join(' ')
+	const text = lines.filter((l) => l.size >= top - 0.5).map((l) => unmarked(l.text)).join(' ')
 	return words(text) <= 25 ? text : ''
 }
 
 const require = createRequire(import.meta.url)
 const FONTS = pathToFileURL(join(dirname(require.resolve('pdfjs-dist/package.json')), 'standard_fonts') + '/').href
 
-export type Pdf = { title: string; author: string | null; chapters: Chapter[]; article: boolean }
+export type Pdf = { title: string; author: string | null; chapters: Chapter[]; article: boolean; notes: Note[] }
 
 type PdfDocument = Awaited<ReturnType<(typeof import('pdfjs-dist/legacy/build/pdf.mjs'))['getDocument']>['promise']>
 

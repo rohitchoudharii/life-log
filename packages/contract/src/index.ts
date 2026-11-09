@@ -1,4 +1,4 @@
-import { Block, EntryData, EntryText, PILLARS } from '@life-log-club/domain'
+import { Block, EntryData, EntryText, Note, PILLARS } from '@life-log-club/domain'
 import { oc } from '@orpc/contract'
 import { z } from 'zod'
 
@@ -97,6 +97,8 @@ export const Section = z.object({
 	 */
 	headingsPending: z.boolean(),
 	blocks: z.array(Block),
+	/** The footnotes and endnotes the blocks' note markers open. */
+	notes: z.array(Note),
 })
 export type Section = z.infer<typeof Section>
 

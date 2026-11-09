@@ -199,8 +199,13 @@ describe('AI headings for an article with no headings (issue #1, rule 3)', () =>
 
 	describe('for a long book chapter, when the member opens it (issue #2, rule 4)', () => {
 		// Chapter One: 30 paragraphs of 100 words and no headings, so it is cut in two by length.
-		const long = Array.from({ length: 30 }, (_, i) => `<p>Part ${i} ${Array(99).fill('word').join(' ')}</p>`).join('')
-		const book = testEpub({ 'OEBPS/text/a.xhtml': `<html><body><h2 id="c1">Chapter One</h2>${long}<h2 id="c2">Chapter Two</h2><p>${Array(80).fill('short').join(' ')}</p></body></html>` })
+		// Part 25 opens a note, which must stay with whichever section holds it.
+		const note = '<a epub:type="noteref" href="notes.xhtml#n">1</a>'
+		const long = Array.from({ length: 30 }, (_, i) => `<p>Part ${i}${i === 25 ? note : ''} ${Array(99).fill('word').join(' ')}</p>`).join('')
+		const book = testEpub({
+			'OEBPS/text/a.xhtml': `<html xmlns:epub="http://www.idpf.org/2007/ops"><body><h2 id="c1">Chapter One</h2>${long}<h2 id="c2">Chapter Two</h2><p>${Array(80).fill('short').join(' ')}</p></body></html>`,
+			'OEBPS/text/notes.xhtml': '<html><body><p id="n">The note.</p></body></html>',
+		})
 		async function addBook(userId: string) {
 			const id = randomUUID()
 			await asUser(userId, async (tx) => {
@@ -246,6 +251,8 @@ describe('AI headings for an article with no headings (issue #1, rule 3)', () =>
 			expect(after.sections.slice(3).map((s) => s.id)).toEqual(before.sections.slice(2).map((s) => s.id))
 			expect(after.sections.flatMap((s) => s.blocks)).toEqual(before.sections.flatMap((s) => s.blocks))
 			expect(after.sections.slice(0, 3).map((s) => s.blocks.length)).toEqual([10, 10, 10])
+			expect(before.sections.map((s) => s.notes.map((n) => n.label))).toEqual([[], ['1'], [], []])
+			expect(after.sections.map((s) => s.notes.map((n) => n.label))).toEqual([[], [], ['1'], [], []])
 
 			// Done once: running the job again asks the AI nothing.
 			site.takeHits()
@@ -315,6 +322,8 @@ describe('uploaded books', () => {
 		expect(prince.reading).toMatchObject({ status: 'ready', title: 'The Prince', author: 'Niccolò Machiavelli' })
 		expect(prince.sections.map((s) => s.title)).toContain('XIX: That One Should Avoid Being Despised and Hated')
 		expect(prince.sections.filter((s) => s.kind === 'reference').map((s) => s.title)).toEqual(['The Man and His Works'])
+		const third = prince.sections.find((s) => s.title === 'III: Concerning Mixed Principalities')!
+		expect(third.notes[0]).toMatchObject({ label: '1', blocks: [{ text: expect.stringMatching(/^Duke Lodovico/) }] })
 		const pdf = await load(userId, await addFile(userId, book('trump-v-anderson.pdf'), 'opinion.pdf'))
 		expect(pdf.reading.status).toBe('ready')
 		expect(pdf.sections.flatMap((s) => s.blocks).filter((b) => b.type === 'page')[0]).toEqual({ type: 'page', number: 1 })
