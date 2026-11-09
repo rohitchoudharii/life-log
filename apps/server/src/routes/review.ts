@@ -1,6 +1,6 @@
 import { defaultScheduler } from '@life-log-club/domain'
 import { ORPCError } from '@orpc/server'
-import { and, asc, count, eq, isNull, lte } from 'drizzle-orm'
+import { and, asc, count, eq, isNotNull, isNull, lte } from 'drizzle-orm'
 import { asUser } from '../db/client'
 import { cards, entries, reviewLog } from '../db/schema'
 import { authed } from '../orpc'
@@ -36,6 +36,8 @@ export const reviewRoutes = {
 					answer: input.answer,
 					entryId: input.entryId ?? null,
 					state: defaultScheduler.initial(),
+					// A card added by hand is recalled from now on, so it starts at once.
+					startedAt: new Date(),
 				})
 				.onConflictDoNothing()
 				.returning()
@@ -48,7 +50,7 @@ export const reviewRoutes = {
 
 	due: authed.review.due.handler(({ input, context }) =>
 		asUser(context.user.id, async (tx) => {
-			const isDue = lte(cards.dueAt, new Date())
+			const isDue = and(lte(cards.dueAt, new Date()), isNotNull(cards.startedAt), isNull(cards.deletedAt))
 			const rows = await tx.select().from(cards).where(isDue).orderBy(asc(cards.dueAt)).limit(input.limit)
 			const [total] = await tx.select({ n: count() }).from(cards).where(isDue)
 			return { cards: rows.map(toCard), total: total?.n ?? 0 }

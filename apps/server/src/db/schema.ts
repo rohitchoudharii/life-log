@@ -1,4 +1,4 @@
-import type { Block, Note, ReviewState, SectionKind } from '@life-log-club/domain'
+import type { Block, Confidence, Note, QuestionLevel, Rating, ReviewState, SectionKind } from '@life-log-club/domain'
 import { type AnyColumn, sql } from 'drizzle-orm'
 import {
 	type AnyPgColumn,
@@ -11,6 +11,7 @@ import {
 	pgPolicy,
 	pgTable,
 	primaryKey,
+	real,
 	smallint,
 	text,
 	timestamp,
@@ -113,8 +114,10 @@ export const entries = pgTable(
 )
 
 /**
- * One card per thing to remember: an idea from reading or a lesson from life. Both share one
- * review schedule. The card holds its schedule state, so answering is one row update.
+ * One card per thing to remember: a key idea from a reading, a lesson from life, or a word. All
+ * share one review schedule. `prompt` is the cue, a question that doesn't give the idea away, and
+ * `answer` is the idea itself, so every card can be reviewed even with no questions. The card
+ * holds its schedule state, so answering is one row update.
  */
 export const cards = pgTable(
 	'cards',
@@ -123,16 +126,63 @@ export const cards = pgTable(
 		userId: uuid()
 			.notNull()
 			.references(() => users.id, { onDelete: 'cascade' }),
-		kind: text().$type<'idea' | 'lesson'>().notNull(),
+		kind: text().$type<'idea' | 'lesson' | 'word'>().notNull(),
 		prompt: text().notNull(),
 		answer: text().notNull(),
 		/** The entry the card came from, such as a lesson entry. */
 		entryId: uuid().references(() => entries.id, { onDelete: 'set null' }),
+		/** For ideas and words met while reading. */
+		readingId: uuid().references((): AnyPgColumn => readings.id, { onDelete: 'cascade' }),
+		sectionId: uuid().references((): AnyPgColumn => sections.id, { onDelete: 'cascade' }),
+		/** Order of key ideas in a section. */
+		position: integer(),
+		/** `ai` for key ideas the AI wrote; `member` for saved ideas, lessons and words. */
+		origin: text().$type<'ai' | 'member'>().notNull().default('member'),
+		/** The exact sentence of the source the idea rests on, shown with the answer. */
+		quote: text(),
+		/** For words: the word, the form met, its sentence and meaning. */
+		details: jsonb().$type<Record<string, unknown>>(),
+		/** Index into QUESTION_LEVELS: how hard the next question on this card should be. */
+		level: smallint().notNull().default(0),
+		/** Null until the card is first recalled. Only started cards are in the review queue. */
+		startedAt: timestamp({ withTimezone: true }),
+		/** Set when its reading or lesson is removed, cleared on restore. */
+		deletedAt: timestamp({ withTimezone: true }),
 		state: jsonb().$type<ReviewState>().notNull(),
 		dueAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 		createdAt: createdAt(),
 	},
-	(t) => [index().on(t.userId, t.dueAt), ownRows(t.userId)],
+	(t) => [index().on(t.userId, t.dueAt), index().on(t.sectionId, t.position), ownRows(t.userId)],
+)
+
+/**
+ * A question on one card. A card has several, at rising levels; each review asks one. Retired
+ * questions are never asked again, and old answers keep pointing at them.
+ */
+export const questions = pgTable(
+	'questions',
+	{
+		id: id(),
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		cardId: uuid()
+			.notNull()
+			.references(() => cards.id, { onDelete: 'cascade' }),
+		readingId: uuid().references((): AnyPgColumn => readings.id, { onDelete: 'cascade' }),
+		sectionId: uuid().references((): AnyPgColumn => sections.id, { onDelete: 'cascade' }),
+		/** A key of `questionTypes` in `packages/domain/src/questions.ts`. */
+		type: text().notNull(),
+		level: text().$type<QuestionLevel>().notNull(),
+		/** The type's own content, answer key included; only `toPrompt` of it reaches the client. */
+		content: jsonb().$type<Record<string, unknown>>().notNull(),
+		promptVersion: text(),
+		retiredAt: timestamp({ withTimezone: true }),
+		/** Why a member reported it, which also retired it. */
+		report: text(),
+		createdAt: createdAt(),
+	},
+	(t) => [index().on(t.cardId), ownRows(t.userId)],
 )
 
 /** Every answer, for history and for tuning the schedule later. */
@@ -146,7 +196,27 @@ export const reviewLog = pgTable(
 		cardId: uuid()
 			.notNull()
 			.references(() => cards.id, { onDelete: 'cascade' }),
-		rating: text().$type<'again' | 'hard' | 'good' | 'easy'>().notNull(),
+		/** Chosen by the client, so a double tap or a retry counts once. Null on rows from before. */
+		answerId: uuid().unique(),
+		/** The question asked; null for cue recall and self-rated cards. */
+		questionId: uuid().references(() => questions.id, { onDelete: 'set null' }),
+		ask: text().$type<'question' | 'cue' | 'self'>().notNull().default('self'),
+		/** `recall` right after reading, `review` from the queue, `practice` for a retry round (schedule unchanged). */
+		mode: text().$type<'recall' | 'review' | 'practice'>().notNull().default('review'),
+		rating: text().$type<Rating>().notNull(),
+		correct: boolean(),
+		/** What the learner wrote or picked. */
+		response: jsonb().$type<Record<string, unknown>>(),
+		confidence: text().$type<Confidence>(),
+		/** The judge's feedback. */
+		feedback: text(),
+		gradedBy: text().$type<'code' | 'ai' | 'self'>().notNull().default('self'),
+		/** Set when the learner tapped Count it as right. */
+		overriddenAt: timestamp({ withTimezone: true }),
+		/** The scheduler's predicted chance of recall at the moment of answering. */
+		predictedRecall: real(),
+		/** Which scheduler made the decision. */
+		scheduler: text().notNull().default('steps-ease-v1'),
 		reviewedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 		nextDueAt: timestamp({ withTimezone: true }).notNull(),
 	},

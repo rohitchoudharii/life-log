@@ -33,7 +33,7 @@ export type Entry = z.infer<typeof Entry>
 
 export const Card = z.object({
 	id: z.uuid(),
-	kind: z.enum(['idea', 'lesson']),
+	kind: z.enum(['idea', 'lesson', 'word']),
 	prompt: z.string(),
 	answer: z.string(),
 	entryId: z.uuid().nullable(),

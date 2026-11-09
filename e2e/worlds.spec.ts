@@ -1,5 +1,6 @@
 import { expect, type Page, test } from '@playwright/test'
 import { sql } from './db'
+import { proof } from './proof'
 import { joinAs } from './session'
 
 const openLog = (page: Page) => page.getByRole('button', { name: '+ Log' }).click()
@@ -101,7 +102,7 @@ test('a mood is one tap on Heart', async ({ page }) => {
 	await expect(page.getByText('Mood today: Good')).toBeVisible()
 })
 
-test('Mind shows the cards due for review', async ({ page }) => {
+test('Mind shows the cards due for review', async ({ page }, testInfo) => {
 	await joinAs(page)
 	const res = await api(page, 'review/add', {
 		id: crypto.randomUUID(),
@@ -115,6 +116,7 @@ test('Mind shows the cards due for review', async ({ page }) => {
 	await page.goto('/mind')
 	await expect(page.getByTestId('mind-due')).toHaveText('1')
 	await expect(page.getByText('What does deliberate practice need besides effort?')).toBeVisible()
+	await proof(page, testInfo, 'mind-due')
 })
 
 test('keyboard: L opens + Log, Esc closes it, 1 to 4 switch worlds, and typing is never a shortcut', async ({

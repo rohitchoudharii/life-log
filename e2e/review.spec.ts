@@ -36,8 +36,13 @@ test('a new card is due at once, then comes back after 1, 2 and 3 days, then a l
 	}
 	expect(gaps).toEqual([1, 2, 3, 8])
 
-	const log = await sql<{ rating: string }>('select rating from review_log where card_id = $1', [card.id])
+	const log = await sql<{ rating: string; ask: string; mode: string; scheduler: string }>(
+		'select rating, ask, mode, scheduler from review_log where card_id = $1',
+		[card.id],
+	)
 	expect(log.map((r) => r.rating)).toEqual(['good', 'good', 'good', 'good'])
+	// A self-rated answer from the queue, decided by today's scheduler.
+	expect(log[0]).toMatchObject({ ask: 'self', mode: 'review', scheduler: 'steps-ease-v1' })
 })
 
 test('a forgotten card comes back in 10 minutes, and an answer to a card not yet due is refused', async () => {
