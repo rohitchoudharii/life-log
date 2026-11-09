@@ -127,7 +127,8 @@ function Shell({ user }: { user: User }) {
 							{user.name.slice(0, 1).toUpperCase()}
 						</Link>
 					</header>
-					<main className="mx-auto w-full max-w-5xl flex-1 px-4 pt-6 pb-28 md:px-8 md:pb-12">
+					{/* The reader uses the whole width: its contents sit at the left, the text where the member sets it. */}
+					<main className={`mx-auto w-full flex-1 px-4 pt-6 pb-28 md:px-8 md:pb-12 ${path.startsWith('/mind/read/') ? '' : 'max-w-5xl'}`}>
 						<Outlet />
 					</main>
 				</div>

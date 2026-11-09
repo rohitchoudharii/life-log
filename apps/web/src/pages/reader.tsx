@@ -53,7 +53,7 @@ function Inline({ text, links = [], refs = [], marks }: { text: string; links?: 
 function BlockView({ block, marks }: { block: Block; marks: NoteMarks }) {
 	switch (block.type) {
 		case 'heading':
-			return <h3 className="mt-6 text-xl font-semibold">{block.text}</h3>
+			return <h3 className="mt-6 text-[1.1em] font-semibold">{block.text}</h3>
 		case 'paragraph':
 			return (
 				<p>
@@ -68,7 +68,7 @@ function BlockView({ block, marks }: { block: Block; marks: NoteMarks }) {
 			)
 		case 'code':
 			return (
-				<pre className="overflow-x-auto rounded-xl bg-world-card p-4 font-mono text-sm leading-relaxed whitespace-pre-wrap ring-1 ring-world-line">
+				<pre className="overflow-x-auto rounded-xl bg-world-card p-4 font-mono text-[0.8em] leading-relaxed whitespace-pre-wrap ring-1 ring-world-line">
 					<code>{block.text}</code>
 				</pre>
 			)
@@ -126,7 +126,7 @@ function BlockView({ block, marks }: { block: Block; marks: NoteMarks }) {
 					</figure>
 				)
 			// An image that wasn't stored keeps its description in place.
-			return block.alt ? <p className="font-sans text-sm text-world-muted italic">Image: {block.alt}</p> : null
+			return block.alt ? <p className="font-sans text-[0.8em] text-world-muted italic">Image: {block.alt}</p> : null
 		case 'page':
 			return <p className="font-sans text-xs text-world-muted">p. {block.number}</p>
 	}
@@ -180,7 +180,7 @@ function EndMark({ onEnd }: { onEnd: () => void }) {
 }
 
 /** One section's text. `onEnd` runs when the member reaches its end, once its text is shown. */
-function SectionView({ id, readingId, onEnd }: { id: string; readingId: string; onEnd?: () => void }) {
+function SectionView({ id, readingId, size, onEnd }: { id: string; readingId: string; size: string; onEnd?: () => void }) {
 	const queryClient = useQueryClient()
 	const section = useQuery({
 		...orpc.readings.section.queryOptions({ input: { id } }),
@@ -208,9 +208,9 @@ function SectionView({ id, readingId, onEnd }: { id: string; readingId: string; 
 				? "Heading added by AI. The text is the author's."
 				: null
 	return (
-		<article className="grid gap-4 text-lg leading-relaxed">
+		<article className="grid gap-4 leading-relaxed" style={{ fontSize: size }}>
 			<header>
-				<h2 className="text-2xl font-semibold tracking-tight">{section.data.title}</h2>
+				<h2 className="text-[1.35em] font-semibold tracking-tight">{section.data.title}</h2>
 				{note && <p className={`font-sans text-xs text-world-muted ${section.data.headingsPending ? 'animate-pulse' : ''}`}>{note}</p>}
 			</header>
 			{section.data.blocks.map((b, i) => (
@@ -242,6 +242,61 @@ function Contents({ reading, current, onPick }: { reading: ReadingWithContents; 
 	)
 }
 
+/**
+ * How the text is set: line width and type size. Kept in this browser, since the right choice
+ * depends on the screen.
+ */
+const WIDTHS = { Narrow: '38rem', Medium: '46rem', Wide: '60rem' }
+const SIZES = { Small: '1rem', Medium: '1.125rem', Large: '1.25rem', Larger: '1.4rem' }
+
+function useChoice<T extends string>(key: string, options: Record<T, string>, fallback: T) {
+	const [choice, setChoice] = useState<T>(() => {
+		const saved = localStorage.getItem(key)
+		return saved && saved in options ? (saved as T) : fallback
+	})
+	return [
+		choice,
+		(c: T) => {
+			localStorage.setItem(key, c)
+			setChoice(c)
+		},
+	] as const
+}
+
+/** One click picks an option. `label` draws each one; its name is the option's. */
+function Picker<T extends string>({
+	name,
+	options,
+	value,
+	onPick,
+	label = (o) => o,
+	className = '',
+}: { name: string; options: Record<T, string>; value: T; onPick: (o: T) => void; label?: (o: T) => ReactNode; className?: string }) {
+	return (
+		<div role="group" aria-label={name} className={`items-center gap-0.5 rounded-lg border border-world-line p-0.5 font-sans text-xs ${className}`}>
+			{(Object.keys(options) as T[]).map((o) => (
+				<button
+					key={o}
+					type="button"
+					aria-label={o}
+					aria-pressed={o === value}
+					onClick={() => onPick(o)}
+					className="grid h-7 min-w-7 place-items-center rounded-md px-2 text-world-muted transition hover:text-world-ink aria-pressed:bg-world-card aria-pressed:font-semibold aria-pressed:text-world-ink aria-pressed:shadow-sm"
+				>
+					{label(o)}
+				</button>
+			))}
+		</div>
+	)
+}
+
+// The letter grows with the size it picks, so the buttons need no words.
+const sizeLetter = (s: keyof typeof SIZES) => (
+	<span aria-hidden className="font-serif leading-none" style={{ fontSize: `calc(${SIZES[s]} * 0.8)` }}>
+		A
+	</span>
+)
+
 /** One reading: its contents, and one section at a time. */
 export function Reader({ readingId }: { readingId: string }) {
 	const navigate = useNavigate()
@@ -251,6 +306,8 @@ export function Reader({ readingId }: { readingId: string }) {
 	})
 	const [current, setCurrent] = useState(0)
 	const [contentsOpen, setContentsOpen] = useState(false)
+	const [width, setWidth] = useChoice('reader-width', WIDTHS, 'Medium')
+	const [size, setSize] = useChoice('reader-size', SIZES, 'Medium')
 	const queryClient = useQueryClient()
 	// Reaching the end of the last section marks the reading read, which a book counts.
 	const markRead = useMutation({
@@ -293,13 +350,21 @@ export function Reader({ readingId }: { readingId: string }) {
 	const step = 'rounded-xl border border-world-line px-4 py-2 font-sans text-sm transition hover:bg-world-card active:scale-[0.97]'
 
 	return (
-		<div className="grid gap-8 md:grid-cols-[14rem_minmax(0,1fr)]">
-			<aside className="hidden md:block">
-				<nav aria-label="Contents" className="sticky top-20 max-h-[calc(100dvh-6rem)] overflow-y-auto">
-					{contents}
-				</nav>
+		<div className="grid gap-8 xl:grid-cols-[17rem_minmax(0,1fr)] xl:gap-12">
+			<aside className="hidden border-r border-world-line xl:block">
+				<div className="sticky top-20 grid max-h-[calc(100dvh-6.5rem)] grid-rows-[auto_minmax(0,1fr)] gap-2 pr-3">
+					<p className="flex items-baseline justify-between px-2 font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">
+						Contents
+						<span className="font-normal tracking-normal normal-case">
+							{current + 1} of {r.contents.length}
+						</span>
+					</p>
+					<nav aria-label="Contents" className="overflow-y-auto overscroll-contain pb-4">
+						{contents}
+					</nav>
+				</div>
 			</aside>
-			<div className="mx-auto grid w-full max-w-[65ch] gap-6">
+			<div className="mx-auto grid w-full gap-6" style={{ maxWidth: WIDTHS[width] }}>
 				<header className="grid gap-2">
 					{r.book ? (
 						<Link to="/mind/book/$bookId" params={{ bookId: r.book.id }} className="font-sans text-sm text-world-muted">
@@ -311,16 +376,22 @@ export function Reader({ readingId }: { readingId: string }) {
 						</Link>
 					)}
 					<h1 className="text-3xl font-semibold tracking-tight md:text-4xl">{r.title}</h1>
-					<p className="font-sans text-sm text-world-muted">
-						{r.author && `${r.author}${original ? ' · ' : ''}`}
-						{original && (
-							<a href={original} target="_blank" rel="noopener noreferrer nofollow" className="underline underline-offset-2">
-								Open original
-							</a>
-						)}
-					</p>
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<p className="font-sans text-sm text-world-muted">
+							{r.author && `${r.author}${original ? ' · ' : ''}`}
+							{original && (
+								<a href={original} target="_blank" rel="noopener noreferrer nofollow" className="underline underline-offset-2">
+									Open original
+								</a>
+							)}
+						</p>
+						<div className="flex items-center gap-2">
+							<Picker name="Text size" options={SIZES} value={size} onPick={setSize} label={sizeLetter} className="flex" />
+							<Picker name="Text width" options={WIDTHS} value={width} onPick={setWidth} className="hidden lg:flex" />
+						</div>
+					</div>
 				</header>
-				<div className="md:hidden">
+				<div className="xl:hidden">
 					<button type="button" className={step} aria-expanded={contentsOpen} onClick={() => setContentsOpen((o) => !o)}>
 						Contents · {current + 1} of {r.contents.length}
 					</button>
@@ -334,6 +405,7 @@ export function Reader({ readingId }: { readingId: string }) {
 					<SectionView
 						id={section.id}
 						readingId={r.id}
+						size={SIZES[size]}
 						onEnd={current === r.contents.length - 1 && !r.readAt && !markRead.isPending ? () => markRead.mutate(r.id) : undefined}
 					/>
 				)}
