@@ -38,15 +38,16 @@ export async function minutesFor(tx: Tx, total: number) {
 /**
  * The next due cards, the one the member is most likely to have forgotten first: lowest
  * predicted recall now, with cards never answered (nothing to predict from) before the rest, and
- * oldest due first between equals. Each comes with the one thing to ask: a question not asked
- * yet, nearest the card's level (`pickQuestion`), else the cue. Written questions and cues are
- * judged with the member's AI key; without one, the card is self-rated.
+ * oldest due first between equals. `first`, when due, leads. Each comes with the one thing to
+ * ask: a question not asked yet, nearest the card's level (`pickQuestion`), else the cue. Written
+ * questions and cues are judged with the member's AI key; without one, the card is self-rated.
  */
-export async function nextBatch(tx: Tx, limit: number, filter: ReviewFilter) {
+export async function nextBatch(tx: Tx, limit: number, filter: ReviewFilter, first?: string) {
 	const now = new Date()
 	// Predicted recall comes from the FSRS forgetting curve, in code, so every due card is ranked here.
 	const due = await tx.select({ id: cards.id, state: cards.state, dueAt: cards.dueAt }).from(cards).where(dueNow(filter))
-	const recall = new Map(due.map((c) => [c.id, defaultScheduler.retrievability(c.state, now) ?? -1]))
+	// `first` (Review now) ranks below every predicted recall, so it leads the batch.
+	const recall = new Map(due.map((c) => [c.id, c.id === first ? -2 : (defaultScheduler.retrievability(c.state, now) ?? -1)]))
 	const ids = due
 		.sort((a, b) => recall.get(a.id)! - recall.get(b.id)! || a.dueAt.getTime() - b.dueAt.getTime())
 		.slice(0, limit)

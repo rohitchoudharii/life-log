@@ -729,3 +729,59 @@ test('Review opens with the idea most likely forgotten, not the one due longest'
 	await expect(page.getByText('Card 2 of 2')).toBeVisible()
 	await expect(page.getByTestId('question')).toHaveText('Anchor high in salary talks: why?')
 })
+
+test('Progress counts recall at review only from 20 reviews, Fading brings an idea back with Review now, and Home shows the 30-day recall', async ({ page }, testInfo) => {
+	await joinAs(page)
+	let lessons = 0
+	/** Adds lessons already past the steps and due, answered last 10 days ago, then answers each in Review. */
+	const answered = async (ratings: ('good' | 'again')[]) => {
+		const ids: string[] = []
+		for (const rating of ratings) {
+			const id = crypto.randomUUID()
+			expect((await api(page, 'review/add', { id, kind: 'lesson', prompt: `Lesson ${++lessons}: what did it teach?`, answer: 'An answer.' })).ok()).toBe(true)
+			await graduate(id, 2, 10, 1)
+			expect((await api(page, 'review/answer', { answerId: crypto.randomUUID(), cardId: id, mode: 'review', ask: 'self', rating })).ok()).toBe(true)
+			ids.push(id)
+		}
+		return ids
+	}
+	const three = await answered(['good', 'good', 'again'])
+
+	await page.goto('/mind')
+	await page.getByRole('link', { name: 'Progress' }).click()
+	await expect(page.getByRole('heading', { name: 'Progress', level: 1 })).toBeVisible()
+	await expect(page.getByTestId('recall-at-review')).toHaveText('Not enough reviews yet (3 of 20)')
+	await expect(page.getByTestId('ideas-known')).toHaveText('3')
+	await expect(page.getByTestId('ideas-new')).toHaveText('0')
+	// Each answer came 10 days after the one before.
+	await expect(page.getByTestId('recall-by-gap').getByRole('listitem').filter({ hasText: '4 days to 4 weeks' })).toContainText('2 of 3 right')
+	await proof(page, testInfo, 'progress-not-enough')
+
+	// Weeks later, still not due: on Mind under Fading, the weakest first; Review now asks it at once.
+	await graduate(three[0]!, 40, 20, -10)
+	await graduate(three[1]!, 25, 20, -2)
+	await graduate(three[2]!, 60, 20, -30)
+	await page.goto('/mind')
+	const fading = page.getByRole('region', { name: 'Fading' })
+	await expect(fading.getByRole('listitem')).toHaveCount(3)
+	await expect(fading.getByRole('listitem').locator('p:first-child')).toHaveText(['Lesson 2: what did it teach?', 'Lesson 1: what did it teach?', 'Lesson 3: what did it teach?'])
+	await proof(page, testInfo, 'mind-fading')
+	const first = 'Lesson 2: what did it teach?'
+	await fading.getByRole('button', { name: 'Review now' }).first().click()
+	await expect(page).toHaveURL(/\/mind\/review\?first=/)
+	await expect(page.getByText('Card 1 of 1')).toBeVisible()
+	await expect(page.getByTestId('question')).toHaveText(first)
+
+	await page.goto('/')
+	await expect(page.getByTestId('due-count')).toHaveText('1')
+	await expect(page.getByTestId('recall-30d')).toHaveCount(0)
+
+	// 17 more: 12 right, so 14 of 20.
+	await answered([...Array(12).fill('good'), ...Array(5).fill('again')])
+	await page.reload()
+	await expect(page.getByTestId('recall-30d')).toHaveText('Recalled 70% at review, last 30 days')
+	await proof(page, testInfo, 'home-recall')
+	await page.goto('/mind/progress')
+	await expect(page.getByTestId('recall-at-review')).toHaveText('70% of 20 right')
+	await proof(page, testInfo, 'progress')
+})

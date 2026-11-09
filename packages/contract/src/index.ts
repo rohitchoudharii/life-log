@@ -1,4 +1,4 @@
-import { Block, CONFIDENCES, EntryData, EntryText, Note, PILLARS, RECALL_STATUSES, WRITE_STATUSES } from '@life-log-club/domain'
+import { Block, CONFIDENCES, EntryData, EntryText, GAP_BUCKETS, Note, PILLARS, RECALL_STATUSES, WRITE_STATUSES } from '@life-log-club/domain'
 import { oc } from '@orpc/contract'
 import { z } from 'zod'
 
@@ -189,6 +189,52 @@ export const RecallAttempt = z.object({
 	toMark: z.array(z.object({ cardId: z.uuid(), idea: z.string() })).nullable(),
 })
 export type RecallAttempt = z.infer<typeof RecallAttempt>
+
+/** How many answers were right out of how many. */
+const RightOf = z.object({ right: z.int(), total: z.int() })
+const IdeaCounts = z.object({ new: z.int(), learning: z.int(), known: z.int(), fading: z.int() })
+
+/** A graduated idea not due yet, with its predicted chance of recall now (0 to 1). */
+export const FadingIdea = z.object({
+	cardId: z.uuid(),
+	prompt: z.string(),
+	source: z.object({ reading: z.string(), section: z.string().nullable() }).nullable(),
+	recall: z.number(),
+})
+export type FadingIdea = z.infer<typeof FadingIdea>
+
+/** What Mind and the Home card show beyond the due count. */
+export const MindSummary = z.object({
+	/** Up to 3 graduated ideas not due yet, lowest predicted recall first. */
+	fading: z.array(FadingIdea),
+	/** Recall at review over the last 30 days (see `ProgressSummary.recallAtReview`); shown from 20 reviews. */
+	recall30d: RightOf,
+})
+export type MindSummary = z.infer<typeof MindSummary>
+
+/**
+ * The Progress page. Recall at review counts the first answer of the day to each card already
+ * past the 1, 2 and 3 day steps, in Review, leaving out answers counted as right by the member
+ * and reported ones.
+ */
+export const ProgressSummary = z.object({
+	/** Every card by status now, in total and for each reading with cards. */
+	ideas: z.object({
+		total: IdeaCounts,
+		readings: z.array(z.object({ readingId: z.uuid(), title: z.string(), counts: IdeaCounts })),
+	}),
+	recallAtReview: RightOf.extend({
+		/** The member's target, to draw as a line. */
+		target: z.number(),
+		/** By week, oldest first; each week starts on Monday (UTC). */
+		weeks: z.array(RightOf.extend({ week: z.date() })),
+	}),
+	/** Review answers by the days since the card's previous answer, the steps included. */
+	recallByGap: z.array(RightOf.extend({ gap: z.enum(GAP_BUCKETS) })),
+	/** Each graded brain dump, oldest first: how many of its key ideas it covered. */
+	dumps: z.array(z.object({ attemptId: z.uuid(), at: z.date(), reading: z.string(), covered: z.int(), total: z.int() })),
+})
+export type ProgressSummary = z.infer<typeof ProgressSummary>
 
 export const ReviewFilter = z.enum(['all', 'readings', 'lessons', 'words'])
 export type ReviewFilter = z.infer<typeof ReviewFilter>
@@ -410,12 +456,18 @@ export const contract = {
 			.input(z.object({ limit: z.int().min(1).max(100).default(20) }))
 			.output(z.object({ cards: z.array(Card), total: z.int(), minutes: z.int() })),
 		/**
-		 * The next batch of due cards for Review, oldest due first, each with what to ask: a
-		 * question not asked yet nearest the card's level, else the cue.
+		 * The next batch of due cards for Review, lowest predicted recall first, each with what to
+		 * ask: a question not asked yet nearest the card's level, else the cue. With `first`, that
+		 * card comes first when it is due.
 		 */
 		next: oc
-			.input(z.object({ limit: z.int().min(1).max(50).default(20), filter: ReviewFilter.default('all') }))
+			.input(z.object({ limit: z.int().min(1).max(50).default(20), filter: ReviewFilter.default('all'), first: z.uuid().optional() }))
 			.output(z.object({ items: z.array(ReviewItem), total: z.int(), minutes: z.int() })),
+		/**
+		 * Review now: makes a started card that is not due yet due now, so it can be answered
+		 * early. A card already due keeps its due time.
+		 */
+		bringForward: oc.input(z.object({ id: z.uuid() })).output(z.object({ dueAt: z.date() })),
 		/**
 		 * Records one answer and returns its result and when the card comes back. `answerId` is
 		 * chosen by the client, so the same answer sent twice counts once. In `review` mode only a
@@ -610,6 +662,14 @@ export const contract = {
 		selfMark: oc
 			.input(z.object({ id: z.uuid(), marks: z.array(z.object({ cardId: z.uuid(), status: z.enum(['covered', 'vague', 'missing']) })).max(200) }))
 			.output(RecallAttempt),
+	},
+	mind: {
+		/** Fading ideas and the 30-day recall, for Mind and the Home card. */
+		summary: oc.output(MindSummary),
+	},
+	progress: {
+		/** The Progress page over the last `days` days (the idea counts are always as of now). */
+		summary: oc.input(z.object({ days: z.int().min(7).max(365).default(84) })).output(ProgressSummary),
 	},
 	preferences: {
 		get: oc.output(Preferences),

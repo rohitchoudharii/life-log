@@ -12,6 +12,6 @@ export async function proof(page: Page, testInfo: TestInfo, name: string) {
 	// A full-page capture of a scrolled page draws the sticky chrome out of place.
 	await page.evaluate(() => window.scrollTo(0, 0))
 	// It also draws the phone's fixed bottom bar where the viewport ends, over the page; put it at the page's end.
-	const style = 'nav[aria-label="Worlds"] { position: absolute !important; } body { position: relative; }'
+	const style = 'nav[aria-label="Worlds"].fixed { position: absolute !important; } body { position: relative; }'
 	await page.screenshot({ path: `docs/proof/${issue}/${testInfo.project.name}-${name}.png`, fullPage: true, style })
 }

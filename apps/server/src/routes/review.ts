@@ -1,6 +1,6 @@
 import { defaultScheduler, isQuestionType, questionTypes } from '@life-log-club/domain'
 import { ORPCError } from '@orpc/server'
-import { and, asc, count, eq, isNull } from 'drizzle-orm'
+import { and, asc, count, eq, gt, isNotNull, isNull } from 'drizzle-orm'
 import { asUser } from '../db/client'
 import { cards, entries, questions } from '../db/schema'
 import { answerCard, overrideAnswer, reportQuestion } from '../learning/answer'
@@ -59,7 +59,24 @@ export const reviewRoutes = {
 		}),
 	),
 
-	next: authed.review.next.handler(({ input, context }) => asUser(context.user.id, (tx) => nextBatch(tx, input.limit, input.filter))),
+	next: authed.review.next.handler(({ input, context }) => asUser(context.user.id, (tx) => nextBatch(tx, input.limit, input.filter, input.first))),
+
+	bringForward: authed.review.bringForward.handler(({ input, context }) =>
+		asUser(context.user.id, async (tx) => {
+			const now = new Date()
+			const live = and(eq(cards.id, input.id), isNull(cards.deletedAt))
+			const [moved] = await tx
+				.update(cards)
+				.set({ dueAt: now })
+				.where(and(live, isNotNull(cards.startedAt), gt(cards.dueAt, now)))
+				.returning({ dueAt: cards.dueAt })
+			if (moved) return moved
+			const [card] = await tx.select({ dueAt: cards.dueAt, startedAt: cards.startedAt }).from(cards).where(live)
+			if (!card) throw new ORPCError('NOT_FOUND', { message: 'That card does not exist. It may have been removed.' })
+			if (!card.startedAt) throw new ORPCError('CONFLICT', { message: 'This card is not in review yet.' })
+			return { dueAt: card.dueAt }
+		}),
+	),
 
 	answer: authed.review.answer.handler(({ input, context }) => answerCard(context.user.id, input)),
 

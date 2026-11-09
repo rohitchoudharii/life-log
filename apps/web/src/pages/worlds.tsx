@@ -1,6 +1,6 @@
 import type { EntryType } from '@life-log-club/domain'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect } from 'react'
 import { useLogEntry } from '../entry-actions'
 import { EntryList } from '../entry-list'
@@ -80,7 +80,12 @@ export function Mind() {
 				</div>
 			)}
 			<Hero title="The reading room" sub="Read, then recall. Ideas and lessons come back until they stick.">
-				<LogButton type="lesson">Log a lesson</LogButton>
+				<div className="flex flex-wrap gap-2">
+					<Link to="/mind/progress" className="rounded-xl border border-world-line px-4 py-2.5 text-sm font-medium transition hover:bg-world-card">
+						Progress
+					</Link>
+					<LogButton type="lesson">Log a lesson</LogButton>
+				</div>
 			</Hero>
 			{usage.data?.reached && (
 				<p role="status" className="rounded-2xl border border-world-line bg-world-card px-4 py-3 font-sans text-sm">
@@ -131,11 +136,54 @@ export function Mind() {
 				</div>
 				<ReadingNow />
 			</section>
+			<Fading />
 			<section className="grid gap-3">
 				<h2 className="text-xl">Lessons</h2>
 				<EntryList entries={lessons.data} empty="No lessons yet. Log what life teaches you." />
 			</section>
 		</div>
+	)
+}
+
+/** Ideas past the steps that are not due yet, the least likely to be recalled now first, each one click from Review. */
+function Fading() {
+	const navigate = useNavigate()
+	const summary = useQuery(orpc.mind.summary.queryOptions())
+	const bring = useMutation({
+		mutationFn: (id: string) => client.review.bringForward({ id }),
+		onSuccess: (_, id) => navigate({ to: '/mind/review', search: { first: id } }),
+	})
+	const fading = summary.data?.fading ?? []
+	if (!fading.length) return null
+	return (
+		<section className="grid gap-3" aria-labelledby="fading">
+			<div>
+				<h2 id="fading" className="text-xl">
+					Fading
+				</h2>
+				<p className="font-sans text-sm text-world-muted">Not due yet, but the most likely to slip. Recall one now to keep it.</p>
+			</div>
+			<ul className="grid gap-2">
+				{fading.map((f) => (
+					<li key={f.cardId} className="flex flex-wrap items-center gap-3 rounded-2xl border border-world-line bg-world-card px-4 py-3">
+						<div className="mr-auto min-w-0">
+							<p className="text-lg">{f.prompt}</p>
+							<p className="font-sans text-xs text-world-muted">
+								{f.source ? `${f.source.reading} · ` : ''}about {Math.round(f.recall * 100)}% likely to come back to you now
+							</p>
+						</div>
+						<button
+							type="button"
+							disabled={bring.isPending}
+							onClick={() => bring.mutate(f.cardId)}
+							className="rounded-xl border border-world-line px-3 py-1.5 font-sans text-sm font-medium transition hover:bg-world active:scale-[0.97]"
+						>
+							Review now
+						</button>
+					</li>
+				))}
+			</ul>
+		</section>
 	)
 }
 

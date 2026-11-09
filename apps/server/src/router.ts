@@ -6,6 +6,7 @@ import { booksRoutes } from './routes/books'
 import { devices } from './routes/devices'
 import { entriesRoutes } from './routes/entries'
 import { preferencesRoutes } from './routes/preferences'
+import { mindRoutes, progressRoutes } from './routes/progress'
 import { readingsRoutes } from './routes/readings'
 import { recallRoutes } from './routes/recall'
 import { questionRoutes, reviewRoutes } from './routes/review'
@@ -30,5 +31,7 @@ export const router = os.router({
 	books: booksRoutes,
 	ai: aiRoutes,
 	preferences: preferencesRoutes,
+	mind: mindRoutes,
+	progress: progressRoutes,
 	recall: recallRoutes,
 })

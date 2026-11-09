@@ -1,3 +1,4 @@
+import { RECALL_MIN_REVIEWS } from '@life-log-club/domain'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { EntryList } from '../entry-list'
@@ -8,6 +9,8 @@ import { orpc } from '../rpc'
 export function Home() {
 	const me = useQuery(orpc.auth.me.queryOptions())
 	const due = useQuery(orpc.review.due.queryOptions({ input: { limit: 1 } }))
+	const mind = useQuery(orpc.mind.summary.queryOptions())
+	const recall = mind.data?.recall30d
 	const body = useQuery(orpc.entries.list.queryOptions({ input: { pillar: 'body', limit: 100 } }))
 	const heart = useQuery(orpc.entries.list.queryOptions({ input: { pillar: 'heart', limit: 100 } }))
 	const lately = useQuery(orpc.entries.list.queryOptions({ input: { limit: 8 } }))
@@ -44,6 +47,12 @@ export function Home() {
 						</p>
 						<p className="text-sm text-[#716a5f]">{due.data?.total === 1 ? 'card' : 'cards'} due for review</p>
 					</Link>
+					{/* One honest number, once it rests on enough reviews to mean something. */}
+					{recall && recall.total >= RECALL_MIN_REVIEWS && (
+						<p className="relative text-sm text-white/80" data-testid="recall-30d">
+							Recalled {Math.round((recall.right / recall.total) * 100)}% at review, last 30 days
+						</p>
+					)}
 				</div>
 
 				<Link to="/body" className={`${card} bg-[#161619] text-[#f3f0ea]`} aria-label="Body: the training log">

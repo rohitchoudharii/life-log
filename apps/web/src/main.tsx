@@ -6,6 +6,7 @@ import { BookPage } from './books'
 import { Devices } from './pages/devices'
 import { Settings } from './pages/settings'
 import { Home } from './pages/home'
+import { Progress } from './pages/progress'
 import { Reader } from './pages/reader'
 import { Recall } from './pages/recall'
 import { Review } from './pages/review'
@@ -49,7 +50,17 @@ const recallRoute = createRoute({
 		return <Recall key={attemptId} attemptId={attemptId} />
 	},
 })
-const reviewRoute = createRoute({ getParentRoute: () => appRoute, path: '/mind/review', component: Review })
+const reviewRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/mind/review',
+	// `first`: the card Review now on Mind brought forward, to ask before the rest.
+	validateSearch: (search: Record<string, unknown>): { first?: string } => (typeof search.first === 'string' ? { first: search.first } : {}),
+	component: function ReviewPage() {
+		const { first } = reviewRoute.useSearch()
+		return <Review key={first} first={first} />
+	},
+})
+const progressRoute = createRoute({ getParentRoute: () => appRoute, path: '/mind/progress', component: Progress })
 const bookRoute = createRoute({
 	getParentRoute: () => appRoute,
 	path: '/mind/book/$bookId',
@@ -63,7 +74,7 @@ const heartRoute = createRoute({ getParentRoute: () => appRoute, path: '/heart',
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: '/settings', component: Settings })
 
 const router = createRouter({
-	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, mindRoute, readerRoute, recallRoute, reviewRoute, bookRoute, bodyRoute, heartRoute, devicesRoute, settingsRoute])]),
+	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, mindRoute, readerRoute, recallRoute, reviewRoute, progressRoute, bookRoute, bodyRoute, heartRoute, devicesRoute, settingsRoute])]),
 })
 
 declare module '@tanstack/react-router' {

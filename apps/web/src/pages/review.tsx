@@ -273,9 +273,9 @@ function Retry({ records, onDone }: { records: Reviewed[]; onDone: () => void })
 
 /**
  * Review: due ideas one at a time, 20 to a batch, each answer checked and its result shown at
- * once. Oldest due first, mixing readings and lessons.
+ * once. Lowest predicted recall first, mixing readings and lessons.
  */
-export function Review() {
+export function Review({ first }: { first?: string }) {
 	const queryClient = useQueryClient()
 	const [filter, setFilter] = useState<ReviewFilter>('all')
 	const [round, setRound] = useState(0)
@@ -284,8 +284,9 @@ export function Review() {
 	const [retrying, setRetrying] = useState(false)
 	// One batch stays as it was fetched while the member works through it.
 	const batch = useQuery({
-		queryKey: ['review-batch', filter, round],
-		queryFn: () => client.review.next({ limit: BATCH, filter }),
+		queryKey: ['review-batch', filter, round, first],
+		// The card brought forward leads the first batch only.
+		queryFn: () => client.review.next({ limit: BATCH, filter, first: round === 0 ? first : undefined }),
 		staleTime: Number.POSITIVE_INFINITY,
 		refetchOnWindowFocus: false,
 	})
