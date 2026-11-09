@@ -334,10 +334,15 @@ export const contract = {
 	entries: {
 		/**
 		 * The client picks the id, so it can show the entry at once and safely retry: creating the
-		 * same id twice returns the first entry.
+		 * same id twice returns the first entry. A lesson also gets its review card, due at once,
+		 * unless `remember` is false.
 		 */
 		create: oc
-			.input(EntryData.and(z.object({ id: z.uuid(), occurredAt: z.date().optional(), text: EntryText.optional() })))
+			.input(
+				EntryData.and(
+					z.object({ id: z.uuid(), occurredAt: z.date().optional(), text: EntryText.optional(), remember: z.boolean().optional() }),
+				),
+			)
 			.output(Entry),
 		list: oc
 			.input(

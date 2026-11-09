@@ -143,7 +143,7 @@ function ReviewCard({ item, mode, onDone }: { item: ReviewItem; mode: 'review' |
 					</>
 				)}
 				<div className="rounded-2xl border border-world-line bg-world-card p-4" data-testid="answer">
-					<p className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">The idea</p>
+					<p className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">{item.kind === 'lesson' ? 'The lesson' : 'The idea'}</p>
 					<p className="mt-1 text-lg leading-snug">{item.answer}</p>
 				</div>
 				<SelfRating cardId={item.cardId} mode={mode} onRated={(result, answerId) => rated(result, answerId, phase.kind === 'self-check' ? phase.given : thought || null)} />

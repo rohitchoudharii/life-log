@@ -105,6 +105,7 @@ function answer(system: string, user: string) {
 	if (system.startsWith('Task: headings')) return JSON.stringify(headings(user))
 	if (system.startsWith('Task: write-section')) return JSON.stringify(writeSection(user))
 	if (system.startsWith('Task: check-questions')) return JSON.stringify(checkQuestions(user))
+	if (system.startsWith('Task: lesson-cue')) return JSON.stringify({ cue: 'Where did this lesson come up for you?' })
 	return '{}'
 }
 

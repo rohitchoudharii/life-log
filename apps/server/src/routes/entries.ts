@@ -4,6 +4,8 @@ import { and, desc, eq, isNotNull, isNull, lt } from 'drizzle-orm'
 import { decrypt, encrypt } from '../crypto'
 import { asUser, type Tx } from '../db/client'
 import { entries } from '../db/schema'
+import { enqueueLessonCue } from '../jobs'
+import { addLessonCard, hideLessonCard, updateLessonCard } from '../learning/lessons'
 import { authed } from '../orpc'
 
 type Row = typeof entries.$inferSelect
@@ -30,6 +32,11 @@ function toEntry(row: Row) {
 	}
 }
 
+/** A lesson is remembered by its text, so it can't be empty. */
+function checkLessonText(type: EntryType, text: string | null | undefined) {
+	if (type === 'lesson' && !text?.trim()) throw new ORPCError('BAD_REQUEST', { message: 'Write what you learned, then save.' })
+}
+
 const notFound = () => new ORPCError('NOT_FOUND', { message: 'That entry does not exist.' })
 
 async function find(tx: Tx, id: string, removed: boolean) {
@@ -42,8 +49,9 @@ async function find(tx: Tx, id: string, removed: boolean) {
 }
 
 export const entriesRoutes = {
-	create: authed.entries.create.handler(({ input, context }) =>
-		asUser(context.user.id, async (tx) => {
+	create: authed.entries.create.handler(async ({ input, context }) => {
+		checkLessonText(input.type, input.text)
+		const { entry, needsCue } = await asUser(context.user.id, async (tx) => {
 			const [created] = await tx
 				.insert(entries)
 				.values({
@@ -57,14 +65,19 @@ export const entriesRoutes = {
 				})
 				.onConflictDoNothing()
 				.returning()
-			if (created) return toEntry(created)
+			if (created) {
+				const needsCue = created.type === 'lesson' && input.remember !== false && (await addLessonCard(tx, created))
+				return { entry: toEntry(created), needsCue }
+			}
 			// A retry of a create that already happened returns the first entry. An id that
 			// belongs to someone else is invisible here, so it can't be read or overwritten.
 			const [existing] = await tx.select().from(entries).where(eq(entries.id, input.id))
 			if (!existing) throw new ORPCError('CONFLICT', { message: 'That entry id is taken. Try again.' })
-			return toEntry(existing)
-		}),
-	),
+			return { entry: toEntry(existing), needsCue: false }
+		})
+		if (needsCue) await enqueueLessonCue({ userId: context.user.id, entryId: entry.id })
+		return entry
+	}),
 
 	list: authed.entries.list.handler(({ input, context }) =>
 		asUser(context.user.id, async (tx) => {
@@ -90,6 +103,7 @@ export const entriesRoutes = {
 			const type = row.type as EntryType
 			const parsed = EntryData.safeParse({ type, details: { ...row.details, ...input.details } })
 			if (!parsed.success) throw new ORPCError('BAD_REQUEST', { message: 'Those details are not valid for this entry.' })
+			if (input.text !== undefined) checkLessonText(type, input.text)
 			const [updated] = await tx
 				.update(entries)
 				.set({
@@ -100,6 +114,7 @@ export const entriesRoutes = {
 				})
 				.where(eq(entries.id, row.id))
 				.returning()
+			if (type === 'lesson') await updateLessonCard(tx, row, updated!)
 			return toEntry(updated!)
 		}),
 	),
@@ -107,7 +122,9 @@ export const entriesRoutes = {
 	remove: authed.entries.remove.handler(({ input, context }) =>
 		asUser(context.user.id, async (tx) => {
 			const row = await find(tx, input.id, false)
-			await tx.update(entries).set({ deletedAt: new Date() }).where(eq(entries.id, row.id))
+			const at = new Date()
+			await tx.update(entries).set({ deletedAt: at }).where(eq(entries.id, row.id))
+			await hideLessonCard(tx, row.id, at)
 			return { ok: true as const }
 		}),
 	),
@@ -116,6 +133,7 @@ export const entriesRoutes = {
 		asUser(context.user.id, async (tx) => {
 			const row = await find(tx, input.id, true)
 			const [restored] = await tx.update(entries).set({ deletedAt: null }).where(eq(entries.id, row.id)).returning()
+			await hideLessonCard(tx, row.id, null)
 			return toEntry(restored!)
 		}),
 	),

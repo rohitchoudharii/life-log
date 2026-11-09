@@ -64,7 +64,8 @@ test('a forgotten card comes back in 10 minutes, and an answer to a card not yet
 
 test('lessons and ideas share one queue, oldest due first, and a lesson can point at its entry', async () => {
 	const { client } = await newMember()
-	const entry = await client.entries.create({ id: randomUUID(), type: 'lesson', details: {}, text: 'Rest days count' })
+	// Other clients still add a lesson's card themselves, so this entry makes none.
+	const entry = await client.entries.create({ id: randomUUID(), type: 'lesson', details: {}, text: 'Rest days count', remember: false })
 	const lesson = await client.review.add({ id: randomUUID(), kind: 'lesson', prompt: 'Rest days?', answer: 'They count.', entryId: entry.id })
 	const idea = await client.review.add({ id: randomUUID(), kind: 'idea', prompt: 'Mental representations?', answer: 'Chunks experts use.' })
 	await sql(`update cards set due_at = now() - interval '2 days' where id = $1`, [idea.id])
@@ -78,10 +79,64 @@ test('lessons and ideas share one queue, oldest due first, and a lesson can poin
 	expect(lesson.entryId).toBe(entry.id)
 })
 
+test('a lesson entry makes its card: an edit changes the answer and keeps the schedule, removing hides it, restoring brings it back', async () => {
+	const { client } = await newMember()
+	const cardOf = (entryId: string) =>
+		sql<{ id: string; prompt: string; answer: string; due_at: Date; deleted_at: Date | null }>(
+			'select id, prompt, answer, due_at, deleted_at from cards where entry_id = $1',
+			[entryId],
+		)
+	expect((await client.review.due({})).total).toBe(0)
+	const occurredAt = new Date(Date.UTC(2026, 10, 3, 9))
+	const entry = await client.entries.create({ id: randomUUID(), type: 'lesson', details: {}, text: 'Rest days count as training.', occurredAt })
+	expect((await client.review.due({})).total).toBe(1)
+	// A retried create makes no second card.
+	await client.entries.create({ id: entry.id, type: 'lesson', details: {}, text: 'Rest days count as training.' })
+	const [card] = await cardOf(entry.id)
+	expect(await cardOf(entry.id)).toHaveLength(1)
+	expect(card!.prompt).toBe('Your lesson from 3 Nov: what was it?')
+	expect(card!.answer).toBe('Rest days count as training.')
+
+	await client.review.answer(rate(card!.id, 'good'))
+	const [reviewed] = await cardOf(entry.id)
+	await client.entries.update({ id: entry.id, text: 'Rest days are part of training.', details: { cue: 'Skipping the gym' } })
+	const [edited] = await cardOf(entry.id)
+	expect(edited).toMatchObject({ answer: 'Rest days are part of training.', prompt: "Skipping the gym: what's the lesson?", due_at: reviewed!.due_at })
+	expect(await code(client.entries.update({ id: entry.id, text: ' ' }))).toBe('BAD_REQUEST')
+	expect(await code(client.entries.create({ id: randomUUID(), type: 'lesson', details: {}, text: '' }))).toBe('BAD_REQUEST')
+
+	await makeDue(card!.id)
+	expect((await client.review.due({})).total).toBe(1)
+	await client.entries.remove({ id: entry.id })
+	expect((await client.review.due({})).total).toBe(0)
+	expect(await code(client.review.answer(rate(card!.id, 'good')))).not.toBe('ok')
+	await client.entries.restore({ id: entry.id })
+	expect((await client.review.due({})).total).toBe(1)
+	expect((await cardOf(entry.id))[0]!.deleted_at).toBeNull()
+
+	const forgotten = await client.entries.create({ id: randomUUID(), type: 'lesson', details: {}, text: 'Just a note.', remember: false })
+	expect(await cardOf(forgotten.id)).toHaveLength(0)
+})
+
+test('with a key, a lesson logged without a cue gets one written by AI; a cue the member gave stays', async () => {
+	const { client } = await newMember()
+	await client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })
+	const plain = await client.entries.create({ id: randomUUID(), type: 'lesson', details: {}, text: 'Say a number first and anchor high.' })
+	const given = await client.entries.create({ id: randomUUID(), type: 'lesson', details: { cue: 'Salary talks' }, text: 'Anchor high.' })
+	const prompt = (entryId: string) => sql<{ prompt: string }>('select prompt from cards where entry_id = $1', [entryId]).then((r) => r[0]!.prompt)
+	await expect.poll(() => prompt(plain.id), { timeout: 10_000 }).toBe('Where did this lesson come up for you?')
+	expect(await prompt(given.id)).toBe("Salary talks: what's the lesson?")
+	const [call] = await sql<{ n: number }>(
+		`select count(*)::int as n from ai_calls where purpose = 'lesson-cue' and user_id = (select user_id from cards where entry_id = $1)`,
+		[plain.id],
+	)
+	expect(call!.n).toBe(1)
+})
+
 test("a member can't review another member's cards or link a card to their entries", async () => {
 	const a = await newMember('A')
 	const b = await newMember('B')
-	const entry = await a.client.entries.create({ id: randomUUID(), type: 'lesson', details: {}, text: 'A only' })
+	const entry = await a.client.entries.create({ id: randomUUID(), type: 'lesson', details: {}, text: 'A only', remember: false })
 	const card = await a.client.review.add({ id: randomUUID(), kind: 'idea', prompt: 'A prompt', answer: 'A answer' })
 
 	expect(await b.client.review.due({})).toEqual({ cards: [], total: 0, minutes: 0 })

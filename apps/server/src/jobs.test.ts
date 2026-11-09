@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
+import { defaultScheduler } from '@life-log-club/domain'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { ownerDb, ownerPool, pool } from './db/client'
 import { prepareDatabase } from './db/prepare'
-import { entries, invites, sessions, users } from './db/schema'
+import { cards, entries, invites, sessions, users } from './db/schema'
 import { cleanup } from './jobs'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -31,6 +32,18 @@ it('deletes for good only what is past undo, signed out, or expired', async () =
 	const drop = [entry(ago(31))]
 	await ownerDb.insert(entries).values([...keep, ...drop])
 
+	const card = (deletedAt: Date | null) => ({
+		id: randomUUID(),
+		userId: user!.id,
+		kind: 'lesson' as const,
+		prompt: 'Rest days?',
+		answer: 'They count.',
+		state: defaultScheduler.initial(),
+		deletedAt,
+	})
+	const keepCards = [card(null), card(ago(29))]
+	await ownerDb.insert(cards).values([...keepCards, card(ago(31))])
+
 	const session = (lastSeenAt: Date, revokedAt: Date | null) => ({
 		userId: user!.id,
 		tokenHash: randomUUID(),
@@ -52,6 +65,8 @@ it('deletes for good only what is past undo, signed out, or expired', async () =
 
 	const left = await ownerDb.select({ id: entries.id }).from(entries).where(eq(entries.userId, user!.id))
 	expect(left.map((e) => e.id).sort()).toEqual(keep.map((e) => e.id).sort())
+	const leftCards = await ownerDb.select({ id: cards.id }).from(cards).where(eq(cards.userId, user!.id))
+	expect(leftCards.map((c) => c.id).sort()).toEqual(keepCards.map((c) => c.id).sort())
 	const leftSessions = await ownerDb.select({ id: sessions.id }).from(sessions).where(eq(sessions.userId, user!.id))
 	expect(leftSessions.map((x) => x.id).sort()).toEqual([s[0]!.id, s[1]!.id].sort())
 	const leftInvites = await ownerDb.select().from(invites).where(eq(invites.email, user!.email))

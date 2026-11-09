@@ -37,7 +37,18 @@ function useLastOfEach() {
 	return { last, people }
 }
 
-type Form = { exercise: string; weightKg: string; reps: string; name: string; proteinG: string; hours: string; person: string; text: string }
+type Form = {
+	exercise: string
+	weightKg: string
+	reps: string
+	name: string
+	proteinG: string
+	hours: string
+	person: string
+	text: string
+	cue: string
+	remember: boolean
+}
 
 function defaults(last: Map<EntryType, Entry>): Form {
 	const set = last.get('gym.set')
@@ -53,6 +64,8 @@ function defaults(last: Map<EntryType, Entry>): Form {
 		hours: sleep?.type === 'sleep' ? String(sleep.details.hours) : '',
 		person: meeting?.type === 'meeting' ? meeting.details.person : '',
 		text: '',
+		cue: '',
+		remember: true,
 	}
 }
 
@@ -96,8 +109,11 @@ export function LogDialog({ type: openWith, onClose }: { type: EntryType | null;
 			case 'meeting':
 				return save({ type, details: { person: form.person }, text })
 			case 'moment':
-			case 'lesson':
 				return save({ type, details: {}, text })
+			case 'lesson': {
+				const cue = form.cue.trim()
+				return save({ type, details: cue ? { cue } : {}, text, remember: form.remember })
+			}
 			case 'mood':
 				return
 		}
@@ -186,10 +202,29 @@ export function LogDialog({ type: openWith, onClose }: { type: EntryType | null;
 						<p className="-mt-3 text-xs text-ink/60">Notes about people are encrypted.</p>
 					</>
 				)}
-				{(type === 'moment' || type === 'lesson') && (
-					<Field label={type === 'moment' ? 'What happened' : 'What you learned'}>
+				{type === 'moment' && (
+					<Field label="What happened">
 						<textarea className={`${input} min-h-24`} required value={form.text} onChange={set('text')} />
 					</Field>
+				)}
+				{type === 'lesson' && (
+					<>
+						<Field label="What did you learn?">
+							<textarea className={`${input} min-h-24`} required value={form.text} onChange={set('text')} />
+						</Field>
+						<Field label="When does it apply? (optional)">
+							<input className={input} maxLength={80} value={form.cue} onChange={set('cue')} placeholder="Salary talks" />
+						</Field>
+						<label className="-mt-2 flex items-center gap-2 text-sm text-ink/80">
+							<input
+								type="checkbox"
+								className="size-4 accent-navy"
+								checked={form.remember}
+								onChange={(e) => setForm((f) => ({ ...f, remember: e.target.checked }))}
+							/>
+							Remember this: bring it back in Review
+						</label>
+					</>
 				)}
 				{type === 'mood' ? (
 					<div role="group" aria-label="How do you feel?" className="grid grid-cols-5 gap-2">

@@ -22,7 +22,11 @@ export const EntryData = z.discriminatedUnion('type', [
 	z.object({ type: z.literal('mood'), details: z.object({ score: z.int().min(1).max(5) }) }),
 	z.object({ type: z.literal('meeting'), details: z.object({ person: z.string().trim().min(1).max(80) }) }),
 	z.object({ type: z.literal('moment'), details: z.object({}) }),
-	z.object({ type: z.literal('lesson'), details: z.object({}) }),
+	z.object({
+		type: z.literal('lesson'),
+		// When the lesson applies ("Salary talks"): the cue its review card asks with.
+		details: z.object({ cue: z.string().trim().min(1).max(80).optional() }),
+	}),
 ])
 export type EntryData = z.infer<typeof EntryData>
 export type EntryType = EntryData['type']

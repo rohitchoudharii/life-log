@@ -119,6 +119,43 @@ test('Mind shows the cards due for review', async ({ page }, testInfo) => {
 	await proof(page, testInfo, 'mind-due')
 })
 
+test('a lesson logged with + Log is due in Review at once with its cue, Undo takes it back, and Remember this off logs no card', async ({ page }, testInfo) => {
+	await joinAs(page)
+	await page.goto('/mind')
+	await expect(page.getByTestId('mind-due')).toHaveText('0')
+	const logLesson = async (text: string, cue?: string, remember = true) => {
+		await page.getByRole('button', { name: 'Log a lesson' }).click()
+		await dialog(page).getByLabel('What did you learn?').fill(text)
+		if (cue) await dialog(page).getByLabel('When does it apply?').fill(cue)
+		if (!remember) await dialog(page).getByLabel('Remember this').uncheck()
+		await expect(dialog(page).getByLabel('Remember this')).toBeChecked({ checked: remember })
+		if (cue) await proof(page, testInfo, 'log-lesson')
+		await dialog(page).getByRole('button', { name: 'Save' }).click()
+		await expect(dialog(page)).toBeHidden()
+	}
+
+	await logLesson('Say a number first and anchor high.', 'Salary talks')
+	await expect(page.getByTestId('mind-due')).toHaveText('1')
+	await expect(page.getByText("Salary talks: what's the lesson?")).toBeVisible()
+	await proof(page, testInfo, 'lesson-due')
+	await page.getByRole('status').getByRole('button', { name: 'Undo' }).click()
+	await expect(page.getByTestId('mind-due')).toHaveText('0')
+
+	await logLesson('Rest days count as training.', undefined, false)
+	await expect(page.getByTestId('entry').filter({ hasText: 'Rest days count as training.' })).toBeVisible()
+	await expect(page.getByTestId('mind-due')).toHaveText('0')
+
+	await logLesson('Say a number first and anchor high.', 'Salary talks')
+	await expect(page.getByTestId('mind-due')).toHaveText('1')
+	await page.getByRole('link', { name: 'Review due ideas' }).click()
+	const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+	await expect(page.getByTestId('source')).toHaveText(`Lesson · ${today}`)
+	await expect(page.getByTestId('question')).toHaveText("Salary talks: what's the lesson?")
+	await page.getByRole('button', { name: 'Show answer' }).click()
+	await expect(page.getByTestId('answer')).toContainText('The lessonSay a number first and anchor high.')
+	await proof(page, testInfo, 'lesson-in-review')
+})
+
 test('keyboard: L opens + Log, Esc closes it, 1 to 4 switch worlds, and typing is never a shortcut', async ({
 	page,
 }, info) => {

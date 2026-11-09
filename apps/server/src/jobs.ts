@@ -2,9 +2,10 @@ import type { WriteStatus } from '@life-log-club/domain'
 import { and, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm'
 import { type Job, type JobWithMetadata, PgBoss } from 'pg-boss'
 import { asUser, ownerDb } from './db/client'
-import { books, entries, invites, readings, recallAttempts, sections, sessions } from './db/schema'
+import { books, cards, entries, invites, readings, recallAttempts, sections, sessions } from './db/schema'
 import { env } from './env'
 import { addChapterHeadings, importReading } from './import/reading'
+import { type CueJob, writeLessonCue } from './learning/lessons'
 import { type GradeJob, gradeAttempt } from './learning/recall'
 import { type WriteJob, writeKeyIdeas } from './learning/write-section'
 
@@ -12,8 +13,8 @@ const DAY = 24 * 60 * 60 * 1000
 const ago = (days: number, now: Date) => new Date(now.getTime() - days * DAY)
 
 /**
- * Deletes for good what nobody can reach any more: entries, readings and books removed more than 30
- * days ago (long past undo), sessions signed out or unused for 90 days, and invites expired 30
+ * Deletes for good what nobody can reach any more: entries, readings, books and cards removed more
+ * than 30 days ago (long past undo), sessions signed out or unused for 90 days, and invites expired 30
  * days ago.
  */
 export async function cleanup(now = new Date()) {
@@ -29,6 +30,10 @@ export async function cleanup(now = new Date()) {
 		.delete(books)
 		.where(and(isNotNull(books.deletedAt), lt(books.deletedAt, ago(30, now))))
 		.returning({ id: books.id })
+	const removedCards = await ownerDb
+		.delete(cards)
+		.where(and(isNotNull(cards.deletedAt), lt(cards.deletedAt, ago(30, now))))
+		.returning({ id: cards.id })
 	const signedOut = await ownerDb
 		.delete(sessions)
 		.where(or(lt(sessions.revokedAt, ago(30, now)), lt(sessions.lastSeenAt, ago(90, now))))
@@ -37,7 +42,7 @@ export async function cleanup(now = new Date()) {
 		.delete(invites)
 		.where(lt(invites.expiresAt, ago(30, now)))
 		.returning({ id: invites.id })
-	return { entries: removed.length, readings: removedReadings.length, books: removedBooks.length, sessions: signedOut.length, invites: expired.length }
+	return { entries: removed.length, readings: removedReadings.length, books: removedBooks.length, cards: removedCards.length, sessions: signedOut.length, invites: expired.length }
 }
 
 const boss = new PgBoss(env.DATABASE_OWNER_URL)
@@ -91,6 +96,11 @@ async function gradeWaitingOn(userId: string, sectionId: string) {
 	)
 	await Promise.all(waiting.map((a) => enqueueGrade({ userId, attemptId: a.id })))
 }
+
+const CUE = 'lesson-cue'
+
+/** Queues the writing of a cue for a lesson logged without one. */
+export const enqueueLessonCue = (job: CueJob) => boss.send(CUE, job, { singletonKey: job.entryId })
 
 /**
  * Queues again the member's sections that wait in one of `statuses`: after they add a key
@@ -147,6 +157,11 @@ export async function startJobs() {
 	else await boss.createQueue(GRADE, { policy: 'stately', ...gradeOptions })
 	await boss.work(GRADE, { localConcurrency: 4, includeMetadata: true }, async ([job]: JobWithMetadata<GradeJob>[]) => {
 		if (job) await gradeAttempt(job.data, job.retryCount >= job.retryLimit)
+	})
+	// A lesson whose cue isn't written keeps its date cue, so one retry is enough.
+	if (!(await boss.getQueue(CUE))) await boss.createQueue(CUE, { policy: 'stately', retryLimit: 1, retryDelay: 30, expireInSeconds: 5 * 60 })
+	await boss.work(CUE, { localConcurrency: 4 }, async ([job]: Job<CueJob>[]) => {
+		if (job) await writeLessonCue(job.data)
 	})
 	// Readings left importing by a stop before their job was queued. The singleton key keeps a
 	// reading whose job is still queued from getting a second one.
