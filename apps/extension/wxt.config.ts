@@ -11,6 +11,8 @@ const testSites = (process.env.WXT_E2E_SITES ?? '').split(',').filter(Boolean)
 export default defineConfig({
 	modules: ['@wxt-dev/module-react'],
 	publicDir: 'icons',
+	// A visible folder, so Chrome's Load unpacked file picker shows it without revealing hidden files.
+	outDir: 'dist',
 	vite: () => ({ define: { __APP_ORIGIN__: JSON.stringify(appOrigin) } }),
 	manifest: ({ mode }) => ({
 		name: 'Life Log Club',

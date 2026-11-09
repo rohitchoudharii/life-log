@@ -20,7 +20,7 @@ const test = base.extend<{ page: Page }, { browser_: { context: BrowserContext; 
 				env: { ...process.env, WXT_APP_ORIGIN: `http://localhost:${WEB_PORT}`, WXT_E2E_SITES: [MEMBERS, FAKE_SITE].join(',') },
 				stdio: 'pipe',
 			})
-			const path = `${extensionDir}.output/chrome-mv3-e2e`
+			const path = `${extensionDir}dist/chrome-mv3-e2e`
 			const context = await chromium.launchPersistentContext('', {
 				channel: 'chromium',
 				baseURL: `http://localhost:${WEB_PORT}`,

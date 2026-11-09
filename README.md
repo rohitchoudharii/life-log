@@ -81,7 +81,7 @@ The extension saves the page in the current tab, for pages the server can't open
 - Saving the same page again replaces it and marks it not read.
 - Before Save, the popup warns when the page looks like a preview: it stops at a subscribe box, or it is much shorter than the page says, than the book's chapters usually are, or than the copy you saved.
 
-Build it for your app's address, then load `apps/extension/.output/chrome-mv3` in `chrome://extensions` with **Developer mode** on and **Load unpacked**:
+Build it for your app's address, then load `apps/extension/dist/chrome-mv3` in `chrome://extensions` with **Developer mode** on and **Load unpacked**:
 
 ```bash
 WXT_APP_ORIGIN=http://localhost:5173 pnpm --filter @life-log-club/extension build
