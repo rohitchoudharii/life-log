@@ -7,10 +7,17 @@ import { createServer } from 'node:http'
 const fixture = (name: string) => readFileSync(new URL(`../apps/server/src/import/fixtures/${name}`, import.meta.url))
 const html = { 'content-type': 'text/html; charset=utf-8' }
 
+/** A 1,300-word essay with no headings, as many blog posts are. */
+const essay = `<html><head><title>Notes on attention</title></head><body><article><h1>Notes on attention</h1>${Array.from(
+	{ length: 16 },
+	(_, i) => `<p>Paragraph ${i + 1}. ${'Attention is where the mind chooses to spend itself, and what we read with it stays. '.repeat(5)}</p>`,
+).join('')}</article></body></html>`
+
 const pages: Record<string, () => { status?: number; headers: Record<string, string>; body?: Buffer | string; delayMs?: number }> = {
 	'/health': () => ({ headers: {}, body: 'ok' }),
 	'/articles/spaced-repetition': () => ({ headers: html, body: fixture('wikipedia-spaced-repetition.html'), delayMs: 1500 }),
 	'/articles/execution-model': () => ({ headers: html, body: fixture('mdn-execution-model.html') }),
+	'/articles/no-headings': () => ({ headers: html, body: essay }),
 	'/members-only': () => ({ status: 302, headers: { location: '/login' } }),
 	'/login': () => ({ headers: html, body: '<h1>Sign in</h1><form><input name="email"><input type="password"><button>Sign in</button></form>' }),
 	// A public page that redirects to this machine, as an attacker's site might.

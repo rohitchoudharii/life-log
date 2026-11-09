@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { ORPCError } from '@orpc/client'
 import { expect, type Page, test } from '@playwright/test'
 import { newMember } from './api'
-import { FAKE_SITE } from './env'
+import { FAKE_SITE, GOOD_ANTHROPIC_KEY } from './env'
 import { joinAs } from './session'
 
 async function addLink(page: Page, url: string) {
@@ -82,4 +82,31 @@ test("a member can't see another member's reading, by id or in their list", asyn
 	expect(await code(b.client.readings.add({ id: reading.id, url: `${FAKE_SITE}/articles/spaced-repetition` }))).toBe('CONFLICT')
 	const { contents } = await a.client.readings.get({ id: reading.id })
 	expect(await code(b.client.readings.section({ id: contents[0]!.id }))).toBe('NOT_FOUND')
+})
+
+test('a long article with no headings gets AI headings with a key, and stays one section without one', async ({ page, isMobile }) => {
+	await joinAs(page)
+	await page.goto('/mind')
+	await addLink(page, `${FAKE_SITE}/articles/no-headings`)
+	await expect(readings(page)).toContainText('1 section', { timeout: 15_000 })
+	await readings(page).getByRole('link').click()
+	await expect(page.getByRole('heading', { level: 2, name: 'Notes on attention' })).toBeVisible()
+	await expect(page.getByText('Heading added by AI')).toHaveCount(0)
+
+	// With a key, the same article gets headings (e2e/fake-llm.ts decides where they go).
+	const saved = await page.request.post('/rpc/ai/saveKey', {
+		headers: { 'x-csrf-token': 'orpc' },
+		data: { json: { provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY } },
+	})
+	expect(saved.ok()).toBe(true)
+	await page.goto('/mind')
+	await addLink(page, `${FAKE_SITE}/articles/no-headings?copy=2`)
+	await expect(readings(page).filter({ hasText: '2 sections' })).toBeVisible({ timeout: 15_000 })
+	await readings(page).filter({ hasText: '2 sections' }).getByRole('link').click()
+	await expect(page.getByRole('heading', { level: 2, name: 'How it starts' })).toBeVisible()
+	await expect(page.getByText("Heading added by AI. The text is the author's.")).toBeVisible()
+	await expect(page.getByText(/^Paragraph 1\. Attention is where the mind/)).toBeVisible()
+	if (isMobile) await page.getByRole('button', { name: /^Contents/ }).click()
+	await page.getByRole('navigation', { name: 'Contents' }).getByRole('button', { name: 'Where it leads' }).click()
+	await expect(page.getByText(/^Paragraph 9\. Attention/)).toBeVisible()
 })

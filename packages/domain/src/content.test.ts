@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { type Block, countWords, splitSections } from './content'
+import { type Block, blockText, countWords, insertHeadings, splitSections } from './content'
 
 const p = (words: number, word = 'word'): Block => ({ type: 'paragraph', text: Array(words).fill(word).join(' ') })
 const h = (level: number, text: string): Block => ({ type: 'heading', level, text })
@@ -42,9 +42,38 @@ describe('splitSections', () => {
 		expect(splitSections(Array(60).fill(p(100)), 'Essay').map((s) => s.wordCount)).toEqual([2000, 2000, 2000])
 	})
 
+	it("marks sections whose titles the AI wrote, including the parts they are cut into", () => {
+		const blocks: Block[] = [p(10), { type: 'heading', level: 2, text: 'Why', source: 'ai' }, ...Array(30).fill(p(100)), h(2, 'Author')]
+		expect(splitSections(blocks, 'Essay').map((s) => [s.title, s.aiTitle])).toEqual([
+			['Essay', false],
+			['Why', true],
+			['Why (part 2)', true],
+			['Author', false],
+		])
+	})
+
 	it('never cuts inside a block', () => {
 		const sections = splitSections([p(3000), p(10)], 'Essay')
 		expect(sections.map((s) => s.wordCount)).toEqual([3000, 10])
+	})
+})
+
+describe('insertHeadings', () => {
+	it('adds AI headings before the blocks it names and keeps every block of the article', () => {
+		const blocks: Block[] = [p(3, 'a'), p(3, 'b'), { type: 'code', text: 'x = 1' }, p(3, 'c')]
+		const out = insertHeadings(blocks, [
+			{ before: 0, title: 'Start', level: 2 },
+			{ before: 2, title: 'Code', level: 3 },
+		])
+		expect(out.map((b) => (b.type === 'heading' ? `${b.level}:${b.text}:${b.source}` : blockText(b)))).toEqual([
+			'2:Start:ai',
+			'a a a',
+			'b b b',
+			'3:Code:ai',
+			'x = 1',
+			'c c c',
+		])
+		expect(out.filter((b) => b.type !== 'heading')).toEqual(blocks)
 	})
 })
 

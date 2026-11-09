@@ -16,6 +16,9 @@ export default defineConfig({
 			ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'),
 			// The test site in src/import/test-site.ts.
 			IMPORT_ALLOWED_ORIGINS: 'http://localhost:8796',
+			// The test site also answers as the AI provider, with the reply a test gives it.
+			ANTHROPIC_BASE_URL: 'http://localhost:8796',
+			OPENAI_BASE_URL: 'http://localhost:8796',
 		},
 		fileParallelism: false,
 	},

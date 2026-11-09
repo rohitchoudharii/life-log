@@ -90,7 +90,14 @@ export const readingsRoutes = {
 		asUser(context.user.id, async (tx) => {
 			const row = await live(tx, input.id)
 			const contents = await tx
-				.select({ id: sections.id, position: sections.position, level: sections.level, title: sections.title, wordCount: sections.wordCount })
+				.select({
+					id: sections.id,
+					position: sections.position,
+					level: sections.level,
+					title: sections.title,
+					aiTitle: sections.aiTitle,
+					wordCount: sections.wordCount,
+				})
 				.from(sections)
 				.where(eq(sections.readingId, row.reading.id))
 				.orderBy(asc(sections.position))
@@ -107,6 +114,7 @@ export const readingsRoutes = {
 					position: sections.position,
 					level: sections.level,
 					title: sections.title,
+					aiTitle: sections.aiTitle,
 					blocks: sections.blocks,
 				})
 				.from(sections)

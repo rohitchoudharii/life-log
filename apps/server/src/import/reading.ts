@@ -1,15 +1,18 @@
-import { splitSections } from '@life-log-club/domain'
+import { blockText, countWords, hasHeadings, type SectionDraft, splitSections } from '@life-log-club/domain'
 import { and, eq, isNull, ne } from 'drizzle-orm'
 import { asUser } from '../db/client'
 import { readings, sections } from '../db/schema'
 import { decodeHtml, ExtractError, extractArticle, SIGN_IN } from './extract'
 import { FetchError, safeFetch, TOO_LARGE } from './fetch'
+import { addAiHeadings } from './headings'
 
 /** Sent when no other message fits, such as a bug; the member can only try again. */
 export const UNEXPECTED = 'Something went wrong while adding this page. Try again in a minute.'
 
 export const NOT_A_LINK = "That isn't a web address. Check the link and try again."
 const MAX_SECTIONS = 2000
+/** An article this long with no headings gets AI headings; a shorter one is one section (issue #1). */
+const AI_HEADINGS_MIN_WORDS = 1000
 const TRACKING = /^(utm_\w+|fbclid|gclid|mc_cid|mc_eid)$/i
 
 /**
@@ -44,7 +47,7 @@ async function arxivHtml(url: string) {
 	return safeFetch(`https://arxiv.org/html/${m[1]}`, { accept: 'text/html' }).catch(() => null)
 }
 
-/** Fetches the page and turns it into sections. Throws FetchError or ExtractError with a message for the member. */
+/** Fetches the page and finds its article. Throws FetchError or ExtractError with a message for the member. */
 async function readPage(url: string) {
 	const page = (await arxivHtml(url)) ?? (await safeFetch(url, { accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5' }))
 	if (page.url !== url && SIGN_IN_PATH.test(new URL(page.url).pathname)) throw new ExtractError(SIGN_IN)
@@ -54,14 +57,13 @@ async function readPage(url: string) {
 	if (type && type !== 'text/html' && type !== 'application/xhtml+xml')
 		throw new ExtractError("This link isn't a web page. Check the link and try again.")
 	const article = extractArticle(decodeHtml(page.body, page.contentType), page.url)
-	const drafts = splitSections(article.blocks, article.title)
-	if (drafts.length > MAX_SECTIONS) throw new ExtractError(TOO_LARGE)
-	return { article, drafts, sourceUrl: article.canonicalUrl ?? normaliseUrl(page.url) ?? page.url }
+	return { article, sourceUrl: article.canonicalUrl ?? normaliseUrl(page.url) ?? page.url }
 }
 
 /**
  * The import job for one link: fetches the page, finds its article, splits it into sections,
- * and stores them, all as the member who added it. Safe to run again: a reading that is no
+ * and stores them, all as the member who added it. A long article with no headings first gets
+ * headings from the member's AI, when they have a key. Safe to run again: a reading that is no
  * longer importing is left alone, and its sections are stored in the same transaction that sets
  * it ready. When the page turns out to be one the member already has under another link, this
  * reading is merged into that one instead of storing a copy.
@@ -74,8 +76,14 @@ export async function importReading({ readingId, userId }: { readingId: string; 
 	if (!reading?.requestedUrl || reading.status !== 'importing') return
 
 	let page
+	let drafts: SectionDraft[]
 	try {
 		page = await readPage(reading.requestedUrl)
+		const { blocks } = page.article
+		const words = blocks.reduce((n, b) => n + countWords(blockText(b)), 0)
+		if (!hasHeadings(blocks) && words >= AI_HEADINGS_MIN_WORDS) page.article.blocks = await addAiHeadings(userId, blocks)
+		drafts = splitSections(page.article.blocks, page.article.title)
+		if (drafts.length > MAX_SECTIONS) throw new ExtractError(TOO_LARGE)
 	} catch (error) {
 		const known = error instanceof FetchError || error instanceof ExtractError
 		if (!lastTry && (!known || (error instanceof FetchError && error.retry))) throw error
@@ -83,7 +91,7 @@ export async function importReading({ readingId, userId }: { readingId: string; 
 		await fail(userId, readingId, known ? error.message : UNEXPECTED)
 		return
 	}
-	const { article, drafts, sourceUrl } = page
+	const { article, sourceUrl } = page
 
 	await asUser(userId, async (tx) => {
 		const [current] = await tx.select().from(readings).where(eq(readings.id, readingId)).for('update')
@@ -114,6 +122,7 @@ export async function importReading({ readingId, userId }: { readingId: string; 
 				title: s.title.slice(0, 300),
 				blocks: s.blocks,
 				wordCount: s.wordCount,
+				aiTitle: s.aiTitle,
 			})),
 		)
 		await tx

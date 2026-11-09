@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { asc, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { encrypt } from '../crypto'
 import { asUser, ownerDb, ownerPool, pool } from '../db/client'
 import { prepareDatabase } from '../db/prepare'
-import { readings, sections, users } from '../db/schema'
+import { aiCalls, aiKeys, readings, sections, users } from '../db/schema'
+import { keyContext } from '../learning/ai'
 import { importReading, normaliseUrl } from './reading'
 import { fixture, TEST_SITE, testSite } from './test-site'
 
@@ -119,5 +121,76 @@ describe('importReading', () => {
 		// The job runs as the member who owns the reading id it is given, so a wrong pairing finds nothing.
 		await importReading({ readingId: id, userId: stranger })
 		expect((await load(owner, id)).reading.status).toBe('ready')
+	})
+})
+
+describe('AI headings for an article with no headings (issue #1, rule 3)', () => {
+	// 16 paragraphs of 81 words: 1,296 words, past the 1,000 that ask for headings. 12 are 972.
+	const para = (i: number) => `<p>${`Paragraph ${i} explains one more step of how a database keeps old row versions until vacuum runs`.split(' ').concat(Array(64).fill('again')).join(' ')}.</p>`
+	const essay = (paragraphs: number) => ({
+		body: `<html><head><title>Dead rows</title></head><body><article><h1>Dead rows</h1>${Array.from({ length: paragraphs }, (_, i) => para(i)).join('')}</article></body></html>`,
+		headers: { 'content-type': 'text/html; charset=utf-8' },
+	})
+	const aiReply = (headings: unknown, status = 200) =>
+		site.serve('/v1/messages', {
+			status,
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(status === 200 ? { content: [{ type: 'text', text: JSON.stringify({ headings }) }], usage: { input_tokens: 1700, output_tokens: 42 } } : { error: { message: 'overloaded' } }),
+		})
+	async function memberWithKey() {
+		const userId = await member()
+		await asUser(userId, (tx) =>
+			tx.insert(aiKeys).values({ userId, provider: 'anthropic', model: 'claude-haiku-5-5', keyCt: encrypt('sk-ant-test', keyContext(userId)), last4: 'test' }),
+		)
+		return userId
+	}
+	const calls = (userId: string) => asUser(userId, (tx) => tx.select().from(aiCalls))
+	const good = [
+		{ before: 1, title: 'Why rows linger', level: 2 },
+		{ before: 9, title: 'What vacuum does', level: 2 },
+	]
+
+	it('splits at the headings the AI placed, marks them as AI-written, and keeps every word', async () => {
+		const userId = await memberWithKey()
+		aiReply(good)
+		const url = site.serve(`/essay/${randomUUID()}`, essay(16))
+		const { reading, sections: stored } = await load(userId, await add(userId, url))
+		expect(stored.map((s) => [s.title, s.level, s.aiTitle])).toEqual([
+			['Why rows linger', 1, true],
+			['What vacuum does', 1, true],
+		])
+		expect(stored.map((s) => s.blocks.length)).toEqual([8, 8])
+		expect(stored.flatMap((s) => s.blocks)).toEqual(Array.from({ length: 16 }, (_, i) => ({ type: 'paragraph', text: expect.stringContaining(`Paragraph ${i} explains`) })))
+		expect(reading.wordCount).toBe(1296)
+		expect(await calls(userId)).toEqual([expect.objectContaining({ purpose: 'headings', model: 'claude-haiku-5-5', ok: true, inputTokens: 1700, outputTokens: 42 })])
+	})
+
+	it('keeps the article as one section when the reply fails its checks, the provider fails, or there is no key', async () => {
+		const oneSection = async (userId: string) => {
+			const { sections: stored } = await load(userId, await add(userId, site.serve(`/essay/${randomUUID()}`, essay(16))))
+			return stored.map((s) => [s.title, s.aiTitle, s.blocks.length])
+		}
+		const invalid = await memberWithKey()
+		aiReply([...good, { before: 99, title: 'Past the end', level: 2 }])
+		expect(await oneSection(invalid)).toEqual([['Dead rows', false, 16]])
+
+		const failed = await memberWithKey()
+		aiReply(null, 529)
+		expect(await oneSection(failed)).toEqual([['Dead rows', false, 16]])
+		expect(await calls(failed)).toEqual([expect.objectContaining({ ok: false, error: 'overloaded' })])
+
+		const noKey = await member()
+		expect(await oneSection(noKey)).toEqual([['Dead rows', false, 16]])
+		expect(await calls(noKey)).toEqual([])
+	})
+
+	it('does not ask the AI about an article under 1,000 words or one with its own headings', async () => {
+		const userId = await memberWithKey()
+		aiReply(good)
+		site.takeHits()
+		await add(userId, site.serve(`/essay/${randomUUID()}`, essay(12)))
+		await add(userId, site.serve('/with-headings', fixture('mdn-execution-model.html')))
+		expect(site.takeHits().get('/v1/messages')).toBeUndefined()
+		expect(await calls(userId)).toEqual([])
 	})
 })

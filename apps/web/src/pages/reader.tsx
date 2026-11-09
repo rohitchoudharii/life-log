@@ -61,7 +61,10 @@ function SectionView({ id }: { id: string }) {
 	if (!section.data) return <p className="text-world-muted">Loading…</p>
 	return (
 		<article className="grid gap-4 text-lg leading-relaxed">
-			<h2 className="text-2xl font-semibold tracking-tight">{section.data.title}</h2>
+			<header>
+				<h2 className="text-2xl font-semibold tracking-tight">{section.data.title}</h2>
+				{section.data.aiTitle && <p className="font-sans text-xs text-world-muted">Heading added by AI. The text is the author's.</p>}
+			</header>
 			{section.data.blocks.map((b, i) => (
 				<BlockView key={i} block={b} />
 			))}
@@ -80,7 +83,7 @@ function Contents({ reading, current, onPick }: { reading: ReadingWithContents; 
 						onClick={() => onPick(i)}
 						className="w-full rounded-md px-2 py-1 text-left text-world-muted hover:bg-world-card hover:text-world-ink aria-[current]:bg-world-card aria-[current]:font-semibold aria-[current]:text-world-ink"
 					>
-						{s.title}
+						<span className={s.aiTitle ? 'italic' : undefined}>{s.title}</span>
 					</button>
 				</li>
 			))}

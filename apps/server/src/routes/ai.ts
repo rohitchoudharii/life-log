@@ -1,13 +1,11 @@
-import { LlmError, makeProviders, type ProviderId } from '@life-log-club/llm'
+import { LlmError, type ProviderId } from '@life-log-club/llm'
 import { ORPCError } from '@orpc/server'
 import { eq } from 'drizzle-orm'
 import { encrypt } from '../crypto'
 import { asUser } from '../db/client'
 import { aiKeys } from '../db/schema'
-import { env } from '../env'
+import { keyContext, providers } from '../learning/ai'
 import { authed } from '../orpc'
-
-const providers = makeProviders({ anthropic: env.ANTHROPIC_BASE_URL, openai: env.OPENAI_BASE_URL })
 
 /** Proves the key works by listing its models, which costs nothing, and picks a low-cost one. */
 async function chooseModel(provider: ProviderId, apiKey: string) {
@@ -28,8 +26,6 @@ async function chooseModel(provider: ProviderId, apiKey: string) {
 		})
 	}
 }
-
-export const keyContext = (userId: string) => `ai_keys.key:${userId}`
 
 export const aiRoutes = {
 	getKey: authed.ai.getKey.handler(({ context }) =>

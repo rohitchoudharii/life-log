@@ -63,7 +63,9 @@ export type Reading = z.infer<typeof Reading>
 
 export const ReadingWithContents = Reading.extend({
 	/** Every section in reading order; `level` 1 to 3 nests them into a tree. */
-	contents: z.array(z.object({ id: z.uuid(), position: z.int(), level: z.int(), title: z.string(), wordCount: z.int() })),
+	contents: z.array(
+		z.object({ id: z.uuid(), position: z.int(), level: z.int(), title: z.string(), aiTitle: z.boolean(), wordCount: z.int() }),
+	),
 })
 export type ReadingWithContents = z.infer<typeof ReadingWithContents>
 
@@ -73,6 +75,8 @@ export const Section = z.object({
 	position: z.int(),
 	level: z.int(),
 	title: z.string(),
+	/** True when the AI wrote the title, because the article had no headings of its own. */
+	aiTitle: z.boolean(),
 	blocks: z.array(Block),
 })
 export type Section = z.infer<typeof Section>

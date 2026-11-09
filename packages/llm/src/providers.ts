@@ -1,6 +1,9 @@
 export type ProviderId = 'anthropic' | 'openai'
 
-export type ChatRequest = { model: string; system: string; user: string; json?: boolean; maxTokens?: number }
+export type ChatRequest = { model: string; system: string; user: string; json?: boolean; maxTokens?: number; timeoutMs?: number }
+
+/** A model's reply and the tokens it used, for the member's usage record. */
+export type ChatReply = { text: string; usage: { inputTokens: number | null; outputTokens: number | null } }
 
 export type LlmProvider = {
 	id: ProviderId
@@ -8,7 +11,7 @@ export type LlmProvider = {
 	listModels(apiKey: string): Promise<string[]>
 	/** Picks a sensible low-cost default from the models the key can use. */
 	suggestModel(models: string[]): string | undefined
-	complete(apiKey: string, req: ChatRequest): Promise<string>
+	complete(apiKey: string, req: ChatRequest): Promise<ChatReply>
 }
 
 export class LlmError extends Error {
@@ -20,8 +23,8 @@ export class LlmError extends Error {
 	}
 }
 
-async function call(url: string, init: RequestInit): Promise<any> {
-	const res = await fetch(url, { ...init, signal: AbortSignal.timeout(120_000) })
+async function call(url: string, init: RequestInit, timeoutMs = 120_000): Promise<any> {
+	const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
 	const body: any = await res.json().catch(() => ({}))
 	if (!res.ok) throw new LlmError(body?.error?.message ?? `Provider returned ${res.status}`, res.status)
 	return body
@@ -47,11 +50,14 @@ const anthropic = (base: string): LlmProvider => ({
 				system: req.system,
 				messages: [{ role: 'user', content: req.user }],
 			}),
-		})
-		return (body.content as { type: string; text?: string }[])
-			.filter((b) => b.type === 'text')
-			.map((b) => b.text)
-			.join('')
+		}, req.timeoutMs)
+		return {
+			text: (body.content as { type: string; text?: string }[])
+				.filter((b) => b.type === 'text')
+				.map((b) => b.text)
+				.join(''),
+			usage: { inputTokens: body.usage?.input_tokens ?? null, outputTokens: body.usage?.output_tokens ?? null },
+		}
 	},
 })
 
@@ -79,8 +85,11 @@ const openai = (base: string): LlmProvider => ({
 				],
 				...(req.json ? { response_format: { type: 'json_object' } } : {}),
 			}),
-		})
-		return body.choices?.[0]?.message?.content ?? ''
+		}, req.timeoutMs)
+		return {
+			text: body.choices?.[0]?.message?.content ?? '',
+			usage: { inputTokens: body.usage?.prompt_tokens ?? null, outputTokens: body.usage?.completion_tokens ?? null },
+		}
 	},
 })
 

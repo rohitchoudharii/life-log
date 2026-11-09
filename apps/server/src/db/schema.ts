@@ -3,6 +3,7 @@ import { type AnyColumn, sql } from 'drizzle-orm'
 import {
 	type AnyPgColumn,
 	bigint,
+	boolean,
 	index,
 	integer,
 	jsonb,
@@ -220,7 +221,29 @@ export const sections = pgTable(
 		title: text().notNull(),
 		blocks: jsonb().$type<Block[]>().notNull(),
 		wordCount: integer().notNull(),
+		/** True when the title is a heading the AI added, not the author's. */
+		aiTitle: boolean().notNull().default(false),
 		createdAt: createdAt(),
 	},
 	(t) => [uniqueIndex().on(t.readingId, t.position), ownRows(t.userId)],
+)
+
+/** One row per call to a member's AI provider: what it was for and the tokens it used. */
+export const aiCalls = pgTable(
+	'ai_calls',
+	{
+		id: bigint({ mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		purpose: text().notNull(),
+		model: text().notNull(),
+		inputTokens: integer(),
+		outputTokens: integer(),
+		ok: boolean().notNull(),
+		error: text(),
+		ms: integer().notNull(),
+		at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index().on(t.userId, t.at), ownRows(t.userId)],
 )
