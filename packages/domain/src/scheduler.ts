@@ -3,21 +3,12 @@ import { FSRS6_DEFAULT_WEIGHTS, FSRS6_MODEL_BOUNDS, FSRS6Algorithm } from 'ts-fs
 
 export type Rating = 'again' | 'hard' | 'good' | 'easy'
 
-export type ReviewState = {
-	/** Index into the fixed learning steps; null once the card has graduated. */
-	step: number | null
-	intervalDays: number
-	ease: number
-	reps: number
-	lapses: number
-}
-
 /**
  * Decides when a card comes back from its state and each rating. `id` names the rules and their
  * version, and is written with every answer it schedules. `retrievability` is the predicted
  * chance of recall at `now`, or null when the rules can't predict it.
  */
-export type Scheduler<S = ReviewState> = {
+export type Scheduler<S = SchedulerState> = {
 	id: string
 	initial(): S
 	next(state: S, rating: Rating, now: Date): { state: S; dueAt: Date }
@@ -26,58 +17,6 @@ export type Scheduler<S = ReviewState> = {
 
 const DAY = 24 * 60 * 60 * 1000
 const MINUTE = 60 * 1000
-
-/**
- * Fixed steps of 1, 2, and 3 days (the repeats you asked for), then intervals that grow by
- * an ease factor that adapts to your ratings, like SM-2. Swap in FSRS behind `Scheduler` later.
- */
-export function stepsThenEase(steps = [1, 2, 3], maxIntervalDays = 365): Scheduler {
-	const graduate = (state: ReviewState, days: number) => ({
-		...state,
-		step: null,
-		intervalDays: Math.min(days, maxIntervalDays),
-	})
-	return {
-		id: 'steps-ease-v1',
-		// Ease has no model of forgetting, so it can't say how likely recall is.
-		retrievability: () => null,
-		initial: () => ({ step: 0, intervalDays: 0, ease: 2.5, reps: 0, lapses: 0 }),
-		next(prev, rating, now) {
-			let state: ReviewState = { ...prev, reps: prev.reps + 1 }
-			if (rating === 'again') {
-				// Forgotten: start the steps over and see it again in this session.
-				const lapsed = prev.step === null
-				state = {
-					...state,
-					step: 0,
-					intervalDays: 0,
-					lapses: prev.lapses + (lapsed ? 1 : 0),
-					ease: lapsed ? Math.max(1.3, prev.ease - 0.2) : prev.ease,
-				}
-				return { state, dueAt: new Date(now.getTime() + 10 * MINUTE) }
-			}
-			if (prev.step !== null) {
-				// "good" takes the current step, "hard" repeats the previous one, "easy" skips ahead.
-				const s = prev.step
-				const last = steps.length - 1
-				const idx = rating === 'hard' ? Math.max(s - 1, 0) : rating === 'good' ? s : Math.min(s + 1, last)
-				const days = steps[idx]!
-				const nextStep = rating === 'hard' ? s : rating === 'good' ? s + 1 : s + 2
-				state = nextStep > last ? graduate(state, days) : { ...state, step: nextStep, intervalDays: days }
-				if (rating === 'easy') state.ease = prev.ease + 0.15
-				return { state, dueAt: new Date(now.getTime() + days * DAY) }
-			}
-			const base = Math.max(prev.intervalDays, 1)
-			const factor = rating === 'hard' ? 1.2 : rating === 'good' ? prev.ease : prev.ease * 1.3
-			const ease =
-				rating === 'hard' ? Math.max(1.3, prev.ease - 0.15) : rating === 'easy' ? prev.ease + 0.15 : prev.ease
-			state = graduate({ ...state, ease }, Math.round(base * factor))
-			return { state, dueAt: new Date(now.getTime() + state.intervalDays * DAY) }
-		},
-	}
-}
-
-export const defaultScheduler = stepsThenEase()
 
 /** The FSRS memory of a card: how long it lasts (days to 90% recall) and how hard it is (1 to 10). */
 export type FsrsMemory = { stability: number; difficulty: number }
@@ -167,4 +106,27 @@ export function stepsThenFsrs({
 			return { state: { ...base, relearning: null }, dueAt: after(now, days * DAY) }
 		},
 	}
+}
+
+export const defaultScheduler = stepsThenFsrs()
+
+/** One logged answer, as a replay needs it. `correct` is null on answers from before it was kept. */
+export type LoggedAnswer = { rating: Rating; correct: boolean | null; at: Date; mode: 'recall' | 'review' }
+
+/**
+ * A card's state and due time worked out again from its answers, in the order they were given,
+ * through `scheduler`. As when answering, a right recall answer to a card that isn't due yet (a
+ * second question on the same idea in one sitting) changes nothing, and a wrong one always counts.
+ * A review answer always counts: the server took it only when the card was due, and the old
+ * scheduler's due time can be earlier than this one's. Practice answers must be left out by the
+ * caller. Null when there are no answers.
+ */
+export function replaySchedule(answers: LoggedAnswer[], scheduler: Scheduler = defaultScheduler): { state: SchedulerState; dueAt: Date } | null {
+	let current: { state: SchedulerState; dueAt: Date } | null = null
+	for (const a of answers) {
+		const correct = a.correct ?? a.rating !== 'again'
+		if (current && a.mode === 'recall' && correct && current.dueAt > a.at) continue
+		current = scheduler.next(current?.state ?? scheduler.initial(), a.rating, a.at)
+	}
+	return current
 }

@@ -12,7 +12,8 @@
     "typecheck": "pnpm -r typecheck && tsc -p e2e",
     "test": "pnpm -r test",
     "e2e": "playwright test",
-    "invite": "pnpm --silent --filter @life-log-club/server invite"
+    "invite": "pnpm --silent --filter @life-log-club/server invite",
+    "db:replay-schedules": "pnpm --silent --filter @life-log-club/server db:replay-schedules"
   },
   "devDependencies": {
     "@life-log-club/contract": "workspace:*",

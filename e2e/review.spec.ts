@@ -21,7 +21,7 @@ const rate = (cardId: string, rating: 'again' | 'hard' | 'good' | 'easy', answer
 	({ answerId, cardId, mode: 'review', ask: 'self', rating }) as const
 const makeDue = (id: string) => sql(`update cards set due_at = now() - interval '1 second' where id = $1`, [id])
 
-test('a new card is due at once, then comes back after 1, 2 and 3 days, then a longer gap', async () => {
+test('a new card is due at once, then comes back after 1, 2 and 3 days, then after a gap from FSRS', async () => {
 	const { client } = await newMember()
 	const card = await client.review.add({
 		id: randomUUID(),
@@ -38,15 +38,23 @@ test('a new card is due at once, then comes back after 1, 2 and 3 days, then a l
 		expect((await client.review.due({})).total).toBe(0)
 		await makeDue(card.id)
 	}
-	expect(gaps).toEqual([1, 2, 3, 8])
+	// The steps, then a gap from FSRS. Answered seconds apart, as here, FSRS has seen no time pass,
+	// so its gap stays short; the scheduler's unit tests check the gaps with real days between answers.
+	expect(gaps.slice(0, 3)).toEqual([1, 2, 3])
+	expect(gaps[3]).toBeGreaterThanOrEqual(1)
+	const [after] = await sql<{ state: { step: number | null; reps: number; memory: unknown } }>('select state from cards where id = $1', [card.id])
+	expect(after!.state).toMatchObject({ step: null, reps: 4 })
+	expect(after!.state.memory).not.toBeNull()
 
-	const log = await sql<{ rating: string; ask: string; mode: string; scheduler: string }>(
-		'select rating, ask, mode, scheduler from review_log where card_id = $1',
+	const log = await sql<{ rating: string; ask: string; mode: string; scheduler: string; predicted_recall: number | null }>(
+		'select rating, ask, mode, scheduler, predicted_recall from review_log where card_id = $1 order by reviewed_at',
 		[card.id],
 	)
 	expect(log.map((r) => r.rating)).toEqual(['good', 'good', 'good', 'good'])
-	// A self-rated answer from the queue, decided by today's scheduler.
-	expect(log[0]).toMatchObject({ ask: 'self', mode: 'review', scheduler: 'steps-ease-v1' })
+	// Self-rated answers from the queue, decided by the steps-then-FSRS scheduler, which predicts
+	// recall from the second answer on (the first has nothing to predict from).
+	expect(log[0]).toMatchObject({ ask: 'self', mode: 'review', scheduler: 'steps-fsrs-v1:FSRS-6', predicted_recall: null })
+	for (const row of log.slice(1)) expect(row.predicted_recall).toBeGreaterThan(0.5)
 })
 
 test('a forgotten card comes back in 10 minutes, and an answer to a card not yet due is refused', async () => {

@@ -1,4 +1,4 @@
-import type { Block, Confidence, Note, PointStatus, QuestionLevel, Rating, RecallStatus, ReviewState, SectionKind, WriteStatus } from '@life-log-club/domain'
+import type { Block, Confidence, Note, PointStatus, QuestionLevel, Rating, RecallStatus, SchedulerState, SectionKind, WriteStatus } from '@life-log-club/domain'
 import type { Reveal } from '@life-log-club/contract'
 import { type AnyColumn, sql } from 'drizzle-orm'
 import {
@@ -151,7 +151,7 @@ export const cards = pgTable(
 		startedAt: timestamp({ withTimezone: true }),
 		/** Set when its reading or lesson is removed, cleared on restore. */
 		deletedAt: timestamp({ withTimezone: true }),
-		state: jsonb().$type<ReviewState>().notNull(),
+		state: jsonb().$type<SchedulerState>().notNull(),
 		dueAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 		createdAt: createdAt(),
 	},
@@ -224,7 +224,7 @@ export const reviewLog = pgTable(
 		 * The card's schedule and level just before this answer, so Count it as right and Report a
 		 * problem can work the schedule out again from here. Null on rows from before.
 		 */
-		prev: jsonb().$type<{ state: ReviewState; level: number; dueAt: string }>(),
+		prev: jsonb().$type<{ state: SchedulerState; level: number; dueAt: string }>(),
 		/** The scheduler's predicted chance of recall at the moment of answering. */
 		predictedRecall: real(),
 		/** Which scheduler made the decision. */

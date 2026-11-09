@@ -1,49 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { type Rating, stepsThenEase, stepsThenFsrs } from './scheduler'
+import { type Rating, replaySchedule, stepsThenFsrs } from './scheduler'
 
 const DAY = 86_400_000
 const t0 = new Date('2026-01-01T09:00:00Z')
-
-// Ported unchanged from the previous app (packages/core/src/core.test.ts at 639219c).
-describe('stepsThenEase', () => {
-	const s = stepsThenEase()
-	const run = (ratings: Rating[]) => {
-		let state = s.initial()
-		let now = t0
-		const gaps: number[] = []
-		for (const r of ratings) {
-			const out = s.next(state, r, now)
-			gaps.push((out.dueAt.getTime() - now.getTime()) / DAY)
-			state = out.state
-			now = out.dueAt
-		}
-		return { state, gaps }
-	}
-
-	it('repeats after 1, 2, and 3 days, then grows by the ease factor', () => {
-		const { gaps, state } = run(['good', 'good', 'good', 'good', 'good'])
-		expect(gaps).toEqual([1, 2, 3, 8, 20])
-		expect(state.step).toBeNull()
-	})
-
-	it('hard stays on the current step instead of graduating', () => {
-		const { gaps, state } = run(['good', 'good', 'hard', 'hard'])
-		expect(gaps).toEqual([1, 2, 2, 2])
-		expect(state.step).toBe(2)
-	})
-
-	it('a lapse after graduating restarts the steps and lowers ease', () => {
-		const { state, gaps } = run(['good', 'good', 'good', 'again', 'good'])
-		expect(gaps[3]! * 24 * 60).toBeCloseTo(10)
-		expect(gaps[4]).toBe(1)
-		expect(state).toMatchObject({ lapses: 1, ease: 2.3, step: 1 })
-	})
-
-	it('never schedules further out than a year', () => {
-		const { gaps } = run(Array<Rating>(12).fill('easy'))
-		expect(Math.max(...gaps)).toBe(365)
-	})
-})
 
 describe('stepsThenFsrs', () => {
 	const exact = stepsThenFsrs({ fuzz: false })
@@ -132,5 +91,49 @@ describe('stepsThenFsrs', () => {
 		expect(spread.size).toBeGreaterThan(1)
 		// FSRS fuzzes a gap of 3 to 20 days by up to 15%, give or take the rounding to whole days.
 		for (const gap of spread) expect(Math.abs(gap! - plain)).toBeLessThanOrEqual(Math.ceil(plain * 0.15) + 1)
+	})
+})
+
+describe('replaySchedule', () => {
+	const s = stepsThenFsrs()
+	const at = (days: number) => new Date(t0.getTime() + days * DAY)
+	const good = (days: number, mode: 'recall' | 'review' = 'review') => ({ rating: 'good' as const, correct: true, at: at(days), mode })
+
+	it('replays good ×4, each when due, to the 1, 2 and 3 day steps and then an FSRS gap', () => {
+		const answers = [good(0), good(1), good(3), good(6)]
+		const out = replaySchedule(answers, s)!
+		expect(out.state).toMatchObject({ step: null, reps: 4, lapses: 0, lastReviewAt: at(6).toISOString() })
+		expect(out.state.memory).not.toBeNull()
+		const gap = (out.dueAt.getTime() - at(6).getTime()) / DAY
+		expect(gap).toBeGreaterThan(3)
+		// The same as answering live, with the same fuzz.
+		let live = s.initial()
+		let due = t0
+		for (const a of answers) ({ state: live, dueAt: due } = s.next(live, a.rating, a.at))
+		expect(out).toEqual({ state: live, dueAt: due })
+	})
+
+	it('gives the same result every time it runs', () => {
+		const answers = [good(0), { rating: 'again' as const, correct: false, at: at(0.5), mode: 'review' as const }, good(0.6), good(2)]
+		expect(replaySchedule(answers, s)).toEqual(replaySchedule(answers, s))
+	})
+
+	it('skips a right recall answer given before the card was due, but not a wrong one, and reads a missing verdict from the rating', () => {
+		const sameSitting = replaySchedule([good(0, 'recall'), { rating: 'good', correct: null, at: at(0.001), mode: 'recall' }], s)!
+		expect(sameSitting).toEqual(replaySchedule([good(0, 'recall')], s))
+		const wrongLater = replaySchedule([good(0, 'recall'), { rating: 'again', correct: null, at: at(0.002), mode: 'recall' }], s)!
+		expect(wrongLater.state.step).toBe(0)
+		expect(replaySchedule([], s)).toBeNull()
+	})
+
+	it('counts a review answer the old scheduler took even when this one would have it due later', () => {
+		// The old ease scheduler had this card due 8 days after the third step; FSRS here gives more.
+		const steps = [good(0), good(1), good(3), good(6)]
+		const fsrsDue = replaySchedule(steps, s)!.dueAt
+		const reviewedAt = at(14)
+		expect(fsrsDue.getTime()).toBeGreaterThan(reviewedAt.getTime())
+		const out = replaySchedule([...steps, good(14)], s)!
+		expect(out.state.reps).toBe(5)
+		expect(out.state.lastReviewAt).toBe(reviewedAt.toISOString())
 	})
 })

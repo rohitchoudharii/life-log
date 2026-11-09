@@ -1,11 +1,11 @@
 import { QUESTION_LEVELS, type QuestionLevel } from './questions'
-import { defaultScheduler, type Rating, type ReviewState, type Scheduler } from './scheduler'
+import { defaultScheduler, type Rating, type Scheduler, type SchedulerState } from './scheduler'
 
 export const levelIndex = (level: QuestionLevel | null) => Math.max(0, QUESTION_LEVELS.indexOf(level ?? 'recall'))
 const TOP_LEVEL = QUESTION_LEVELS.length - 1
 
 /** What one card needs to apply an answer: its schedule, its level and when it is due. */
-export type IdeaProgress = { state: ReviewState; level: number; dueAt: Date }
+export type IdeaProgress = { state: SchedulerState; level: number; dueAt: Date }
 
 /**
  * Applies one answer to a card. Right moves it up a level and spaces it out; wrong moves it down

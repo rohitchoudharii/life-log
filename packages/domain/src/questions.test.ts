@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { answerIdea, pickQuestion } from './ideas'
 import { type Grade, gradeResponse, orderForTest, parseQuestionContent, scoreRubric, toPrompt, withConfidence } from './questions'
-import { stepsThenEase } from './scheduler'
+import { stepsThenFsrs } from './scheduler'
 
 // Ported from the previous app (packages/core/src/core.test.ts at 4051df5^).
 describe('short answer questions', () => {
@@ -58,7 +58,7 @@ describe('scoreRubric', () => {
 
 describe('answerIdea', () => {
 	const t0 = new Date('2026-01-01T09:00:00Z')
-	const s = stepsThenEase()
+	const s = stepsThenFsrs({ fuzz: false })
 	const start = (level = 0) => ({ state: s.initial(), level, dueAt: t0 })
 	const right = { correct: true, rating: 'good' } as const
 	const wrong = { correct: false, rating: 'again' } as const

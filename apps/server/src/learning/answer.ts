@@ -155,7 +155,7 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
 			prev,
 			// The rules that made this decision, and their chance of recall just before it.
 			scheduler: defaultScheduler.id,
-			predictedRecall: locked!.startedAt ? defaultScheduler.retrievability(locked!.state, now) : null,
+			predictedRecall: defaultScheduler.retrievability(locked!.state, now),
 			reviewedAt: now,
 			nextDueAt: dueAt,
 		})
@@ -169,7 +169,8 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
  * the time it was given. The card must be locked.
  */
 async function replayFrom(tx: Tx, from: typeof reviewLog.$inferSelect) {
-	if (!from.prev) throw new ORPCError('BAD_REQUEST', { message: 'This answer is too old to change.' })
+	// An answer from before the current scheduler kept a state it can't work from.
+	if (!from.prev || from.scheduler !== defaultScheduler.id) throw new ORPCError('BAD_REQUEST', { message: 'This answer is too old to change.' })
 	const rows = await tx
 		.select()
 		.from(reviewLog)
