@@ -3,6 +3,7 @@ import { ORPCError } from '@orpc/client'
 import { expect, test } from '@playwright/test'
 import { newMember } from './api'
 import { sql } from './db'
+import { GOOD_ANTHROPIC_KEY } from './env'
 
 test.beforeEach(({}, info) => test.skip(info.project.name !== 'desktop', 'API only'))
 
@@ -83,11 +84,126 @@ test("a member can't review another member's cards or link a card to their entri
 	const entry = await a.client.entries.create({ id: randomUUID(), type: 'lesson', details: {}, text: 'A only' })
 	const card = await a.client.review.add({ id: randomUUID(), kind: 'idea', prompt: 'A prompt', answer: 'A answer' })
 
-	expect(await b.client.review.due({})).toEqual({ cards: [], total: 0 })
+	expect(await b.client.review.due({})).toEqual({ cards: [], total: 0, minutes: 0 })
 	expect(await code(b.client.review.answer(rate(card.id, 'easy')))).toBe('NOT_FOUND')
 	expect(
 		await code(b.client.review.add({ id: randomUUID(), kind: 'lesson', prompt: 'x', answer: 'y', entryId: entry.id })),
 	).toBe('NOT_FOUND')
 	expect(await code(b.client.review.add({ id: card.id, kind: 'idea', prompt: 'x', answer: 'y' }))).toBe('CONFLICT')
 	expect((await a.client.review.due({})).cards[0]?.prompt).toBe('A prompt')
+})
+
+type Member = Awaited<ReturnType<typeof newMember>>
+const IDEA = { prompt: 'Why does spacing beat cramming?', answer: 'Spaced practice leaves time to forget, so each recall works harder.' }
+const MUST_HAVE = ['forgetting between sessions', 'harder retrieval strengthens memory']
+const RIGHT = 'Forgetting between sessions makes the harder retrieval strengthen memory.'
+/** A due idea at `level` with one stored written question per level in `levels`, as write-section makes them. */
+async function ideaWithQuestions(member: Member, levels: string[], level = 1) {
+	const card = await member.client.review.add({ id: randomUUID(), kind: 'idea', ...IDEA })
+	await sql('update cards set level = $2 where id = $1', [card.id, level])
+	const questionIds: string[] = []
+	for (const at of levels) {
+		const id = randomUUID()
+		const content = { prompt: `At ${at}: why does spacing help?`, reference: 'Forgetting first makes retrieval harder, and harder retrieval strengthens memory.', mustHave: MUST_HAVE, misconceptions: [] }
+		await sql("insert into questions (id, user_id, card_id, type, level, content) values ($1, $2, $3, 'short_answer', $4, $5)", [id, member.user.id, card.id, at, content])
+		questionIds.push(id)
+	}
+	return { card, questionIds }
+}
+const withKey = async (name?: string) => {
+	const member = await newMember(name)
+	await member.client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })
+	return member
+}
+const written = (cardId: string, questionId: string, answer: string | null, confidence: 'guessing' | 'think_so' | 'sure' | null = 'think_so') =>
+	({ answerId: randomUUID(), cardId, mode: 'review', ask: 'question', questionId, response: answer === null ? { skipped: true } : { answer }, confidence }) as const
+const cardRow = (id: string) => sql<{ level: number; due_at: Date }>('select level, due_at from cards where id = $1', [id]).then((r) => r[0]!)
+
+test('Review asks a question not asked yet nearest the card’s level, then the cue; without a key every card is self-rated', async () => {
+	const a = await withKey('A')
+	const { card, questionIds } = await ideaWithQuestions(a, ['explain', 'apply', 'analyze'], 2)
+	const [explain, apply, analyze] = questionIds
+	const askOf = async () => (await a.client.review.next({})).items[0]!.ask
+	expect(await a.client.review.next({})).toMatchObject({ total: 1, minutes: 1, items: [{ cardId: card.id, kind: 'idea', source: null, cue: IDEA.prompt }] })
+	// Level 2 is apply.
+	expect(await askOf()).toEqual({ kind: 'question', questionId: apply, type: 'short_answer', prompt: 'At apply: why does spacing help?', code: null })
+	expect(await a.client.review.answer(written(card.id, apply!, RIGHT))).toMatchObject({ correct: true, rating: 'good' })
+	expect(await cardRow(card.id)).toMatchObject({ level: 3 })
+	await makeDue(card.id)
+	// Level 3 is analyze; after a miss the card drops to 2, and the nearest unasked one below it comes next.
+	expect(await askOf()).toMatchObject({ kind: 'question', questionId: analyze })
+	expect(await a.client.review.answer(written(card.id, analyze!, null, null))).toMatchObject({ correct: false, rating: 'again' })
+	expect(await cardRow(card.id)).toMatchObject({ level: 2 })
+	await makeDue(card.id)
+	expect(await askOf()).toMatchObject({ kind: 'question', questionId: explain })
+	await a.client.review.answer(written(card.id, explain!, RIGHT))
+	await makeDue(card.id)
+	// Every question has been asked: the cue, judged with the key.
+	expect(await askOf()).toEqual({ kind: 'cue', prompt: IDEA.prompt })
+
+	// Filters: a lesson shows under Lessons, the hand-added idea under neither Lessons nor Readings.
+	const lesson = await a.client.review.add({ id: randomUUID(), kind: 'lesson', prompt: 'Rest days?', answer: 'They count.' })
+	expect((await a.client.review.next({})).items.map((i) => i.cardId)).toEqual([card.id, lesson.id])
+	expect((await a.client.review.next({ filter: 'lessons' })).items.map((i) => i.cardId)).toEqual([lesson.id])
+	expect(await a.client.review.next({ filter: 'readings' })).toEqual({ items: [], total: 0, minutes: 0 })
+
+	const b = await newMember('B')
+	const own = await b.client.review.add({ id: randomUUID(), kind: 'lesson', prompt: 'Say the number first', answer: 'Anchor high.' })
+	expect((await b.client.review.next({})).items).toEqual([expect.objectContaining({ cardId: own.id, ask: { kind: 'self', prompt: 'Say the number first' }, answer: 'Anchor high.' })])
+})
+
+test('Count it as right turns a wrong written answer into good once, and the schedule is worked out again from before it', async () => {
+	const a = await withKey('A')
+	const { card, questionIds } = await ideaWithQuestions(a, ['explain'], 1)
+	const wrong = written(card.id, questionIds[0]!, 'Something about bananas', 'sure')
+	expect(await a.client.review.answer(wrong)).toMatchObject({ correct: false, rating: 'again', overridden: false })
+	expect(await cardRow(card.id)).toMatchObject({ level: 0 })
+
+	const counted = await a.client.review.override({ answerId: wrong.answerId })
+	// As if the answer had been right: one level up from before it, back in 1 day.
+	expect(counted).toMatchObject({ correct: true, rating: 'good', overridden: true })
+	expect(daysUntil(counted.dueAt)).toBe(1)
+	expect(await cardRow(card.id)).toMatchObject({ level: 2, due_at: counted.dueAt })
+	const [row] = await sql<{ rating: string; correct: boolean; overridden_at: Date | null; confidence: string }>(
+		'select rating, correct, overridden_at, confidence from review_log where answer_id = $1',
+		[wrong.answerId],
+	)
+	expect(row).toMatchObject({ rating: 'good', correct: true, overridden_at: expect.any(Date), confidence: 'sure' })
+	// Once per answer: asking again changes nothing.
+	expect((await a.client.review.override({ answerId: wrong.answerId })).dueAt).toEqual(counted.dueAt)
+
+	// Nothing to count for a self-rated answer or for I don't know, and only the member's own answers.
+	const lesson = await a.client.review.add({ id: randomUUID(), kind: 'lesson', prompt: 'Rest days?', answer: 'They count.' })
+	const self = rate(lesson.id, 'again')
+	await a.client.review.answer(self)
+	expect(await code(a.client.review.override({ answerId: self.answerId }))).toBe('BAD_REQUEST')
+	await makeDue(card.id)
+	const skipped = written(card.id, questionIds[0]!, null, null)
+	await a.client.review.answer(skipped)
+	expect(await code(a.client.review.override({ answerId: skipped.answerId }))).toBe('BAD_REQUEST')
+	const b = await newMember('B')
+	expect(await code(b.client.review.override({ answerId: wrong.answerId }))).toBe('NOT_FOUND')
+})
+
+test('Report a problem retires the question, and an answer to it stops counting', async () => {
+	const a = await withKey('A')
+	const { card, questionIds } = await ideaWithQuestions(a, ['explain', 'apply'], 1)
+	const [explain, apply] = questionIds
+	const before = await cardRow(card.id)
+	const answer = written(card.id, explain!, RIGHT)
+	await a.client.review.answer(answer)
+	expect(await cardRow(card.id)).toMatchObject({ level: 2 })
+
+	expect(await a.client.questions.report({ id: explain!, reason: 'wrong_answer', answerId: answer.answerId })).toEqual({ ok: true })
+	expect((await sql('select report, retired_at from questions where id = $1', [explain]))[0]).toMatchObject({ report: 'wrong_answer', retired_at: expect.any(Date) })
+	// The answer stays in the log as practice, and the card is back as it was: due now, at level 1.
+	expect((await sql('select mode from review_log where answer_id = $1', [answer.answerId]))[0]).toEqual({ mode: 'practice' })
+	expect(await cardRow(card.id)).toEqual(before)
+	// The retired question is never asked again.
+	expect((await a.client.review.next({})).items[0]!.ask).toMatchObject({ kind: 'question', questionId: apply })
+	await a.client.questions.report({ id: apply!, reason: 'unclear' })
+	expect((await a.client.review.next({})).items[0]!.ask).toEqual({ kind: 'cue', prompt: IDEA.prompt })
+
+	const b = await newMember('B')
+	expect(await code(b.client.questions.report({ id: apply!, reason: 'unclear' }))).toBe('NOT_FOUND')
 })

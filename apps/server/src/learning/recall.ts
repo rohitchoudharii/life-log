@@ -185,12 +185,14 @@ export async function attemptView(tx: Tx, attemptId: string) {
 		const item = items.find((i) => i.cardId === card.id)
 		const given = log?.response && typeof log.response.answer === 'string' ? log.response.answer : null
 		const answer =
-			log && item
+			log?.answerId && item
 				? {
+						answerId: log.answerId,
 						prompt: item.prompt,
 						given,
 						correct: log.correct ?? false,
 						confidence: log.confidence,
+						overridden: log.overriddenAt !== null,
 						reveal: log.reveal ?? { reference: card.answer, feedback: '', points: [], misconception: null, quote: card.quote },
 					}
 				: null

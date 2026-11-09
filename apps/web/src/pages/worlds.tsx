@@ -77,7 +77,13 @@ export function Mind() {
 			)}
 			<AddReading />
 			<div className="grid gap-4 md:grid-cols-[16rem_1fr]">
-				<Stat label="Due for review" value={due.data?.total ?? 0} sub="cards" testId="mind-due" />
+				<Link to="/mind/review" className="rounded-2xl border border-world-line bg-world-card p-5 transition hover:border-world-accent" aria-label="Review due ideas">
+					<p className="text-xs font-medium tracking-wide text-world-muted uppercase">Due for review</p>
+					<p className="mt-1 text-3xl font-bold tracking-tight" data-testid="mind-due">
+						{due.data?.total ?? 0}
+					</p>
+					<p className="text-sm text-world-muted">{due.data?.total ? `about ${due.data.minutes} min · Review due ideas` : 'Nothing due'}</p>
+				</Link>
 				<div className="rounded-2xl border border-world-line bg-world-card p-5">
 					<p className="text-xs font-medium tracking-wide text-world-muted uppercase">Coming back next</p>
 					{due.data?.cards.length ? (

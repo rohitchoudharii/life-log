@@ -220,6 +220,11 @@ export const reviewLog = pgTable(
 		attemptId: uuid().references((): AnyPgColumn => recallAttempts.id, { onDelete: 'set null' }),
 		/** Set when the learner tapped Count it as right. */
 		overriddenAt: timestamp({ withTimezone: true }),
+		/**
+		 * The card's schedule and level just before this answer, so Count it as right and Report a
+		 * problem can work the schedule out again from here. Null on rows from before.
+		 */
+		prev: jsonb().$type<{ state: ReviewState; level: number; dueAt: string }>(),
 		/** The scheduler's predicted chance of recall at the moment of answering. */
 		predictedRecall: real(),
 		/** Which scheduler made the decision. */

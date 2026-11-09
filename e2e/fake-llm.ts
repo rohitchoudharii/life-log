@@ -119,6 +119,8 @@ const server = createServer(async (req, res) => {
 		const body = await readJson(req)
 		// Writing takes a moment, as it does for real, so a waiting member sees the waiting line.
 		if (body.system.startsWith('Task: write-section')) await new Promise((r) => setTimeout(r, 1500))
+		// A test makes the judge fail by writing this in its answer.
+		if (body.system.startsWith('Task: judge-answer') && body.messages[0].content.includes('JUDGE_FAILS')) return json(500, { error: { message: 'overloaded' } })
 		const text = answer(body.system, body.messages[0].content)
 		return json(200, { content: [{ type: 'text', text }], usage: { input_tokens: 1000, output_tokens: 50 } })
 	}

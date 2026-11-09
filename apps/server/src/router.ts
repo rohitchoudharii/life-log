@@ -8,7 +8,7 @@ import { entriesRoutes } from './routes/entries'
 import { preferencesRoutes } from './routes/preferences'
 import { readingsRoutes } from './routes/readings'
 import { recallRoutes } from './routes/recall'
-import { reviewRoutes } from './routes/review'
+import { questionRoutes, reviewRoutes } from './routes/review'
 
 export const router = os.router({
 	system: {
@@ -25,6 +25,7 @@ export const router = os.router({
 	devices,
 	entries: entriesRoutes,
 	review: reviewRoutes,
+	questions: questionRoutes,
 	readings: readingsRoutes,
 	books: booksRoutes,
 	ai: aiRoutes,

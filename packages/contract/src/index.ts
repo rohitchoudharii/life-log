@@ -102,6 +102,8 @@ export const AnswerResult = z.object({
 	reveal: Reveal,
 	/** When the card comes back; for a practice answer, when it was due already. */
 	dueAt: z.date(),
+	/** The learner tapped Count it as right on it. */
+	overridden: z.boolean(),
 })
 export type AnswerResult = z.infer<typeof AnswerResult>
 
@@ -149,11 +151,13 @@ export const RecallAttempt = z.object({
 				dueAt: z.date(),
 				answer: z
 					.object({
+						answerId: z.uuid(),
 						prompt: z.string(),
 						/** What the learner wrote; null for I don't know. */
 						given: z.string().nullable(),
 						correct: z.boolean(),
 						confidence: Confidence.nullable(),
+						overridden: z.boolean(),
 						reveal: Reveal,
 					})
 					.nullable(),
@@ -166,6 +170,35 @@ export const RecallAttempt = z.object({
 	nextSectionId: z.uuid().nullable(),
 })
 export type RecallAttempt = z.infer<typeof RecallAttempt>
+
+export const ReviewFilter = z.enum(['all', 'readings', 'lessons', 'words'])
+export type ReviewFilter = z.infer<typeof ReviewFilter>
+
+/** One due card in Review, with the one thing to ask about it. */
+export const ReviewItem = z.object({
+	cardId: z.uuid(),
+	kind: z.enum(['idea', 'lesson', 'word']),
+	/** Where the idea comes from, for the small source line; null for a lesson or an idea added by hand. */
+	source: z.object({ reading: z.string(), section: z.string().nullable() }).nullable(),
+	createdAt: z.date(),
+	/** The idea itself, shown after Show answer on a self-rated card, or when the judge fails. */
+	answer: z.string(),
+	/** The card's cue, which Retry missed ideas asks. */
+	cue: z.string(),
+	/**
+	 * A stored question; the cue, judged against the idea when the member has an AI key; or a
+	 * self-rated card without one.
+	 */
+	ask: z.discriminatedUnion('kind', [
+		z.object({ kind: z.literal('question'), questionId: z.uuid(), type: z.string(), prompt: z.string(), code: z.string().nullable() }),
+		z.object({ kind: z.literal('cue'), prompt: z.string() }),
+		z.object({ kind: z.literal('self'), prompt: z.string() }),
+	]),
+})
+export type ReviewItem = z.infer<typeof ReviewItem>
+
+/** Why a member reports a question. */
+export const REPORT_REASONS = ['wrong_answer', 'unclear', 'not_in_text'] as const
 
 export const Reading = z.object({
 	id: z.uuid(),
@@ -342,10 +375,20 @@ export const contract = {
 				}),
 			)
 			.output(Card),
-		/** Cards due now, oldest first, and how many are due in total. */
+		/**
+		 * Cards due now, oldest first, how many are due in total, and about how many minutes
+		 * they take (the member's median answer time, times the count).
+		 */
 		due: oc
 			.input(z.object({ limit: z.int().min(1).max(100).default(20) }))
-			.output(z.object({ cards: z.array(Card), total: z.int() })),
+			.output(z.object({ cards: z.array(Card), total: z.int(), minutes: z.int() })),
+		/**
+		 * The next batch of due cards for Review, oldest due first, each with what to ask: a
+		 * question not asked yet nearest the card's level, else the cue.
+		 */
+		next: oc
+			.input(z.object({ limit: z.int().min(1).max(50).default(20), filter: ReviewFilter.default('all') }))
+			.output(z.object({ items: z.array(ReviewItem), total: z.int(), minutes: z.int() })),
 		/**
 		 * Records one answer and returns its result and when the card comes back. `answerId` is
 		 * chosen by the client, so the same answer sent twice counts once. In `review` mode only a
@@ -353,6 +396,19 @@ export const contract = {
 		 * and starts a card not started yet; `practice` is logged but leaves the schedule as it is.
 		 */
 		answer: oc.input(Answer).output(AnswerResult),
+		/**
+		 * Count it as right: once per written answer the judge marked wrong. The answer is rated
+		 * `good`, and the card's schedule is worked out again from the log as if it had been.
+		 */
+		override: oc.input(z.object({ answerId: z.uuid() })).output(AnswerResult),
+	},
+	questions: {
+		/**
+		 * Report a problem with a question: it is retired and never asked again. With `answerId`,
+		 * that answer to it no longer counts: it becomes practice, and the card's schedule is put
+		 * back as it was before it.
+		 */
+		report: oc.input(z.object({ id: z.uuid(), reason: z.enum(REPORT_REASONS), answerId: z.uuid().optional() })).output(Ok),
 	},
 	readings: {
 		/**

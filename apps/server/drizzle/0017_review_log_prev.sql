@@ -1,0 +1,1 @@
+ALTER TABLE "review_log" ADD COLUMN "prev" jsonb;

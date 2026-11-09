@@ -8,6 +8,7 @@ import { Settings } from './pages/settings'
 import { Home } from './pages/home'
 import { Reader } from './pages/reader'
 import { Recall } from './pages/recall'
+import { Review } from './pages/review'
 import { Welcome } from './pages/welcome'
 import { Body, Heart, Mind } from './pages/worlds'
 import { isUnauthorized, orpc } from './rpc'
@@ -48,6 +49,7 @@ const recallRoute = createRoute({
 		return <Recall key={attemptId} attemptId={attemptId} />
 	},
 })
+const reviewRoute = createRoute({ getParentRoute: () => appRoute, path: '/mind/review', component: Review })
 const bookRoute = createRoute({
 	getParentRoute: () => appRoute,
 	path: '/mind/book/$bookId',
@@ -61,7 +63,7 @@ const heartRoute = createRoute({ getParentRoute: () => appRoute, path: '/heart',
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: '/settings', component: Settings })
 
 const router = createRouter({
-	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, mindRoute, readerRoute, recallRoute, bookRoute, bodyRoute, heartRoute, devicesRoute, settingsRoute])]),
+	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, mindRoute, readerRoute, recallRoute, reviewRoute, bookRoute, bodyRoute, heartRoute, devicesRoute, settingsRoute])]),
 })
 
 declare module '@tanstack/react-router' {

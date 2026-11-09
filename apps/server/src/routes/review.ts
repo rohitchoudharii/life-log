@@ -1,9 +1,10 @@
 import { defaultScheduler } from '@life-log-club/domain'
 import { ORPCError } from '@orpc/server'
-import { and, asc, count, eq, isNotNull, isNull, lte } from 'drizzle-orm'
+import { and, asc, count, eq, isNull } from 'drizzle-orm'
 import { asUser } from '../db/client'
 import { cards, entries } from '../db/schema'
-import { answerCard } from '../learning/answer'
+import { answerCard, overrideAnswer, reportQuestion } from '../learning/answer'
+import { dueNow, minutesFor, nextBatch } from '../learning/review'
 import { authed } from '../orpc'
 
 const toCard = (c: typeof cards.$inferSelect) => ({
@@ -51,12 +52,20 @@ export const reviewRoutes = {
 
 	due: authed.review.due.handler(({ input, context }) =>
 		asUser(context.user.id, async (tx) => {
-			const isDue = and(lte(cards.dueAt, new Date()), isNotNull(cards.startedAt), isNull(cards.deletedAt))
-			const rows = await tx.select().from(cards).where(isDue).orderBy(asc(cards.dueAt)).limit(input.limit)
-			const [total] = await tx.select({ n: count() }).from(cards).where(isDue)
-			return { cards: rows.map(toCard), total: total?.n ?? 0 }
+			const rows = await tx.select().from(cards).where(dueNow()).orderBy(asc(cards.dueAt)).limit(input.limit)
+			const [total] = await tx.select({ n: count() }).from(cards).where(dueNow())
+			const n = total?.n ?? 0
+			return { cards: rows.map(toCard), total: n, minutes: await minutesFor(tx, n) }
 		}),
 	),
 
+	next: authed.review.next.handler(({ input, context }) => asUser(context.user.id, (tx) => nextBatch(tx, input.limit, input.filter))),
+
 	answer: authed.review.answer.handler(({ input, context }) => answerCard(context.user.id, input)),
+
+	override: authed.review.override.handler(({ input, context }) => overrideAnswer(context.user.id, input.answerId)),
+}
+
+export const questionRoutes = {
+	report: authed.questions.report.handler(({ input, context }) => reportQuestion(context.user.id, input)),
 }

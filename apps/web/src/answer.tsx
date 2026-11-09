@@ -1,6 +1,6 @@
 import type { AnswerResult, AskItem } from '@life-log-club/contract'
 import { useMutation } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { quiet } from './books'
 import { client, errorMessage } from './rpc'
 import { ErrorText } from './ui'
@@ -9,10 +9,11 @@ export const primary =
 	'rounded-xl bg-world-accent px-5 py-2 font-sans text-sm font-semibold text-world-on-accent transition hover:opacity-90 disabled:opacity-60'
 
 const CONFIDENCE = [
-	{ value: 'guessing', label: 'Guessing' },
-	{ value: 'think_so', label: 'Think so' },
-	{ value: 'sure', label: 'Sure' },
+	{ value: 'guessing', label: 'Guessing', key: '1' },
+	{ value: 'think_so', label: 'Think so', key: '2' },
+	{ value: 'sure', label: 'Sure', key: '3' },
 ] as const
+export type Confidence = (typeof CONFIDENCE)[number]['value']
 
 /** When a card comes back, in words: "Back in 10 minutes", "Back tomorrow", "Back in 3 days". */
 export function backIn(dueAt: Date, now = new Date()) {
@@ -26,34 +27,68 @@ export function backIn(dueAt: Date, now = new Date()) {
 }
 
 /**
+ * Answer keys for the card on screen, such as 1 to 3 for confidence. They are caught before the
+ * shell's own shortcuts, so 1 answers instead of switching worlds, and never while typing.
+ */
+export function useAnswerKeys(keys: Record<string, () => void>, active = true) {
+	const current = useRef(keys)
+	current.current = keys
+	useEffect(() => {
+		if (!active) return
+		function onKey(e: KeyboardEvent) {
+			if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return
+			if ((e.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"], dialog')) return
+			const run = current.current[e.key]
+			if (!run) return
+			e.preventDefault()
+			run()
+		}
+		window.addEventListener('keydown', onKey, true)
+		return () => window.removeEventListener('keydown', onKey, true)
+	}, [active])
+}
+
+export type Answered = { answerId: string; given: string | null; confidence: Confidence | null }
+
+/**
  * One written question or cue. The confidence buttons are the submit, so saying how sure you are
  * costs no click; I don't know is an honest miss. The answer id is picked once, so a retry of the
- * same answer counts once.
+ * same answer counts once. With `keys`, 1 to 3 pick the confidence once the box is left.
  */
 export function QuestionForm({
 	item,
 	mode,
 	attemptId,
+	keys = false,
 	onAnswered,
+	onError,
 }: {
-	item: AskItem
+	item: Pick<AskItem, 'cardId' | 'questionId' | 'prompt' | 'code'>
 	mode: 'recall' | 'review' | 'practice'
 	attemptId?: string
-	onAnswered: (result: AnswerResult, given: string | null) => void
+	keys?: boolean
+	onAnswered: (result: AnswerResult, answer: Answered) => void
+	/** Handles a failed answer instead of showing its message under the form. */
+	onError?: (error: unknown, given: string) => void
 }) {
 	const [answerId] = useState(() => crypto.randomUUID())
 	const [text, setText] = useState('')
 	const send = useMutation({
-		mutationFn: (choice: { confidence: (typeof CONFIDENCE)[number]['value'] | null; skipped?: boolean }) => {
+		mutationFn: (choice: { confidence: Confidence | null; skipped?: boolean }) => {
 			const response = choice.skipped ? { skipped: true as const } : { answer: text }
 			const base = { answerId, cardId: item.cardId, mode, attemptId }
 			return item.questionId
 				? client.review.answer({ ...base, ask: 'question', questionId: item.questionId, response, confidence: choice.confidence })
 				: client.review.answer({ ...base, ask: 'cue', response, confidence: choice.confidence })
 		},
-		onSuccess: (result, choice) => onAnswered(result, choice.skipped ? null : text),
+		onSuccess: (result, choice) => onAnswered(result, { answerId, given: choice.skipped ? null : text, confidence: choice.confidence }),
+		onError: (error) => onError?.(error, text),
 	})
 	const empty = !text.trim()
+	const pick = (confidence: Confidence) => {
+		if (!empty && !send.isPending) send.mutate({ confidence })
+	}
+	useAnswerKeys(Object.fromEntries(CONFIDENCE.map((c) => [c.key, () => pick(c.value)])), keys)
 	return (
 		<form className="grid gap-4" onSubmit={(e) => e.preventDefault()}>
 			<p className="text-xl leading-snug" data-testid="question">
@@ -74,7 +109,7 @@ export function QuestionForm({
 				<p className="font-sans text-xs text-world-muted">How sure are you?</p>
 				<div className="flex flex-wrap items-center gap-2">
 					{CONFIDENCE.map((c) => (
-						<button key={c.value} type="button" className={primary} disabled={empty || send.isPending} onClick={() => send.mutate({ confidence: c.value })}>
+						<button key={c.value} type="button" className={primary} disabled={empty || send.isPending} onClick={() => pick(c.value)}>
 							{c.label}
 						</button>
 					))}
@@ -84,21 +119,74 @@ export function QuestionForm({
 				</div>
 			</div>
 			{send.isPending && <p className="animate-pulse font-sans text-sm text-world-muted">Checking your answer…</p>}
-			<ErrorText>{send.error && errorMessage(send.error)}</ErrorText>
+			{!onError && <ErrorText>{send.error && errorMessage(send.error)}</ErrorText>}
 		</form>
+	)
+}
+
+const RATINGS = [
+	{ value: 'again', label: 'Forgot', key: '1' },
+	{ value: 'hard', label: 'Hard', key: '2' },
+	{ value: 'good', label: 'Got it', key: '3' },
+] as const
+
+/** Forgot, Hard and Got it (keys 1 to 3): the learner's own rating, sent as one self-rated answer. */
+export function SelfRating({ cardId, mode, onRated }: { cardId: string; mode: 'review' | 'practice'; onRated: (result: AnswerResult, answerId: string) => void }) {
+	const [answerId] = useState(() => crypto.randomUUID())
+	const rate = useMutation({
+		mutationFn: (rating: (typeof RATINGS)[number]['value']) => client.review.answer({ answerId, cardId, mode, ask: 'self', rating }),
+		onSuccess: (result) => onRated(result, answerId),
+	})
+	useAnswerKeys(Object.fromEntries(RATINGS.map((r) => [r.key, () => !rate.isPending && rate.mutate(r.value)])))
+	return (
+		<div className="grid gap-2">
+			<p className="font-sans text-xs text-world-muted">How did it go?</p>
+			<div className="flex flex-wrap gap-2">
+				{RATINGS.map((r) => (
+					<button key={r.value} type="button" className={r.value === 'good' ? primary : quiet} disabled={rate.isPending} onClick={() => rate.mutate(r.value)}>
+						{r.label}
+					</button>
+				))}
+			</div>
+			<ErrorText>{rate.error && errorMessage(rate.error)}</ErrorText>
+		</div>
 	)
 }
 
 const POINT = { covered: 'Made', vague: 'Vague', missing: 'Missed' } as const
 
-/** The result of one answer: the verdict, the learner's own words, the points made or missed, the model answer and the quote. */
-export function RevealTile({ result, given, prompt, showDue = true }: { result: AnswerResult; given: string | null; prompt?: string; showDue?: boolean }) {
+/**
+ * The result of one answer: the verdict, the learner's own words, the points made or missed, the
+ * model answer and the quote. With `answerId`, a written answer marked wrong offers Count it as
+ * right, once.
+ */
+export function RevealTile({
+	result: initial,
+	given,
+	prompt,
+	showDue = true,
+	answerId,
+	onOverride,
+}: {
+	result: AnswerResult
+	given: string | null
+	prompt?: string
+	showDue?: boolean
+	answerId?: string
+	onOverride?: (result: AnswerResult) => void
+}) {
+	const override = useMutation({
+		mutationFn: (id: string) => client.review.override({ answerId: id }),
+		onSuccess: (next) => onOverride?.(next),
+	})
+	const result = override.data ?? initial
 	const { reveal } = result
 	// A cue's one point is the model answer itself; the verdict already says whether it was made.
 	const points = reveal.points.length === 1 && reveal.points[0]!.point === reveal.reference ? [] : reveal.points
+	const verdict = result.overridden ? 'Counted as right' : result.correct ? 'Right' : given === null ? 'Not answered' : 'Not quite'
 	return (
 		<div className="grid gap-3 rounded-2xl border border-world-line bg-world-card p-4" data-testid="result">
-			<p className={`font-sans text-sm font-semibold ${result.correct ? 'text-path' : 'text-red'}`}>{result.correct ? 'Right' : given === null ? 'Not answered' : 'Not quite'}</p>
+			<p className={`font-sans text-sm font-semibold ${result.correct ? 'text-path' : 'text-red'}`}>{verdict}</p>
 			{prompt && <p className="text-lg leading-snug">{prompt}</p>}
 			{given !== null && <p className="whitespace-pre-wrap text-world-muted">You wrote: {given}</p>}
 			{reveal.feedback && <p>{reveal.feedback}</p>}
@@ -121,6 +209,14 @@ export function RevealTile({ result, given, prompt, showDue = true }: { result: 
 			)}
 			{reveal.quote && <p className="text-sm text-world-muted italic">From the text: “{reveal.quote}”</p>}
 			{showDue && <p className="font-sans text-xs text-world-muted">{backIn(result.dueAt)}</p>}
+			{answerId && given !== null && !result.correct && (
+				<div>
+					<button type="button" className={quiet} disabled={override.isPending} onClick={() => override.mutate(answerId)}>
+						Count it as right
+					</button>
+				</div>
+			)}
+			<ErrorText>{override.error && errorMessage(override.error)}</ErrorText>
 		</div>
 	)
 }

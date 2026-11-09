@@ -29,15 +29,22 @@ export function Home() {
 			</div>
 
 			<div className="grid gap-4 md:grid-cols-3">
-				<Link to="/mind" className={`${card} bg-mind text-white`} aria-label="Mind: the reading room">
-					<Head name="Mind" sub="The reading room" />
-					<div className="mt-auto rounded-2xl bg-[#f6efe1] p-4 font-serif text-[#272a38]">
+				{/* The whole card opens Mind; the due count on it opens Review, one click either way. */}
+				<div className={`${card} relative bg-mind text-white`}>
+					<Link to="/mind" aria-label="Mind: the reading room" className="after:absolute after:inset-0 after:rounded-3xl">
+						<Head name="Mind" sub="The reading room" />
+					</Link>
+					<Link
+						to="/mind/review"
+						aria-label="Review due ideas"
+						className="relative mt-auto rounded-2xl bg-[#f6efe1] p-4 font-serif text-[#272a38] transition hover:ring-2 hover:ring-white/70"
+					>
 						<p className="text-4xl" data-testid="due-count">
 							{due.data?.total ?? 0}
 						</p>
 						<p className="text-sm text-[#716a5f]">{due.data?.total === 1 ? 'card' : 'cards'} due for review</p>
-					</div>
-				</Link>
+					</Link>
+				</div>
 
 				<Link to="/body" className={`${card} bg-[#161619] text-[#f3f0ea]`} aria-label="Body: the training log">
 					<Head name="Body" sub="The training log" />

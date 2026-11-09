@@ -9,5 +9,7 @@ import type { Page, TestInfo } from '@playwright/test'
 export async function proof(page: Page, testInfo: TestInfo, name: string) {
 	const issue = process.env.PROOF
 	if (!issue) return
+	// A full-page capture of a scrolled page draws the sticky chrome out of place.
+	await page.evaluate(() => window.scrollTo(0, 0))
 	await page.screenshot({ path: `docs/proof/${issue}/${testInfo.project.name}-${name}.png`, fullPage: true })
 }

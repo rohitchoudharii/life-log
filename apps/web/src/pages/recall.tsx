@@ -121,7 +121,7 @@ function Retry({ attempt, onDone }: { attempt: RecallAttempt; onDone: () => void
 			<p className="font-sans text-sm text-world-muted">
 				Retry {items.indexOf(next) + 1} of {items.length} · practice, your schedule stays as it is
 			</p>
-			<QuestionForm key={next.cardId} item={next} mode="practice" attemptId={attempt.id} onAnswered={(result, given) => setShown({ result, given, cardId: next.cardId })} />
+			<QuestionForm key={next.cardId} item={next} mode="practice" attemptId={attempt.id} onAnswered={(result, { given }) => setShown({ result, given, cardId: next.cardId })} />
 		</div>
 	)
 }
@@ -129,6 +129,7 @@ function Retry({ attempt, onDone }: { attempt: RecallAttempt; onDone: () => void
 /** The recall map: every key idea, how the dump covered it, its quote and when it comes back. */
 function Results({ attempt }: { attempt: RecallAttempt }) {
 	const navigate = useNavigate()
+	const queryClient = useQueryClient()
 	const [retrying, setRetrying] = useState(false)
 	const ideas = attempt.ideas ?? []
 	const covered = ideas.filter((i) => i.status === 'covered').length
@@ -165,7 +166,13 @@ function Results({ attempt }: { attempt: RecallAttempt }) {
 							<span className={`rounded-full px-2.5 py-0.5 font-sans text-xs font-semibold ${MARK[idea.status].className}`}>{MARK[idea.status].label}</span>
 						</div>
 						{idea.answer ? (
-							<RevealTile result={{ ...idea.answer, rating: 'good', dueAt: idea.dueAt }} given={idea.answer.given} prompt={idea.answer.prompt} />
+							<RevealTile
+								result={{ ...idea.answer, rating: 'good', dueAt: idea.dueAt }}
+								given={idea.answer.given}
+								prompt={idea.answer.prompt}
+								answerId={idea.answer.answerId}
+								onOverride={() => queryClient.invalidateQueries({ queryKey: orpc.recall.get.queryKey({ input: { id: attempt.id } }) })}
+							/>
 						) : (
 							<>
 								{idea.quote && <p className="text-sm text-world-muted italic">From the text: “{idea.quote}”</p>}

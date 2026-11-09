@@ -1,17 +1,18 @@
-import type { Answer, AnswerResult, Reveal } from '@life-log-club/contract'
+import type { Answer, AnswerResult, REPORT_REASONS, Reveal } from '@life-log-club/contract'
 import {
 	answerIdea,
 	type Grade,
 	gradeResponse,
 	gradeWritten,
 	isQuestionType,
+	type IdeaProgress,
 	type Judge,
 	type PointStatus,
 	withConfidence,
 } from '@life-log-club/domain'
 import { judgeRequest, parseJudgeVerdict } from '@life-log-club/llm'
 import { ORPCError } from '@orpc/server'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, asc, eq, gte, isNull, sql } from 'drizzle-orm'
 import { ZodError } from 'zod'
 import { asUser, type Tx } from '../db/client'
 import { cards, questions, recallAttempts, reviewLog } from '../db/schema'
@@ -48,16 +49,18 @@ function toReveal(reveal: Record<string, unknown>, quote: string | null): Reveal
 	}
 }
 
+const resultOf = (row: typeof reviewLog.$inferSelect): AnswerResult => ({
+	correct: row.correct ?? row.rating !== 'again',
+	rating: row.rating,
+	reveal: row.reveal ?? { reference: null, feedback: '', points: [], misconception: null, quote: null },
+	dueAt: row.nextDueAt,
+	overridden: row.overriddenAt !== null,
+})
+
 /** The result of an answer already recorded, so the same answer sent twice counts once. */
 async function recorded(tx: Tx, answerId: string): Promise<AnswerResult | null> {
 	const [row] = await tx.select().from(reviewLog).where(eq(reviewLog.answerId, answerId))
-	if (!row) return null
-	return {
-		correct: row.correct ?? row.rating !== 'again',
-		rating: row.rating,
-		reveal: row.reveal ?? { reference: null, feedback: '', points: [], misconception: null, quote: null },
-		dueAt: row.nextDueAt,
-	}
+	return row ? resultOf(row) : null
 }
 
 /**
@@ -124,6 +127,7 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
 		if (again) return again
 		checkWhen(locked!, input.mode, now)
 		let dueAt = locked!.dueAt
+		const prev = { state: locked!.state, level: locked!.level, dueAt: locked!.dueAt.toISOString() }
 		if (input.mode !== 'practice') {
 			const next = answerIdea({ state: locked!.state, level: locked!.level, dueAt: locked!.dueAt }, grade, now)
 			dueAt = next.dueAt
@@ -147,9 +151,87 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
 			feedback: reveal.feedback || null,
 			reveal,
 			gradedBy,
+			prev,
 			reviewedAt: now,
 			nextDueAt: dueAt,
 		})
-		return { correct: grade.correct, rating: grade.rating, reveal, dueAt }
+		return { correct: grade.correct, rating: grade.rating, reveal, dueAt, overridden: false }
+	})
+}
+
+/**
+ * Works a card's schedule and level out again from one logged answer on: from the card as it
+ * was just before it, through every later answer that counts (not practice), in order, each at
+ * the time it was given. The card must be locked.
+ */
+async function replayFrom(tx: Tx, from: typeof reviewLog.$inferSelect) {
+	if (!from.prev) throw new ORPCError('BAD_REQUEST', { message: 'This answer is too old to change.' })
+	const rows = await tx
+		.select()
+		.from(reviewLog)
+		.where(and(eq(reviewLog.cardId, from.cardId), gte(reviewLog.id, from.id)))
+		.orderBy(asc(reviewLog.id))
+	let progress: IdeaProgress = { ...from.prev, dueAt: new Date(from.prev.dueAt) }
+	for (const row of rows) {
+		if (row.mode === 'practice') continue
+		progress = answerIdea(progress, { correct: row.correct ?? row.rating !== 'again', rating: row.rating }, row.reviewedAt)
+		if (row.id === from.id) await tx.update(reviewLog).set({ nextDueAt: progress.dueAt }).where(eq(reviewLog.id, row.id))
+	}
+	await tx.update(cards).set({ state: progress.state, level: progress.level, dueAt: progress.dueAt }).where(eq(cards.id, from.cardId))
+	return progress.dueAt
+}
+
+/** The logged answer with this id, with its card locked. */
+async function lockedAnswer(tx: Tx, answerId: string) {
+	const [found] = await tx.select({ cardId: reviewLog.cardId }).from(reviewLog).where(eq(reviewLog.answerId, answerId))
+	if (!found) throw new ORPCError('NOT_FOUND', { message: 'That answer does not exist.' })
+	await tx.select({ id: cards.id }).from(cards).where(eq(cards.id, found.cardId)).for('update')
+	const [row] = await tx.select().from(reviewLog).where(eq(reviewLog.answerId, answerId))
+	return row!
+}
+
+/**
+ * Count it as right: once per written answer the judge marked wrong. The answer becomes `good`
+ * and right, `overridden_at` records that the learner chose it, and the card's schedule is
+ * worked out again as if it had been graded so. Asking twice returns the same result.
+ */
+export function overrideAnswer(userId: string, answerId: string): Promise<AnswerResult> {
+	return asUser(userId, async (tx) => {
+		const row = await lockedAnswer(tx, answerId)
+		if (row.overriddenAt || row.correct) return resultOf(row)
+		if (row.ask === 'self') throw new ORPCError('BAD_REQUEST', { message: 'You rated this answer yourself, so there is nothing to change.' })
+		if (!row.response || 'skipped' in row.response) throw new ORPCError('BAD_REQUEST', { message: 'There is no answer to count. Next time, write what you remember.' })
+		const [updated] = await tx
+			.update(reviewLog)
+			.set({ rating: 'good', correct: true, overriddenAt: new Date() })
+			.where(eq(reviewLog.id, row.id))
+			.returning()
+		const dueAt = row.mode === 'practice' ? row.nextDueAt : await replayFrom(tx, updated!)
+		return { ...resultOf(updated!), dueAt }
+	})
+}
+
+/**
+ * Report a problem: retires the question, so it is never asked again, and keeps the reason. With
+ * an answer to it, that answer stops counting: it becomes practice, and the card's schedule is
+ * worked out again without it.
+ */
+export function reportQuestion(userId: string, input: { id: string; reason: (typeof REPORT_REASONS)[number]; answerId?: string }) {
+	return asUser(userId, async (tx) => {
+		const [question] = await tx.select({ id: questions.id }).from(questions).where(eq(questions.id, input.id))
+		if (!question) throw new ORPCError('NOT_FOUND', { message: 'That question does not exist.' })
+		await tx
+			.update(questions)
+			.set({ retiredAt: sql`coalesce(${questions.retiredAt}, now())`, report: input.reason })
+			.where(eq(questions.id, input.id))
+		if (input.answerId) {
+			const row = await lockedAnswer(tx, input.answerId)
+			if (row.questionId !== input.id) throw new ORPCError('BAD_REQUEST', { message: 'That answer is to another question.' })
+			if (row.mode !== 'practice') {
+				await tx.update(reviewLog).set({ mode: 'practice' }).where(eq(reviewLog.id, row.id))
+				await replayFrom(tx, row)
+			}
+		}
+		return { ok: true as const }
 	})
 }
