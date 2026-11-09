@@ -398,7 +398,7 @@ The new reading shows at once in Reading now as "Importing…" (optimistic, clie
 **Decision: option 4, changed.**
 
 1. **Seen → write.** After 30 seconds in a section, `write-section` writes, in one call per chapter batch:
-   - the section's key ideas (2 to 8, one sentence each, each with a **cue** and a **quote**)
+   - the section's key ideas (1 to 20, one sentence each, each with a **cue** and a **quote**; see **How many key ideas** below)
    - questions at the member's amount
    - in Release 6, up to 3 suggested words
 
@@ -415,8 +415,16 @@ The new reading shows at once in Reading now as "Importing…" (optimistic, clie
 | Amount | Questions | Note |
 | --- | --- | --- |
 | Quick | 0: only the brain dump and cue recall | Cheapest. Every idea is still reviewed through its cue. |
-| **Standard** (default) | 1 per idea | |
-| Thorough | 2 per idea, at different levels | |
+| **Standard** (default) | 1 per idea, at explain or apply | Recall is asked through the cue. |
+| Thorough | 2 per idea: one at explain, one at apply | |
+
+**How many key ideas**
+
+- **Every real idea in the section becomes a key idea.** An idea that is not a card never comes back in review, so losing one now means forgetting it later.
+- The prompt gives a guide of about one idea per 150 words, so the model knows the expected density. The guide is not a limit: a dense section gets more ideas, and a story or example section can get only one. The prompt says not to pad to reach the guide.
+- **Hard limit: 20 per section.** Sections are cut past about 2,500 words ([7.1](#71-adding-readings)), so 20 is about one idea per 125 words in the longest section and should not be reached in practice. If the model still returns more than 20, the job keeps the 20 most important (the model ranks them) and the rest show on the recall results under **More ideas in this section**, each with **Add** (1 click). Nothing is dropped silently.
+- Every idea still needs a quote found in the section; an idea without one is not stored.
+- The member can always add an idea later: **Add an idea** on the results, or select text and **Save idea**.
 
 This replaces the old per-word rule (`questionCountFor`) with a per-idea rule, because ideas are what get scheduled. The automatic default is **Standard**, not Quick. Quick would mean every review is a cue recall, which costs more judge calls later and gives less varied retrieval.
 
@@ -468,7 +476,7 @@ This replaces the old per-word rule (`questionCountFor`) with a per-idea rule, b
 
 1. **Recall this section** (1 click). The text hides. One large box: "Write everything you remember. Lists and fragments are fine." The section title shows; nothing else.
 2. **Done** (typing doesn't count). Or **Nothing comes to mind**, which records an empty dump with every idea missed. This is an honest result and still helps learning (Kornell, Hays & Bjork, 2009).
-3. Questions, ordered: ideas the dump missed, then vague ones, then the rest. Written questions come before choice questions, and topics are shuffled within each group (`orderForTest`, reused). Each answer is submitted with the confidence buttons ([7.8](#78-confidence-and-guess-first-old-task-2)); no result shows yet.
+3. Questions, one per key idea at the level its dump mark sets (see **Deeper questions for covered ideas** below), ordered: ideas the dump missed, then vague ones, then the rest. Written questions come before choice questions, and topics are shuffled within each group (`orderForTest`, reused). Each answer is submitted with the confidence buttons ([7.8](#78-confidence-and-guess-first-old-task-2)); no result shows yet.
 4. **Results**:
    - the recall map: every key idea marked covered, vague or missed, with its quote
    - "You were sure about these" (Sure but wrong) first
@@ -477,11 +485,36 @@ This replaces the old per-word rule (`questionCountFor`) with a per-idea rule, b
    - **Retry missed ideas** asks a new question or the cue for each missed idea in `practice` mode
    - **Teach one back** on a missed or vague idea (Release 7)
    - **Done** returns to the reader, at the next section
-5. Recall per section is the default. **Recall chapter** covers all of a chapter's sections, up to 20 key ideas, with at most 10 questions picked missed-first.
+5. Recall per section is the default. **Recall chapter** covers all of a chapter's sections. The dump is graded against every key idea in the chapter, and the session asks at most 10 questions, picked missed-first. Ideas without a question start from their dump mark (below), so no idea is left out of review.
 
 Total: **1 click to start**, then about 1 click per question.
 
 **How cards start:** each key idea's first rating comes from its first question answer in the session. If it had no question, the dump status decides: covered → `good`, vague → `hard`, missed → `again`. `started_at = now`. So a covered idea is back in 1 day; a missed one in 10 minutes.
+
+**Deeper questions for covered ideas**
+
+A question that asks for the same fact the dump already gave adds little. A covered idea gets a harder, different retrieval instead: a "why" or a "how", not a repeat (desirable difficulties, Bjork, 1994). A missed idea gets the simplest question, because a hard question on an idea that is not there yet is a difficulty the learner can't meet.
+
+| Dump mark | Start level | What is asked |
+| --- | --- | --- |
+| Missed | recall | The idea's cue, as a written recall |
+| Vague | explain | The idea's lowest question above recall |
+| Covered | explain or apply | The idea's highest question |
+
+- Questions are written before the dump ([7.3](#73-key-ideas-and-questions-when-they-get-written-taskmd-item-1)), so the dump result can't shape them. Instead, `write-section` writes every stored question **above recall** (explain or apply at Standard; Thorough writes one at each), and the recall level is always the cue. So the rule needs no AI call after the dump and adds no wait.
+- A missed idea's written question stays unasked and is used in a later Review, once its level has risen.
+- The start level is stored in `cards.level` when the card starts. From then on the existing rule applies: a right answer moves the idea up a level, a miss moves it down, and each Review asks a new question at the idea's level, up to analyse and transfer.
+- With Quick there are no stored questions, so every idea is asked through its cue.
+- Without a key, the same rule applies to the sample reading's pre-written questions.
+
+Example, a section on sleep and learning with four key ideas. The dump covers A and B, is vague on D and misses C.
+
+| # | Idea | Mark | Level | Question |
+| --- | --- | --- | --- | --- |
+| 1 | C. A tired brain learns new information poorly. | Missed | recall | "What does the text say about studying when you are tired?" (the cue) |
+| 2 | D. Study, sleep, then a short review the next morning. | Vague | explain | "Why does the text suggest a short review the morning after you study?" |
+| 3 | A. During deep sleep, the brain moves new memories into long-term storage. | Covered | explain | "Why does one night of sleep often improve recall the next day, with no extra practice?" |
+| 4 | B. Missing sleep after study means the memories are not stored well. | Covered | apply | "Your exam is tomorrow at 9:00. It is 22:00 now, and you have 4 hours of study left. What do you do, and why?" |
 
 **Without a key:** after **Done**, **Compare with the text** shows the dump beside the section. If the section has key ideas (sample reading, or ideas the member saved), each gets Got it / Partly / Missed, one click each and defaulting to Missed, which feeds the same rules. With no key ideas, the screen offers **Save idea** on the text.
 
@@ -511,6 +544,7 @@ Total: **1 click to start**, then about 1 click per question.
 
 - e2e (fake LLM): read a section → Recall → type a dump → Done → questions appear with ideas the dump missed asked first → answer all → results list each idea with covered/vague/missed → every key idea has `started_at`, and covered ones are due in 1 day (± a minute).
 - No result shows before the last answer.
+- With the fake LLM marking one idea covered and one missed: the covered idea is asked a stored question above recall, the missed idea is asked its cue, and each card's `level` after the session is its start level moved by its answer.
 - Nothing comes to mind marks all missed.
 - No-key path: the sample reading's dump can be self-marked, and the cards start.
 
@@ -533,7 +567,7 @@ Total: **1 click to start**, then about 1 click per question.
 | `order_steps` (partial credit by pairs; shuffled, never already right) | code | 5 |
 | `word_cloze` → `word_meaning` → `word_use` (by card level) | code, then judge | 6 |
 
-**Levels:** recall, explain, apply, analyse, transfer (`QUESTION_LEVELS`). At least 60% above recall (prompt rule 1, kept). A card's `level` picks the next question's level.
+**Levels:** recall, explain, apply, analyse, transfer (`QUESTION_LEVELS`). Every stored question is above recall; the recall level is the card's cue ([7.4](#74-recall-check-brain-dump-then-questions)). This replaces the old prompt rule 1 (at least 60% above recall). A card's `level` picks the next question's level.
 
 **Mixed style:** mostly written types, about a quarter choice types, only where wrong options are genuinely tempting (kept from `MIX.mixed`).
 
@@ -1124,7 +1158,7 @@ Each release sits on the one before, works on its own, and ends with `pnpm typec
 | Judge grades unfairly | Learners stop trusting grades | Count it as right plus the override metric; review 50 judged answers by hand in Release 1. |
 | Key ideas wrong or missing the point | Recall checks against the wrong thing | Quote guard; learner edits; `eval.ts` fixtures; Report a problem. |
 | FSRS fits varied questions badly | Retention at review far from target | `predicted_recall` vs actual from Release 2; lower the target or tune. |
-| Too many cards per section | Review load grows and the learner quits | Standard = one per key idea, 2 to 8 ideas; the Work metric; the amount setting. |
+| Too many cards per section | Review load grows and the learner quits | Standard = one question per key idea; no padding to the one-per-150-words guide; at most 20 ideas per section; the Work metric; the amount setting. |
 | 30-second trigger too late or too early | Waiting at recall, or spend on skimmed sections | The Ready-on-time metric; change the threshold in one constant. |
 | Prompt injection from web pages | Odd questions or output | Tags, schema parse, quote checks, plain-text rendering. |
 | Weak fallback cues without a key | Lessons and saved ideas are hard to recall from "what did you save here?" | Ask for the cue in the form; measure their recall at review separately. |
