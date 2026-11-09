@@ -28,6 +28,8 @@ export const Block = z.discriminatedUnion('type', [
 	z.object({ type: z.literal('list'), ordered: z.boolean(), items: z.array(z.string()), links: z.array(Link).optional(), notes: z.array(NoteRef).optional() }),
 	z.object({ type: z.literal('code'), language: z.string().optional(), text: z.string() }),
 	z.object({ type: z.literal('quote'), text: z.string(), links: z.array(Link).optional(), notes: z.array(NoteRef).optional() }),
+	/** A table's cells as plain text, row by row. `header` marks the first row as column titles. */
+	z.object({ type: z.literal('table'), rows: z.array(z.array(z.string())), header: z.boolean() }),
 	/**
 	 * An image the server stores and serves itself. `mediaId` is null until it is saved; until then
 	 * clients show the alt text. `src` is where it came from and is never rendered.
@@ -86,6 +88,8 @@ export function blockText(block: Block): string {
 	switch (block.type) {
 		case 'list':
 			return block.items.join('\n')
+		case 'table':
+			return block.rows.map((row) => row.join(' | ')).join('\n')
 		case 'image':
 		case 'page':
 			return ''

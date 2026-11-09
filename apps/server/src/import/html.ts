@@ -270,16 +270,19 @@ export function htmlToBlocks(
 				imagesIn(c).forEach(image)
 			} else if (name === 'TABLE') {
 				flush()
-				const rows: DomNode[] = []
-				const collect = (x: DomNode) => children(x).forEach((y) => (y.nodeType === ELEMENT ? (tag(y) === 'TR' ? rows.push(y) : collect(y)) : null))
-				collect(c)
-				for (const row of rows) {
-					const text = children(row)
-						.filter((cell) => cell.nodeType === ELEMENT && /^T[DH]$/.test(tag(cell)))
-						.map((cell) => squash(textOf(cell)))
-						.join(' | ')
-					if (squash(text.replace(/\|/g, ''))) out.push({ type: 'paragraph', text })
-				}
+				const rows: { cells: DomNode[]; head: boolean }[] = []
+				const collect = (x: DomNode, head: boolean) =>
+					children(x).forEach((y) => {
+						if (y.nodeType !== ELEMENT) return
+						if (tag(y) !== 'TR') return collect(y, head || tag(y) === 'THEAD')
+						const cells = children(y).filter((cell) => cell.nodeType === ELEMENT && /^T[DH]$/.test(tag(cell)))
+						if (cells.some((cell) => squash(textOf(cell)))) rows.push({ cells, head: head || cells.every((cell) => tag(cell) === 'TH') })
+					})
+				collect(c, false)
+				const text = rows.map((row) => row.cells.map((cell) => squash(textOf(cell))))
+				// A table with one column is a page's layout box, not data: its rows are paragraphs.
+				if (text.some((row) => row.length > 1)) out.push({ type: 'table', rows: text, header: Boolean(rows[0]?.head) })
+				else for (const [cell] of text) out.push({ type: 'paragraph', text: cell! })
 			} else if (name === 'HR') {
 				flush()
 			} else {

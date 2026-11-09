@@ -29,6 +29,9 @@ export function decodeHtml(body: Buffer, contentType: string): string {
 	}
 }
 
+/** How a caption starts: "Figure 1.2", "Table 3", "Listing 4-1", "Figure A.1". */
+const CAPTION = /^(figure|fig\.|table|listing|exhibit|example|chart)\s+([a-z]|\d+)([.\-–]\d+)*(?=[\s.:]|$)/i
+
 const VIDEO_HOSTS = /(^|\.)(youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|loom\.com|wistia\.(com|net))$/i
 type Doc = ReturnType<typeof parseHTML>['document']
 type El = ReturnType<Doc['createElement']>
@@ -78,9 +81,16 @@ function normaliseMedia(document: Doc, url: string) {
 		const id = /youtube(?:-nocookie)?\.com\/embed\/([\w-]{6,})/.exec(src)?.[1]
 		f.replaceWith(note(squash(f.getAttribute('title')), id ? `https://www.youtube.com/watch?v=${id}` : src, id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : null))
 	}
-	// A caption written as a heading (O'Reilly uses <h6>) would start a new section; it is text.
+	// A caption written as a heading (O'Reilly uses <h6>, Manning <h5>) would start a new section;
+	// it is text. It sits in a figure, or names a figure and shares a small box with the image,
+	// table or code it labels. A heading among the article's own blocks is never a caption.
 	const levels = [1, 2, 3, 4, 5, 6]
-	for (const h of all(levels.flatMap((n) => [`figure h${n}`, `.figure h${n}`]).join(', '))) {
+	const captions = new Set(all(levels.flatMap((n) => [`figure h${n}`, `.figure h${n}`]).join(', ')))
+	for (const h of all(levels.map((n) => `h${n}`).join(', '))) {
+		const box = h.parentElement
+		if (CAPTION.test(squash(h.textContent)) && box && box.children.length <= 3 && box.querySelector('img, picture, table, pre')) captions.add(h)
+	}
+	for (const h of captions) {
 		const p = document.createElement('p')
 		p.append(...Array.from(h.childNodes))
 		h.replaceWith(p)

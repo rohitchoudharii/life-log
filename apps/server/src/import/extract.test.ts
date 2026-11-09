@@ -32,6 +32,31 @@ describe('extractArticle', () => {
 		expect(text.some((t) => t.includes('https://www.youtube.com/watch?v=abc123XYZ_-'))).toBe(true)
 	})
 
+	it('keeps captions written as headings beside their figure or table as text, not as sections (Manning)', () => {
+		const html = `<html><head><title>1 Rings</title></head><body><article>
+			<h1>1 Rings</h1>
+			<h3>1.1 Hashing</h3>
+			${prose(4)}
+			<div class="browsable-container figure-container"><img src="/fig1.png" alt="A ring" width="600" height="400"><h5>Figure 1.1 A hash ring. Keys map to the next server.</h5></div>
+			${prose(3)}
+			<div class="browsable-container"><h5>Table 1.1 Ways to place keys</h5>
+				<table><thead><tr><th>Scheme</th><th>Moves on resize</th></tr></thead><tbody><tr><td>Modulo</td><td>Most keys</td></tr><tr><td>Ring</td><td>Few keys</td></tr></tbody></table></div>
+			${prose(3)}
+			<h3>Example 2: a cluster of three</h3>
+			${prose(3)}
+		</article></body></html>`
+		const article = extractArticle(html, 'https://learning.example.com/book/ch01.html')
+
+		expect(sections(article).map((s) => s.title)).toEqual(['1.1 Hashing', 'Example 2: a cluster of three'])
+		const at = article.blocks.findIndex((b) => b.type === 'table')
+		expect(article.blocks.slice(at - 1, at + 1)).toEqual([
+			{ type: 'paragraph', text: 'Table 1.1 Ways to place keys' },
+			{ type: 'table', header: true, rows: [['Scheme', 'Moves on resize'], ['Modulo', 'Most keys'], ['Ring', 'Few keys']] },
+		])
+		const image = article.blocks.findIndex((b) => b.type === 'image')
+		expect(article.blocks[image + 1]).toEqual({ type: 'paragraph', text: 'Figure 1.1 A hash ring. Keys map to the next server.' })
+	})
+
 	it('reads pages hidden until their scripts run, even when the scripts outweigh the text', () => {
 		const html = `<html><body><div style="visibility:hidden;min-height:100vh"><article><h1>Hub</h1>${prose(8)}
 			<ul><li><a href="/python/intro/">Introduction</a></li></ul></article></div>

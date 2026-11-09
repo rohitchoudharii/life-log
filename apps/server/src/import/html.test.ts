@@ -55,8 +55,7 @@ Promise.resolve().then(g)</code></pre>
 			{ type: 'list', ordered: true, items: ['first'] },
 			{ type: 'code', language: 'js', text: 'setTimeout(f, 0)\nPromise.resolve().then(g)' },
 			{ type: 'quote', text: 'Quoted' },
-			{ type: 'paragraph', text: 'Queue | Runs' },
-			{ type: 'paragraph', text: 'micro | first' },
+			{ type: 'table', header: true, rows: [['Queue', 'Runs'], ['micro', 'first']] },
 		])
 	})
 

@@ -84,6 +84,40 @@ function BlockView({ block, marks }: { block: Block; marks: NoteMarks }) {
 				</List>
 			)
 		}
+		case 'table': {
+			const [first = [], ...rest] = block.rows
+			const body = block.header ? rest : block.rows
+			const cell = 'border-b border-world-line px-3 py-2 align-top'
+			return (
+				// Wide tables scroll inside their own box, so the page never scrolls sideways.
+				<div className="overflow-x-auto rounded-xl bg-world-card ring-1 ring-world-line">
+					<table className="w-full border-collapse font-sans text-[0.8em] leading-snug">
+						{block.header && (
+							<thead>
+								<tr>
+									{first.map((text, i) => (
+										<th key={i} scope="col" className={`${cell} text-left font-semibold`}>
+											{text}
+										</th>
+									))}
+								</tr>
+							</thead>
+						)}
+						<tbody className="[&>tr:last-child>td]:border-b-0">
+							{body.map((row, r) => (
+								<tr key={r}>
+									{row.map((text, i) => (
+										<td key={i} className={`${cell} min-w-32 lg:min-w-0`}>
+											{text}
+										</td>
+									))}
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+			)
+		}
 		case 'image':
 			if (block.mediaId)
 				return (
