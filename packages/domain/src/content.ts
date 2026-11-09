@@ -33,6 +33,8 @@ export const Block = z.discriminatedUnion('type', [
 		height: z.number().int().positive().optional(),
 		src: z.string().optional(),
 	}),
+	/** Where a page of the source (a PDF) starts, so the reader can point back to it. */
+	z.object({ type: z.literal('page'), number: z.number().int().positive() }),
 ])
 export type Block = z.infer<typeof Block>
 
@@ -62,6 +64,7 @@ export function blockText(block: Block): string {
 		case 'list':
 			return block.items.join('\n')
 		case 'image':
+		case 'page':
 			return ''
 		default:
 			return block.text
@@ -84,9 +87,12 @@ export function splitSections(blocks: Block[], fallbackTitle: string): SectionDr
 	const groups: (SectionDraft & { heading: boolean })[] = []
 	for (const block of blocks) {
 		if (block.type === 'heading') {
+			// A page that starts right before a heading belongs to the section the heading opens.
+			const last = groups.at(-1)
+			const page = last?.blocks.at(-1)?.type === 'page' ? last.blocks.pop() : undefined
 			const parentLimit = (groups.at(-1)?.level ?? 0) + 1
 			const level = Math.max(1, Math.min(block.level - top + 1, parentLimit, MAX_SECTION_LEVEL))
-			groups.push({ title: block.text, level, blocks: [], wordCount: 0, aiTitle: block.source === 'ai', heading: true })
+			groups.push({ title: block.text, level, blocks: page ? [page] : [], wordCount: 0, aiTitle: block.source === 'ai', heading: true })
 			continue
 		}
 		if (!groups.length) groups.push({ title: fallbackTitle, level: 1, blocks: [], wordCount: 0, aiTitle: false, heading: false })
@@ -94,7 +100,8 @@ export function splitSections(blocks: Block[], fallbackTitle: string): SectionDr
 		group.blocks.push(block)
 		group.wordCount += countWords(blockText(block))
 	}
-	return groups.filter((g) => g.heading || g.blocks.length).flatMap(({ heading: _, ...g }) => cut(g))
+	// A run of page markers alone is no section: a page break, not text.
+	return groups.filter((g) => g.heading || g.blocks.some((b) => b.type !== 'page')).flatMap(({ heading: _, ...g }) => cut(g))
 }
 
 function cut(section: SectionDraft): SectionDraft[] {

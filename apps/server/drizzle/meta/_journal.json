@@ -36,6 +36,13 @@
       "when": 1794184904990,
       "tag": "0004_ai_headings",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794187877570,
+      "tag": "0005_books",
+      "breakpoints": true
     }
   ]
 }

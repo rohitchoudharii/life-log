@@ -102,8 +102,11 @@ function has(n: DomNode, test: (el: DomNode) => boolean): boolean {
 	return children(n).some((c) => c.nodeType === ELEMENT && !SKIP.has(tag(c)) && (test(c) || has(c, test)))
 }
 
-/** The address an image loads from: resolved against the page, or a small inline data image. */
-function imageSource(n: DomNode, baseUrl: string): string | null {
+/**
+ * The address an image loads from: resolved against the page, or a small inline data image.
+ * `schemes` are the URL schemes allowed: http and https for web pages, the archive's for a book.
+ */
+function imageSource(n: DomNode, baseUrl: string, schemes: readonly string[]): string | null {
 	const srcset = attr(n, 'srcset') ?? attr(n, 'data-srcset')
 	const fromSet = srcset
 		?.split(',')
@@ -120,7 +123,7 @@ function imageSource(n: DomNode, baseUrl: string): string | null {
 	if (value.startsWith('data:')) return DATA_IMAGE.test(value) ? value : null
 	try {
 		const url = new URL(value, baseUrl)
-		return (WEB as readonly string[]).includes(url.protocol) ? url.href : null
+		return schemes.includes(url.protocol) ? url.href : null
 	} catch {
 		return null
 	}
@@ -138,9 +141,10 @@ function mathText(n: DomNode): string | null {
  * Turns article HTML (as Readability returns it) into our blocks. Only text survives, with the
  * addresses its links point at: no markup, attributes, or styles, so nothing from the page can
  * run or load when it is shown.
- * Images become image blocks with their source address, for the server to download.
+ * Images become image blocks with their source address, for the server to download. A book's
+ * own images use its archive's scheme, given in `imageSchemes`.
  */
-export function htmlToBlocks(root: DomNode, baseUrl: string): Block[] {
+export function htmlToBlocks(root: DomNode, baseUrl: string, { imageSchemes = WEB }: { imageSchemes?: readonly string[] } = {}): Block[] {
 	const out: Block[] = []
 	let inline: Run[] = []
 	let images = 0
@@ -150,7 +154,7 @@ export function htmlToBlocks(root: DomNode, baseUrl: string): Block[] {
 		inline = []
 	}
 	const image = (n: DomNode) => {
-		const src = imageSource(n, baseUrl)
+		const src = imageSource(n, baseUrl, imageSchemes)
 		if (!src || images >= MAX_IMAGES) return
 		const size = (name: string) => {
 			const v = Number(attr(n, name))

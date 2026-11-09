@@ -1,7 +1,7 @@
-import type { Reading } from '@life-log-club/contract'
+import { FILE_TOO_LARGE, MAX_FILE_BYTES, type Reading } from '@life-log-club/contract'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { type DragEvent, useRef, useState } from 'react'
 import { client, errorMessage, orpc } from './rpc'
 import { useToast } from './toast'
 
@@ -57,13 +57,84 @@ function useAddReading() {
 	return (url: string) => mutation.mutate({ id: crypto.randomUUID(), url })
 }
 
-/** One box to paste a link into, and Add. */
+/**
+ * Adds an EPUB or PDF file. It shows in Reading now at once as importing, titled with the file
+ * name, while the server reads it.
+ */
+export function useAddFile() {
+	const queryClient = useQueryClient()
+	const toast = useToast()
+	const mutation = useMutation({
+		mutationFn: (upload: { id: string; file: File }) => client.readings.addFile(upload),
+		onMutate: async ({ id, file }) => {
+			await queryClient.cancelQueries({ queryKey: listKey })
+			const before = queryClient.getQueryData<Reading[]>(listKey)
+			const placeholder: Reading = {
+				id,
+				title: file.name.replace(/\.(epub|pdf)$/i, ''),
+				author: null,
+				sourceUrl: null,
+				requestedUrl: null,
+				status: 'importing',
+				error: null,
+				wordCount: 0,
+				sectionCount: 0,
+				createdAt: new Date(),
+			}
+			queryClient.setQueryData<Reading[]>(listKey, (list) => [placeholder, ...(list ?? [])])
+			return { before }
+		},
+		onError: (error, _upload, context) => {
+			queryClient.setQueryData(listKey, context?.before)
+			toast({ text: errorMessage(error) })
+		},
+		onSuccess: (reading, upload) => {
+			if (reading.id !== upload.id) toast({ text: 'You already have this book.' })
+		},
+		onSettled: () => queryClient.invalidateQueries({ queryKey: listKey }),
+	})
+	return (file: File) => {
+		// Checked here too, so a large file isn't uploaded only to be refused.
+		if (file.size > MAX_FILE_BYTES) return toast({ text: FILE_TOO_LARGE })
+		mutation.mutate({ id: crypto.randomUUID(), file })
+	}
+}
+
+/** Lets a member drop an EPUB or PDF anywhere on the element that spreads these handlers. */
+export function useFileDrop() {
+	const addFile = useAddFile()
+	const [dragging, setDragging] = useState(false)
+	const hasFiles = (e: DragEvent) => e.dataTransfer.types.includes('Files')
+	return {
+		dragging,
+		handlers: {
+			onDragOver: (e: DragEvent) => {
+				if (!hasFiles(e)) return
+				e.preventDefault()
+				setDragging(true)
+			},
+			onDragLeave: (e: DragEvent) => {
+				if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false)
+			},
+			onDrop: (e: DragEvent) => {
+				if (!hasFiles(e)) return
+				e.preventDefault()
+				setDragging(false)
+				for (const file of e.dataTransfer.files) addFile(file)
+			},
+		},
+	}
+}
+
+/** One box to paste a link into, and Add; and a button to add an EPUB or PDF file. */
 export function AddReading() {
 	const [url, setUrl] = useState('')
 	const add = useAddReading()
+	const addFile = useAddFile()
+	const picker = useRef<HTMLInputElement>(null)
 	return (
 		<form
-			className="flex gap-2 rounded-2xl border border-world-line bg-world-card p-2"
+			className="flex flex-wrap gap-2 rounded-2xl border border-world-line bg-world-card p-2 md:flex-nowrap"
 			onSubmit={(e) => {
 				e.preventDefault()
 				if (!url.trim()) return
@@ -79,10 +150,10 @@ export function AddReading() {
 				type="text"
 				inputMode="url"
 				autoComplete="off"
-				placeholder="Paste a link to an article"
+				placeholder="Paste a link, or drop an EPUB or PDF"
 				value={url}
 				onChange={(e) => setUrl(e.target.value)}
-				className="min-w-0 flex-1 rounded-xl bg-transparent px-3 py-2 font-sans text-base outline-none placeholder:text-world-muted"
+				className="min-w-0 flex-1 basis-full rounded-xl bg-transparent px-3 py-2 font-sans text-base outline-none placeholder:text-world-muted md:basis-0"
 			/>
 			<button
 				type="submit"
@@ -90,6 +161,24 @@ export function AddReading() {
 			>
 				Add
 			</button>
+			<button
+				type="button"
+				onClick={() => picker.current?.click()}
+				className="rounded-xl border border-world-line px-4 py-2 font-sans text-sm font-medium whitespace-nowrap transition hover:bg-world active:scale-[0.97]"
+			>
+				Add a file
+			</button>
+			<input
+				ref={picker}
+				type="file"
+				accept=".epub,.pdf,application/epub+zip,application/pdf"
+				aria-label="EPUB or PDF file"
+				hidden
+				onChange={(e) => {
+					for (const file of e.target.files ?? []) addFile(file)
+					e.target.value = ''
+				}}
+			/>
 		</form>
 	)
 }
@@ -135,7 +224,9 @@ function ReadingItem({ reading }: { reading: Reading }) {
 		)
 	return (
 		<li data-testid="reading" className="rounded-2xl border border-dashed border-world-line p-4">
-			<p className="truncate text-lg leading-snug">{reading.status === 'importing' ? host(reading.requestedUrl) || reading.title : reading.requestedUrl}</p>
+			<p className="truncate text-lg leading-snug">
+				{reading.status === 'importing' ? host(reading.requestedUrl) || reading.title : (reading.requestedUrl ?? reading.title)}
+			</p>
 			{reading.status === 'importing' ? (
 				<p className="mt-1 animate-pulse font-sans text-sm text-world-muted">Importing…</p>
 			) : (
@@ -144,9 +235,12 @@ function ReadingItem({ reading }: { reading: Reading }) {
 						{reading.error}
 					</p>
 					<div className="mt-3 flex gap-2">
-						<button type="button" className={quiet} onClick={() => reading.requestedUrl && add(reading.requestedUrl)}>
-							Try again
-						</button>
+						{/* A file is tried again by adding it again; only a link can be fetched again from here. */}
+						{reading.requestedUrl && (
+							<button type="button" className={quiet} onClick={() => add(reading.requestedUrl!)}>
+								Try again
+							</button>
+						)}
 						<button type="button" className={quiet} onClick={() => remove.mutate(reading)}>
 							Remove
 						</button>
@@ -161,7 +255,7 @@ function ReadingItem({ reading }: { reading: Reading }) {
 export function ReadingNow() {
 	const readings = useReadings()
 	if (!readings.data) return null
-	if (!readings.data.length) return <p className="text-world-muted">Nothing to read yet. Paste a link above to add your first reading.</p>
+	if (!readings.data.length) return <p className="text-world-muted">Nothing to read yet. Paste a link above, or add an EPUB or PDF.</p>
 	return (
 		<ul className="grid items-start gap-3 md:grid-cols-2">
 			{readings.data.map((r) => (

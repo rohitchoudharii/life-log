@@ -81,6 +81,10 @@ export const Section = z.object({
 })
 export type Section = z.infer<typeof Section>
 
+/** The largest EPUB or PDF a member can add. */
+export const MAX_FILE_BYTES = 25 * 1024 * 1024
+export const FILE_TOO_LARGE = 'This file is larger than 25 MB. Try a smaller copy.'
+
 const EntryId = z.object({ id: z.uuid() })
 const Ok = z.object({ ok: z.literal(true) })
 
@@ -166,6 +170,11 @@ export const contract = {
 		 * removed one is restored, and a failed one is tried again.
 		 */
 		add: oc.input(z.object({ id: z.uuid(), url: z.string().trim().min(1, 'Paste a link').max(2000) })).output(Reading),
+		/**
+		 * Adds an EPUB or PDF file, which the server reads in the background, like `add`. The file
+		 * type comes from its bytes, not its name. The same file added twice is one reading.
+		 */
+		addFile: oc.input(z.object({ id: z.uuid(), file: z.file().max(MAX_FILE_BYTES, FILE_TOO_LARGE) })).output(Reading),
 		/** The member's readings, newest first. */
 		list: oc.output(z.array(Reading)),
 		/**

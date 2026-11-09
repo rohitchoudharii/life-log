@@ -1,12 +1,15 @@
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { asc, eq } from 'drizzle-orm'
+import sharp from 'sharp'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { encrypt } from '../crypto'
 import { asUser, ownerDb, ownerPool, pool } from '../db/client'
 import { prepareDatabase } from '../db/prepare'
-import { aiCalls, aiKeys, readings, sections, users } from '../db/schema'
+import { aiCalls, aiKeys, media, readingFiles, readings, sections, users } from '../db/schema'
 import { keyContext } from '../learning/ai'
 import { importReading, normaliseUrl } from './reading'
+import { blankPdf, testEpub } from './test-books'
 import { fixture, TEST_SITE, testSite } from './test-site'
 
 const site = testSite()
@@ -192,5 +195,64 @@ describe('AI headings for an article with no headings (issue #1, rule 3)', () =>
 		await add(userId, site.serve('/with-headings', fixture('mdn-execution-model.html')))
 		expect(site.takeHits().get('/v1/messages')).toBeUndefined()
 		expect(await calls(userId)).toEqual([])
+	})
+})
+
+describe('uploaded books', () => {
+	/** Adds a file as the route does, then runs its import job. */
+	async function addFile(userId: string, bytes: Uint8Array, name: string) {
+		const id = randomUUID()
+		const kind = name.endsWith('.pdf') ? 'pdf_upload' : 'epub'
+		await asUser(userId, async (tx) => {
+			await tx.insert(readings).values({ id, userId, title: name, source: kind })
+			await tx.insert(readingFiles).values({ readingId: id, userId, name, contentType: 'x', size: bytes.length, data: Buffer.from(bytes) })
+		})
+		await importReading({ readingId: id, userId })
+		return id
+	}
+	const book = (name: string) => new Uint8Array(readFileSync(new URL(`fixtures/${name}`, import.meta.url)))
+
+	it("stores an EPUB's chapters, and its images re-encoded for the reader", async () => {
+		const userId = await member()
+		const png = await sharp({ create: { width: 120, height: 80, channels: 3, background: '#3b4a8c' } }).png().toBuffer()
+		const id = await addFile(userId, testEpub({ 'OEBPS/images/fig.png': png }), 'test.epub')
+		const { reading, sections: stored } = await load(userId, id)
+		expect(reading).toMatchObject({ status: 'ready', title: 'Test Book' })
+		expect(stored.map((s) => s.title)).toEqual(['Chapter One', 'A part', 'Chapter Two', 'Chapter Three'])
+		const image = stored.flatMap((s) => s.blocks).find((b) => b.type === 'image')
+		expect(image).toEqual({ type: 'image', mediaId: expect.any(String), alt: 'Figure', width: 120, height: 80 })
+		const [saved] = await asUser(userId, (tx) => tx.select().from(media).where(eq(media.readingId, id)))
+		expect(saved).toMatchObject({ id: image?.type === 'image' && image.mediaId, contentType: 'image/webp', width: 120, height: 80 })
+		expect((await sharp(saved!.data).metadata()).format).toBe('webp')
+		// Another member sees neither the file nor the image.
+		const stranger = await member()
+		expect(await asUser(stranger, async (tx) => [...(await tx.select().from(media)), ...(await tx.select().from(readingFiles))])).toEqual([])
+	})
+
+	it('keeps the description of an image that is not a usable picture, and drops icons without one', async () => {
+		const userId = await member()
+		const icon = await sharp({ create: { width: 16, height: 16, channels: 3, background: '#000' } }).png().toBuffer()
+		const { sections: stored } = await load(userId, await addFile(userId, testEpub({ 'OEBPS/images/fig.png': icon }), 'icon.epub'))
+		expect(stored.flatMap((s) => s.blocks).filter((b) => b.type === 'image')).toEqual([{ type: 'image', mediaId: null, alt: 'Figure' }])
+	})
+
+	it('reads the saved EPUB and PDF books', async () => {
+		const userId = await member()
+		const prince = await load(userId, await addFile(userId, book('the-prince.epub'), 'the-prince.epub'))
+		expect(prince.reading).toMatchObject({ status: 'ready', title: 'The Prince', author: 'Niccolò Machiavelli' })
+		expect(prince.sections.map((s) => s.title)).toContain('XIX: That One Should Avoid Being Despised and Hated')
+		const pdf = await load(userId, await addFile(userId, book('trump-v-anderson.pdf'), 'opinion.pdf'))
+		expect(pdf.reading.status).toBe('ready')
+		expect(pdf.sections.flatMap((s) => s.blocks).filter((b) => b.type === 'page')[0]).toEqual({ type: 'page', number: 1 })
+	})
+
+	it('fails a protected, scanned or unknown file with a message the member can act on', async () => {
+		const userId = await member()
+		const failure = async (bytes: Uint8Array, name: string) => (await load(userId, await addFile(userId, bytes, name))).reading.error
+		expect(await failure(testEpub({ 'META-INF/license.lcpl': '{}' }), 'locked.epub')).toBe(
+			"This book is protected with DRM, so Life Log Club can't read it. Try a DRM-free copy.",
+		)
+		expect(await failure(blankPdf(), 'scan.pdf')).toBe("This PDF is scanned pages without text, so Life Log Club can't read it yet.")
+		expect(await failure(new TextEncoder().encode('just some notes'), 'notes.epub')).toBe('Life Log Club reads EPUB and PDF files. Choose one of those.')
 	})
 })

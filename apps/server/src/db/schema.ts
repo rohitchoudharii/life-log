@@ -2,6 +2,7 @@ import type { Block, ReviewState } from '@life-log-club/domain'
 import { type AnyColumn, sql } from 'drizzle-orm'
 import {
 	type AnyPgColumn,
+	customType,
 	bigint,
 	boolean,
 	index,
@@ -17,6 +18,8 @@ import {
 } from 'drizzle-orm/pg-core'
 
 const id = () => uuid().primaryKey().defaultRandom()
+/** Raw bytes, such as an uploaded book or a stored image. */
+const bytea = customType<{ data: Buffer }>({ dataType: () => 'bytea' })
 const createdAt = () => timestamp({ withTimezone: true }).notNull().defaultNow()
 
 // Sign-in tables are read before anyone is known (by email or session token), so they have no
@@ -179,11 +182,13 @@ export const readings = pgTable(
 			.references(() => users.id, { onDelete: 'cascade' }),
 		title: text().notNull(),
 		author: text(),
-		source: text().$type<'url'>().notNull(),
+		source: text().$type<'url' | 'epub' | 'pdf_upload'>().notNull(),
 		/** The link as the member added it, normalised. The same link always finds the same reading. */
 		requestedUrl: text(),
 		/** The page's canonical address, or where the link ended after redirects. */
 		sourceUrl: text(),
+		/** SHA-256 of an uploaded file, so the same file added twice is one reading. */
+		fileHash: text(),
 		publishedAt: timestamp({ withTimezone: true }),
 		status: text().$type<'importing' | 'ready' | 'failed'>().notNull().default('importing'),
 		/** Why the import failed, written for the member. */
@@ -200,9 +205,53 @@ export const readings = pgTable(
 	(t) => [
 		index().on(t.userId, t.createdAt.desc()),
 		uniqueIndex().on(t.userId, t.requestedUrl).where(sql`${t.requestedUrl} is not null`),
+		uniqueIndex().on(t.userId, t.fileHash).where(sql`${t.fileHash} is not null`),
 		index().on(t.userId, t.sourceUrl),
 		ownRows(t.userId),
 	],
+)
+
+/**
+ * The file a reading was uploaded as, kept after import so the book can be read again when the
+ * parsers improve, and so OCR can use a scan later.
+ */
+export const readingFiles = pgTable(
+	'reading_files',
+	{
+		readingId: uuid()
+			.primaryKey()
+			.references(() => readings.id, { onDelete: 'cascade' }),
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		name: text().notNull(),
+		contentType: text().notNull(),
+		size: integer().notNull(),
+		data: bytea().notNull(),
+		createdAt: createdAt(),
+	},
+	(t) => [ownRows(t.userId)],
+)
+
+/** An image from a reading, re-encoded as WebP. Kept in Postgres for now, so backups include it. */
+export const media = pgTable(
+	'media',
+	{
+		id: id(),
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		readingId: uuid()
+			.notNull()
+			.references(() => readings.id, { onDelete: 'cascade' }),
+		contentType: text().notNull(),
+		bytes: integer().notNull(),
+		width: integer().notNull(),
+		height: integer().notNull(),
+		data: bytea().notNull(),
+		createdAt: createdAt(),
+	},
+	(t) => [index().on(t.readingId), ownRows(t.userId)],
 )
 
 /** One unit of recall in a reading, in reading order. `level` 1 to 3 nests sections into a tree. */

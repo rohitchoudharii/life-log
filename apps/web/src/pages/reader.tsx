@@ -50,8 +50,16 @@ function BlockView({ block }: { block: Block }) {
 			)
 		}
 		case 'image':
-			// Images are not stored yet; the reader keeps their description in place.
+			if (block.mediaId)
+				return (
+					<figure className="my-2">
+						<img src={`/media/${block.mediaId}`} alt={block.alt} width={block.width} height={block.height} loading="lazy" className="mx-auto h-auto max-w-full rounded-lg" />
+					</figure>
+				)
+			// An image that wasn't stored keeps its description in place.
 			return block.alt ? <p className="font-sans text-sm text-world-muted italic">Image: {block.alt}</p> : null
+		case 'page':
+			return <p className="font-sans text-xs text-world-muted">p. {block.number}</p>
 	}
 }
 
@@ -144,7 +152,7 @@ export function Reader({ readingId }: { readingId: string }) {
 					</Link>
 					<h1 className="text-3xl font-semibold tracking-tight md:text-4xl">{r.title}</h1>
 					<p className="font-sans text-sm text-world-muted">
-						{r.author && `${r.author} · `}
+						{r.author && `${r.author}${r.sourceUrl ? ' · ' : ''}`}
 						{r.sourceUrl && (
 							<a href={r.sourceUrl} target="_blank" rel="noopener noreferrer nofollow" className="underline underline-offset-2">
 								Open original

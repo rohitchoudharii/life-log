@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { ORPCError } from '@orpc/client'
 import { expect, type Page, test } from '@playwright/test'
 import { newMember } from './api'
 import { FAKE_SITE, GOOD_ANTHROPIC_KEY } from './env'
+import { blankPdf, testEpub } from '../apps/server/src/import/test-books'
 import { joinAs } from './session'
 
 async function addLink(page: Page, url: string) {
@@ -109,4 +111,63 @@ test('a long article with no headings gets AI headings with a key, and stays one
 	if (isMobile) await page.getByRole('button', { name: /^Contents/ }).click()
 	await page.getByRole('navigation', { name: 'Contents' }).getByRole('button', { name: 'Where it leads' }).click()
 	await expect(page.getByText(/^Paragraph 9\. Attention/)).toBeVisible()
+})
+
+const books = (name: string) => new URL(`../apps/server/src/import/fixtures/${name}`, import.meta.url).pathname
+const pickFile = (page: Page, file: string | { name: string; mimeType: string; buffer: Buffer }) =>
+	page.getByLabel('EPUB or PDF file').setInputFiles(file)
+
+test('an EPUB added as a file shows as importing, then opens to its chapters', async ({ page, isMobile }) => {
+	await joinAs(page)
+	await page.goto('/mind')
+	await pickFile(page, books('the-prince.epub'))
+	await expect(readings(page)).toHaveCount(1)
+	await expect(readings(page).getByRole('link', { name: /The Prince/ })).toBeVisible({ timeout: 30_000 })
+	await expect(readings(page)).toContainText('Niccolò Machiavelli')
+
+	await readings(page).getByRole('link').click()
+	await expect(page.getByRole('heading', { level: 1, name: 'The Prince' })).toBeVisible()
+	if (isMobile) await page.getByRole('button', { name: /^Contents/ }).click()
+	await page.getByRole('navigation', { name: 'Contents' }).getByRole('button', { name: 'II: Concerning Hereditary Principalities' }).click()
+	await expect(page.getByRole('heading', { level: 2, name: 'II: Concerning Hereditary Principalities' })).toBeVisible()
+
+	// The same file again is the same reading.
+	await page.goto('/mind')
+	await pickFile(page, books('the-prince.epub'))
+	await expect(page.getByRole('status')).toContainText('You already have this book.')
+	await expect(readings(page)).toHaveCount(1)
+})
+
+test("a book's images are stored and shown in the reader", async ({ page, isMobile }) => {
+	await joinAs(page)
+	await page.goto('/mind')
+	await pickFile(page, { name: 'With a figure.epub', mimeType: 'application/epub+zip', buffer: Buffer.from(testEpub({ 'OEBPS/images/fig.png': readFileSync(books('figure.png')) })) })
+	await expect(readings(page).getByRole('link', { name: /Test Book/ })).toBeVisible({ timeout: 30_000 })
+	await readings(page).getByRole('link').click()
+	if (isMobile) await page.getByRole('button', { name: /^Contents/ }).click()
+	await page.getByRole('navigation', { name: 'Contents' }).getByRole('button', { name: 'Chapter Two' }).click()
+	const figure = page.getByRole('img', { name: 'Figure' })
+	await expect(figure).toBeVisible()
+	expect(await figure.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(240)
+})
+
+test('a PDF shows its page numbers, and a file that is not a book is refused', async ({ page }) => {
+	await joinAs(page)
+	await page.goto('/mind')
+	await pickFile(page, { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('just some notes') })
+	await expect(page.getByRole('status')).toContainText('Life Log Club reads EPUB and PDF files. Choose one of those.')
+	await expect(page.getByText('Nothing to read yet.')).toBeVisible()
+
+	await pickFile(page, books('trump-v-anderson.pdf'))
+	await expect(readings(page).getByRole('link', { name: /Trump v. Anderson/ })).toBeVisible({ timeout: 30_000 })
+	await readings(page).getByRole('link').click()
+	await expect(page.getByText('p. 1', { exact: true })).toBeVisible()
+})
+
+test('a scanned PDF fails with a message saying so', async ({ page }) => {
+	await joinAs(page)
+	await page.goto('/mind')
+	await pickFile(page, { name: 'scan.pdf', mimeType: 'application/pdf', buffer: Buffer.from(blankPdf()) })
+	await expect(readings(page).getByRole('alert')).toHaveText("This PDF is scanned pages without text, so Life Log Club can't read it yet.", { timeout: 30_000 })
+	await expect(readings(page).getByRole('button', { name: 'Try again' })).toHaveCount(0)
 })

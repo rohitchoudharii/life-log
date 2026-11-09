@@ -1,15 +1,19 @@
-import { blockText, countWords, hasHeadings, type SectionDraft, splitSections } from '@life-log-club/domain'
+import { randomUUID } from 'node:crypto'
+import { type Block, blockText, countWords, hasHeadings, type SectionDraft, splitSections } from '@life-log-club/domain'
 import { and, eq, isNull, ne } from 'drizzle-orm'
 import { asUser } from '../db/client'
-import { readings, sections } from '../db/schema'
+import { media, readingFiles, readings, sections } from '../db/schema'
+import { bookKind, parseBook } from './book'
 import { decodeHtml, ExtractError, extractArticle, SIGN_IN } from './extract'
 import { FetchError, safeFetch, TOO_LARGE } from './fetch'
 import { addAiHeadings } from './headings'
+import { type PreparedImage, prepareImage } from './media'
 
 /** Sent when no other message fits, such as a bug; the member can only try again. */
 export const UNEXPECTED = 'Something went wrong while adding this page. Try again in a minute.'
 
 export const NOT_A_LINK = "That isn't a web address. Check the link and try again."
+export const NOT_A_BOOK = 'Life Log Club reads EPUB and PDF files. Choose one of those.'
 const MAX_SECTIONS = 2000
 /** An article this long with no headings gets AI headings; a shorter one is one section (issue #1). */
 const AI_HEADINGS_MIN_WORDS = 1000
@@ -60,29 +64,74 @@ async function readPage(url: string) {
 	return { article, sourceUrl: article.canonicalUrl ?? normaliseUrl(page.url) ?? page.url }
 }
 
+/** What every source turns into before it is stored: the same shape for links and files. */
+type Imported = {
+	title: string
+	author: string | null
+	publishedAt: Date | null
+	/** Links only: the page's own address, used to find the same page under another link. */
+	sourceUrl: string | null
+	blocks: Block[]
+	/** Re-encoded images, by the id their image blocks now point at. */
+	images: Map<string, PreparedImage>
+}
+
+async function readLink(userId: string, url: string): Promise<Imported> {
+	const { article, sourceUrl } = await readPage(url)
+	const words = article.blocks.reduce((n, b) => n + countWords(blockText(b)), 0)
+	const blocks = !hasHeadings(article.blocks) && words >= AI_HEADINGS_MIN_WORDS ? await addAiHeadings(userId, article.blocks) : article.blocks
+	return { ...article, sourceUrl, blocks, images: new Map() }
+}
+
+const IMAGE_BATCH = 4
+
+/** Reads the member's uploaded file, and re-encodes the book's own images for the reader. */
+async function readFile(userId: string, readingId: string): Promise<Imported> {
+	const [file] = await asUser(userId, (tx) => tx.select().from(readingFiles).where(eq(readingFiles.readingId, readingId)))
+	const kind = file && bookKind(file.data)
+	if (!kind) throw new ExtractError(NOT_A_BOOK)
+	const book = await parseBook(kind, new Uint8Array(file.data), file.name.replace(/\.(epub|pdf)$/i, '') || 'Untitled')
+	const prepared = new Map<string, PreparedImage | null>()
+	for (let k = 0; k < book.images.length; k += IMAGE_BATCH)
+		await Promise.all(book.images.slice(k, k + IMAGE_BATCH).map(async ([src, bytes]) => prepared.set(src, await prepareImage(bytes))))
+	const images = new Map<string, PreparedImage>()
+	const ids = new Map<string, string>()
+	const blocks = book.blocks.flatMap((b): Block[] => {
+		if (b.type !== 'image') return [b]
+		const image = b.src ? prepared.get(b.src) : null
+		// An image that can't be shown (an icon, an SVG) keeps its description, if it has one.
+		if (!image) return b.alt ? [{ type: 'image', mediaId: null, alt: b.alt }] : []
+		let id = ids.get(b.src!)
+		if (!id) {
+			id = randomUUID()
+			ids.set(b.src!, id)
+			images.set(id, image)
+		}
+		return [{ type: 'image', mediaId: id, alt: b.alt, width: image.width, height: image.height }]
+	})
+	return { title: book.title, author: book.author, publishedAt: null, sourceUrl: null, blocks, images }
+}
+
 /**
- * The import job for one link: fetches the page, finds its article, splits it into sections,
- * and stores them, all as the member who added it. A long article with no headings first gets
- * headings from the member's AI, when they have a key. Safe to run again: a reading that is no
- * longer importing is left alone, and its sections are stored in the same transaction that sets
- * it ready. When the page turns out to be one the member already has under another link, this
- * reading is merged into that one instead of storing a copy.
+ * The import job for one reading: reads the link's page or the uploaded file, splits it into
+ * sections, and stores them with its images, all as the member who added it. A long article with
+ * no headings first gets headings from the member's AI, when they have a key. Safe to run again:
+ * a reading that is no longer importing is left alone, and its sections and images are stored in
+ * the same transaction that sets it ready. When a link turns out to be a page the member already
+ * has under another link, this reading is merged into that one instead of storing a copy.
  *
  * A failure the site may get over (no answer, a 5xx) is thrown so the job is retried, until
  * `lastTry`; every other failure marks the reading failed with its message.
  */
 export async function importReading({ readingId, userId }: { readingId: string; userId: string }, lastTry = true) {
 	const [reading] = await asUser(userId, (tx) => tx.select().from(readings).where(eq(readings.id, readingId)))
-	if (!reading?.requestedUrl || reading.status !== 'importing') return
+	if (reading?.status !== 'importing') return
 
-	let page
+	let imported: Imported
 	let drafts: SectionDraft[]
 	try {
-		page = await readPage(reading.requestedUrl)
-		const { blocks } = page.article
-		const words = blocks.reduce((n, b) => n + countWords(blockText(b)), 0)
-		if (!hasHeadings(blocks) && words >= AI_HEADINGS_MIN_WORDS) page.article.blocks = await addAiHeadings(userId, blocks)
-		drafts = splitSections(page.article.blocks, page.article.title)
+		imported = reading.source === 'url' ? await readLink(userId, reading.requestedUrl!) : await readFile(userId, readingId)
+		drafts = splitSections(imported.blocks, imported.title)
 		if (drafts.length > MAX_SECTIONS) throw new ExtractError(TOO_LARGE)
 	} catch (error) {
 		const known = error instanceof FetchError || error instanceof ExtractError
@@ -91,28 +140,43 @@ export async function importReading({ readingId, userId }: { readingId: string; 
 		await fail(userId, readingId, known ? error.message : UNEXPECTED)
 		return
 	}
-	const { article, sourceUrl } = page
+	const { sourceUrl } = imported
 
 	await asUser(userId, async (tx) => {
 		const [current] = await tx.select().from(readings).where(eq(readings.id, readingId)).for('update')
 		if (current?.status !== 'importing') return
-		const [same] = await tx
-			.select({ id: readings.id })
-			.from(readings)
-			.where(
-				and(
-					eq(readings.sourceUrl, sourceUrl),
-					ne(readings.id, readingId),
-					eq(readings.status, 'ready'),
-					isNull(readings.mergedInto),
-					isNull(readings.deletedAt),
-				),
-			)
-			.limit(1)
+		const [same] = sourceUrl
+			? await tx
+					.select({ id: readings.id })
+					.from(readings)
+					.where(
+						and(
+							eq(readings.sourceUrl, sourceUrl),
+							ne(readings.id, readingId),
+							eq(readings.status, 'ready'),
+							isNull(readings.mergedInto),
+							isNull(readings.deletedAt),
+						),
+					)
+					.limit(1)
+			: []
 		if (same) {
 			await tx.update(readings).set({ status: 'ready', sourceUrl, mergedInto: same.id }).where(eq(readings.id, readingId))
 			return
 		}
+		if (imported.images.size)
+			await tx.insert(media).values(
+				[...imported.images].map(([id, image]) => ({
+					id,
+					userId,
+					readingId,
+					contentType: 'image/webp',
+					bytes: image.data.length,
+					width: image.width,
+					height: image.height,
+					data: image.data,
+				})),
+			)
 		await tx.insert(sections).values(
 			drafts.map((s, position) => ({
 				userId,
@@ -130,9 +194,9 @@ export async function importReading({ readingId, userId }: { readingId: string; 
 			.set({
 				status: 'ready',
 				error: null,
-				title: article.title,
-				author: article.author,
-				publishedAt: article.publishedAt,
+				title: imported.title,
+				author: imported.author,
+				publishedAt: imported.publishedAt,
 				sourceUrl,
 				wordCount: drafts.reduce((n, s) => n + s.wordCount, 0),
 			})

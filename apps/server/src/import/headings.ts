@@ -7,6 +7,7 @@ const MAX_WORDS = 50_000
 
 /** What the AI reads for one block. Code is shortened: its first lines say what it is about. */
 function promptText(block: Block) {
+	if (block.type === 'page') return `(page ${block.number})`
 	if (block.type === 'image') return `(image${block.alt ? `: ${block.alt}` : ''})`
 	if (block.type === 'code') return `(code) ${block.text.slice(0, 400)}`
 	return blockText(block)

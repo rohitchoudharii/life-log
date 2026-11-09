@@ -52,6 +52,15 @@ describe('splitSections', () => {
 		])
 	})
 
+	it('keeps a page marker with the section it starts, and no section of page markers alone', () => {
+		const page = (number: number): Block => ({ type: 'page', number })
+		const sections = splitSections([page(1), h(1, 'One'), p(5), page(2), h(1, 'Two'), p(5), page(3)], 'Doc')
+		expect(sections.map((s) => [s.title, s.blocks.map((b) => b.type)])).toEqual([
+			['One', ['page', 'paragraph']],
+			['Two', ['page', 'paragraph', 'page']],
+		])
+	})
+
 	it('never cuts inside a block', () => {
 		const sections = splitSections([p(3000), p(10)], 'Essay')
 		expect(sections.map((s) => s.wordCount)).toEqual([3000, 10])

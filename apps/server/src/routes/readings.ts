@@ -1,8 +1,10 @@
+import { createHash } from 'node:crypto'
 import { ORPCError } from '@orpc/server'
-import { and, asc, desc, eq, isNull, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, isNull, or, type SQL, sql } from 'drizzle-orm'
 import { asUser, type Tx } from '../db/client'
-import { readings, sections } from '../db/schema'
-import { NOT_A_LINK, normaliseUrl } from '../import/reading'
+import { readingFiles, readings, sections } from '../db/schema'
+import { bookKind } from '../import/book'
+import { NOT_A_BOOK, NOT_A_LINK, normaliseUrl } from '../import/reading'
 import { enqueueImport } from '../jobs'
 import { authed } from '../orpc'
 
@@ -39,40 +41,72 @@ async function live(tx: Tx, id: string) {
 	return row
 }
 
+type NewReading = typeof readings.$inferInsert
+
+/**
+ * Adds a reading as importing, or finds the one the member already has: a retry with the same
+ * id, or the same link or file (`same`). A removed reading is restored, and a failed one is
+ * imported again. `created` runs only when the reading is new, in the same transaction. The
+ * import job is queued after the commit, so it always finds the reading.
+ */
+async function addReading(userId: string, values: NewReading, same: SQL, created?: (tx: Tx) => Promise<unknown>) {
+	const { row, queue } = await asUser(userId, async (tx) => {
+		const [inserted] = await tx.insert(readings).values(values).onConflictDoNothing().returning()
+		if (inserted) {
+			await created?.(tx)
+			return { row: { reading: inserted, sectionCount: 0 }, queue: true }
+		}
+		// An id that belongs to someone else is invisible here, so it can't be read or overwritten.
+		const [found] = await tx
+			.select({ id: readings.id })
+			.from(readings)
+			.where(or(eq(readings.id, values.id), same))
+			.limit(1)
+		const existing = found && (await resolve(tx, found.id))
+		if (!existing) throw new ORPCError('CONFLICT', { message: 'That reading id is taken. Try again.' })
+		const { reading } = existing
+		const retry = reading.status === 'failed'
+		if (!reading.deletedAt && !retry) return { row: existing, queue: false }
+		const [updated] = await tx
+			.update(readings)
+			.set({ deletedAt: null, ...(retry && { status: 'importing' as const, error: null }) })
+			.where(eq(readings.id, reading.id))
+			.returning()
+		return { row: { reading: updated!, sectionCount: existing.sectionCount }, queue: retry }
+	})
+	if (queue) await enqueueImport({ readingId: row.reading.id, userId })
+	return toReading(row)
+}
+
 export const readingsRoutes = {
-	add: authed.readings.add.handler(async ({ input, context }) => {
+	add: authed.readings.add.handler(({ input, context }) => {
 		const userId = context.user.id
 		const url = normaliseUrl(input.url)
 		if (!url) throw new ORPCError('BAD_REQUEST', { message: NOT_A_LINK })
-		const { row, queue } = await asUser(userId, async (tx) => {
-			const [created] = await tx
-				.insert(readings)
-				.values({ id: input.id, userId, title: new URL(url).hostname, source: 'url', requestedUrl: url })
-				.onConflictDoNothing()
-				.returning()
-			if (created) return { row: { reading: created, sectionCount: 0 }, queue: true }
-			// A retry of this add, or a link the member already has. An id that belongs to someone
-			// else is invisible here, so it can't be read or overwritten.
-			const [same] = await tx
-				.select({ id: readings.id })
-				.from(readings)
-				.where(or(eq(readings.id, input.id), eq(readings.requestedUrl, url)))
-				.limit(1)
-			const existing = same && (await resolve(tx, same.id))
-			if (!existing) throw new ORPCError('CONFLICT', { message: 'That reading id is taken. Try again.' })
-			const { reading } = existing
-			const retry = reading.status === 'failed'
-			if (!reading.deletedAt && !retry) return { row: existing, queue: false }
-			const [updated] = await tx
-				.update(readings)
-				.set({ deletedAt: null, ...(retry && { status: 'importing' as const, error: null }) })
-				.where(eq(readings.id, reading.id))
-				.returning()
-			return { row: { reading: updated!, sectionCount: existing.sectionCount }, queue: retry }
-		})
-		// Queued after the transaction commits, so the job always finds the reading.
-		if (queue) await enqueueImport({ readingId: row.reading.id, userId })
-		return toReading(row)
+		return addReading(userId, { id: input.id, userId, title: new URL(url).hostname, source: 'url', requestedUrl: url }, eq(readings.requestedUrl, url))
+	}),
+
+	addFile: authed.readings.addFile.handler(async ({ input, context }) => {
+		const userId = context.user.id
+		const data = Buffer.from(await input.file.arrayBuffer())
+		const kind = bookKind(data)
+		if (!kind) throw new ORPCError('BAD_REQUEST', { message: NOT_A_BOOK })
+		const fileHash = createHash('sha256').update(data).digest('hex')
+		const name = input.file.name.slice(0, 200) || (kind === 'pdf' ? 'Untitled.pdf' : 'Untitled.epub')
+		return addReading(
+			userId,
+			{ id: input.id, userId, title: name.replace(/\.(epub|pdf)$/i, '') || name, source: kind === 'pdf' ? 'pdf_upload' : 'epub', fileHash },
+			eq(readings.fileHash, fileHash),
+			(tx) =>
+				tx.insert(readingFiles).values({
+					readingId: input.id,
+					userId,
+					name,
+					contentType: kind === 'pdf' ? 'application/pdf' : 'application/epub+zip',
+					size: data.length,
+					data,
+				}),
+		)
 	}),
 
 	list: authed.readings.list.handler(({ context }) =>

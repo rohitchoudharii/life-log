@@ -52,7 +52,8 @@ export async function startJobs() {
 
 	// Retries wait 10, 20 seconds: long enough for a site that didn't answer to come back. A
 	// worker that dies mid-import (a restart) stops sending heartbeats, so its job is retried.
-	const options = { retryLimit: 2, retryDelay: 10, retryBackoff: true, expireInSeconds: 5 * 60, heartbeatSeconds: 30 }
+	// A big book takes up to 2 minutes to parse, plus its images.
+	const options = { retryLimit: 2, retryDelay: 10, retryBackoff: true, expireInSeconds: 15 * 60, heartbeatSeconds: 30 }
 	if (await boss.getQueue(IMPORT)) await boss.updateQueue(IMPORT, options)
 	else await boss.createQueue(IMPORT, { policy: 'stately', ...options })
 	await boss.work(IMPORT, { localConcurrency: 4, includeMetadata: true }, async ([job]: JobWithMetadata<ImportJob>[]) => {

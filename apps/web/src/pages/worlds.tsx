@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import { useLogEntry } from '../entry-actions'
 import { EntryList } from '../entry-list'
 import { isToday, MOODS, when } from '../entries'
-import { AddReading, ReadingNow } from '../readings'
+import { AddReading, ReadingNow, useFileDrop } from '../readings'
 import { orpc } from '../rpc'
 import { useOpenLog } from '../shell'
 
@@ -52,8 +52,14 @@ function Stat({ label, value, sub, testId }: { label: string; value: ReactNode; 
 export function Mind() {
 	const due = useQuery(orpc.review.due.queryOptions({ input: { limit: 3 } }))
 	const lessons = useQuery(orpc.entries.list.queryOptions({ input: { pillar: 'mind', limit: 50 } }))
+	const drop = useFileDrop()
 	return (
-		<div className="grid gap-8">
+		<div className="relative grid gap-8" {...drop.handlers}>
+			{drop.dragging && (
+				<div className="pointer-events-none absolute -inset-3 z-10 grid place-items-center rounded-3xl border-2 border-dashed border-world-accent bg-world/85 text-xl">
+					Drop the EPUB or PDF to add it
+				</div>
+			)}
 			<Hero title="The reading room" sub="Read, then recall. Ideas and lessons come back until they stick.">
 				<LogButton type="lesson">Log a lesson</LogButton>
 			</Hero>

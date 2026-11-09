@@ -61,7 +61,9 @@ Paste a link into **Add a reading** on Mind. The reading shows at once as "Impor
 - The server fetches only public web pages. It refuses private and local addresses, checked again on every redirect and when it connects, and pages over 5 MB.
 - The same link added twice is one reading, and so are two links to the same page.
 - A page behind a sign-in fails with a message. The Chrome extension will capture those later.
-- Import tests use saved real pages in `apps/server/src/import/fixtures/`. The e2e tests fetch from a local test site (`e2e/fake-site.ts`).
+- **Add a file** (or drop one on Mind) adds an EPUB or PDF of up to 25 MB. The file is kept, its images are stored as WebP and shown only to the member who added it, and it is read in a worker thread so a large book can't stall the server. DRM-protected books and scanned PDFs are refused with a message.
+- A long article with no headings of its own gets headings from the member's AI key. The AI only says where headings go; the text never changes.
+- Import tests use saved real pages and books in `apps/server/src/import/fixtures/`. The e2e tests fetch from a local test site (`e2e/fake-site.ts`).
 
 ## Review
 
