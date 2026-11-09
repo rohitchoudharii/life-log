@@ -45,6 +45,7 @@ function useAddReading() {
 				partOfBook: null,
 				source: 'url',
 				readAt: null,
+				position: null,
 				book: null,
 				createdAt: new Date(),
 			}
@@ -93,6 +94,7 @@ export function useAddFile() {
 				partOfBook: null,
 				source: /\.pdf$/i.test(file.name) ? 'pdf_upload' : 'epub',
 				readAt: null,
+				position: null,
 				book: null,
 				createdAt: new Date(),
 			}
@@ -249,6 +251,13 @@ function ReadingItem({ reading }: { reading: Reading }) {
 							.join(' · ')}
 					</p>
 				</Link>
+				{reading.position && !reading.readAt && (
+					<div className="border-t border-world-line px-4 py-3">
+						<Link to="/mind/read/$readingId" params={{ readingId: reading.id }} className={`${quiet} inline-block`}>
+							Continue
+						</Link>
+					</div>
+				)}
 				{reading.partOfBook && (
 					<div className="flex flex-wrap items-center justify-between gap-2 border-t border-world-line px-4 py-3 font-sans text-sm">
 						<p className="text-world-muted">

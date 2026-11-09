@@ -5,6 +5,7 @@ import {
 	customType,
 	bigint,
 	boolean,
+	date,
 	index,
 	integer,
 	jsonb,
@@ -272,6 +273,10 @@ export const readings = pgTable(
 		wordCount: integer().notNull().default(0),
 		/** When the member reached the end of the reading's last section. */
 		readAt: timestamp({ withTimezone: true }),
+		/** Where the member stopped: the section, and the block at the top of the screen. Continue opens here. */
+		position: jsonb().$type<{ sectionId: string; block: number }>(),
+		/** When a position was last saved, so the reading the member last had open can be found. */
+		lastOpenedAt: timestamp({ withTimezone: true }),
 		/**
 		 * For a chapter page of a web book: the book it belongs to, which the member can add whole.
 		 * `pages` is how many pages its contents list names.
@@ -290,6 +295,7 @@ export const readings = pgTable(
 		uniqueIndex().on(t.userId, t.requestedUrl).where(sql`${t.requestedUrl} is not null`),
 		uniqueIndex().on(t.userId, t.fileHash).where(sql`${t.fileHash} is not null`),
 		index().on(t.userId, t.sourceUrl),
+		index().on(t.userId, t.lastOpenedAt.desc()),
 		ownRows(t.userId),
 	],
 )
@@ -434,9 +440,29 @@ export const sections = pgTable(
 		notes: jsonb().$type<Note[]>().notNull().default([]),
 		/** For a web book, the page the section came from; null when it is the reading's own page or file. */
 		sourceUrl: text(),
+		/** The first time the member spent 30 active seconds in this section (`readings.seen`). */
+		firstSeenAt: timestamp({ withTimezone: true }),
+		/** The first time the end of this section was on the member's screen. */
+		readAt: timestamp({ withTimezone: true }),
 		createdAt: createdAt(),
 	},
 	(t) => [uniqueIndex().on(t.readingId, t.position), index().on(t.readingId, t.chapter), ownRows(t.userId)],
+)
+
+/** Active seconds the member spent in a reading on one day (UTC), added to by the reader's heartbeat. */
+export const readingTime = pgTable(
+	'reading_time',
+	{
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		readingId: uuid()
+			.notNull()
+			.references(() => readings.id, { onDelete: 'cascade' }),
+		day: date().notNull(),
+		seconds: integer().notNull(),
+	},
+	(t) => [primaryKey({ columns: [t.userId, t.readingId, t.day] }), ownRows(t.userId)],
 )
 
 /** One row per call to a member's AI provider: what it was for and the tokens it used. */

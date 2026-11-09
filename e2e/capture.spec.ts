@@ -39,7 +39,7 @@ test('saving the same page again replaces it, resets it to not read, and keeps o
 	const { client } = await newMember()
 	const first = await client.readings.capture({ id: randomUUID(), url: chapterUrl, html: await page(false), bookId: null, images: [] })
 	const preview = await client.readings.get({ id: first.reading.id })
-	await client.readings.markRead({ id: first.reading.id })
+	await client.readings.markRead({ id: first.reading.id, sectionId: preview.contents.at(-1)!.id })
 	expect((await client.readings.get({ id: first.reading.id })).readAt).not.toBeNull()
 
 	const again = await client.readings.capture({ id: randomUUID(), url: `${chapterUrl}?utm_source=mail`, html: await page(true), bookId: null, images: [] })

@@ -47,6 +47,16 @@ export type AiKey = z.infer<typeof AiKey>
 /** A `reference` section (a bibliography) is kept to read, with no questions and outside progress. */
 const SectionKind = z.enum(['body', 'reference'])
 
+/** A place in a reading: a section, and the block of it at the top of the screen (from 0). */
+export const ReadingPosition = z.object({ sectionId: z.uuid(), block: z.int().min(0) })
+export type ReadingPosition = z.infer<typeof ReadingPosition>
+
+/**
+ * Active seconds in one section before it counts as seen: then its key ideas are worth writing.
+ * The reader also sends a heartbeat of this many seconds to `readings.seen` while it is read.
+ */
+export const SEEN_SECONDS = 30
+
 export const Reading = z.object({
 	id: z.uuid(),
 	title: z.string(),
@@ -72,6 +82,8 @@ export const Reading = z.object({
 	source: z.enum(['url', 'pdf_url', 'web_book', 'web_capture', 'epub', 'pdf_upload']),
 	/** When the member reached the end of its last section. */
 	readAt: z.date().nullable(),
+	/** Where the member stopped reading, which opening the reading goes back to; null before they open it. */
+	position: ReadingPosition.nullable(),
 	/** The member's book this reading is a chapter of. */
 	book: z.object({ id: z.uuid(), title: z.string() }).nullable(),
 	createdAt: z.date(),
@@ -105,6 +117,8 @@ export const ReadingWithContents = Reading.extend({
 			aiTitle: z.boolean(),
 			wordCount: z.int(),
 			kind: SectionKind,
+			/** When the end of the section was first on the member's screen. */
+			readAt: z.date().nullable(),
 		}),
 	),
 })
@@ -285,8 +299,18 @@ export const contract = {
 				bookWords: z.int().nullable(),
 			}),
 		),
-		/** Marks the reading read: the member reached the end of its last section. The first time counts. */
-		markRead: oc.input(EntryId).output(Ok),
+		/**
+		 * Marks a section read: its end was on the member's screen. Reaching the end of the last
+		 * section marks the whole reading read. The first time counts.
+		 */
+		markRead: oc.input(z.object({ id: z.uuid(), sectionId: z.uuid() })).output(Ok),
+		/** Saves where the member is in a reading, which opening it next time goes back to. The last save wins. */
+		savePosition: oc.input(ReadingPosition.extend({ id: z.uuid() })).output(Ok),
+		/**
+		 * A heartbeat while the member reads a section: `seconds` of active reading, sent every
+		 * `SEEN_SECONDS`. The first one marks the section seen; each adds to the day's reading time.
+		 */
+		seen: oc.input(z.object({ sectionId: z.uuid(), seconds: z.int().min(1).max(120) })).output(Ok),
 	},
 	books: {
 		/** Makes an empty book. The client picks the id, so a retry makes one book. */

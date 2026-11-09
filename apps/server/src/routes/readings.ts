@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { ORPCError } from '@orpc/server'
 import { and, asc, desc, eq, inArray, isNull, or, type SQL, sql } from 'drizzle-orm'
 import { asUser, type Tx } from '../db/client'
-import { aiKeys, bookChapters, books, media, readingFiles, readings, sections } from '../db/schema'
+import { aiKeys, bookChapters, books, media, readingFiles, readings, readingTime, sections } from '../db/schema'
 import { bookKind } from '../import/book'
 import { type Captured, readCapture } from '../import/capture'
 import { ExtractError } from '../import/extract'
@@ -44,6 +44,7 @@ export const toReading = ({ reading: r, sectionCount, progress, book }: Row) => 
 	partOfBook: r.partOfBook && { title: r.partOfBook.title, pages: r.partOfBook.pages },
 	source: r.source,
 	readAt: r.readAt,
+	position: r.position,
 	book,
 	createdAt: r.createdAt,
 })
@@ -171,7 +172,7 @@ export const readingsRoutes = {
 				await tx.select({ id: readings.id }).from(readings).where(eq(readings.id, readingId)).for('update')
 				await tx
 					.update(readings)
-					.set({ ...content, readAt: null, deletedAt: null, partOfBook: null })
+					.set({ ...content, readAt: null, position: null, deletedAt: null, partOfBook: null })
 					.where(eq(readings.id, readingId))
 			} else {
 				const [inserted] = await tx
@@ -308,6 +309,7 @@ export const readingsRoutes = {
 					aiTitle: sections.aiTitle,
 					wordCount: sections.wordCount,
 					kind: sections.kind,
+					readAt: sections.readAt,
 				})
 				.from(sections)
 				.where(eq(sections.readingId, row.reading.id))
@@ -361,13 +363,64 @@ export const readingsRoutes = {
 	markRead: authed.readings.markRead.handler(({ input, context }) =>
 		asUser(context.user.id, async (tx) => {
 			const row = await live(tx, input.id)
-			await tx
-				.update(readings)
-				.set({ readAt: new Date() })
-				.where(and(eq(readings.id, row.reading.id), isNull(readings.readAt)))
+			const [section] = await tx
+				.update(sections)
+				.set({ readAt: sql`coalesce(${sections.readAt}, now())` })
+				.where(and(eq(sections.id, input.sectionId), eq(sections.readingId, row.reading.id)))
+				.returning({ position: sections.position })
+			if (!section) throw new ORPCError('NOT_FOUND', { message: 'That section does not exist. It may have been removed.' })
+			const [last] = await tx
+				.select({ position: sections.position })
+				.from(sections)
+				.where(eq(sections.readingId, row.reading.id))
+				.orderBy(desc(sections.position))
+				.limit(1)
+			if (section.position === last?.position)
+				await tx
+					.update(readings)
+					.set({ readAt: new Date() })
+					.where(and(eq(readings.id, row.reading.id), isNull(readings.readAt)))
 			return { ok: true as const }
 		}),
 	),
+
+	savePosition: authed.readings.savePosition.handler(({ input, context }) =>
+		asUser(context.user.id, async (tx) => {
+			const row = await live(tx, input.id)
+			// A section of another reading would be a place this reading can't open.
+			const [section] = await tx
+				.select({ id: sections.id })
+				.from(sections)
+				.where(and(eq(sections.id, input.sectionId), eq(sections.readingId, row.reading.id)))
+			if (!section) throw new ORPCError('NOT_FOUND', { message: 'That section does not exist. It may have been removed.' })
+			await tx
+				.update(readings)
+				.set({ position: { sectionId: input.sectionId, block: input.block }, lastOpenedAt: new Date() })
+				.where(eq(readings.id, row.reading.id))
+			return { ok: true as const }
+		}),
+	),
+
+	seen: authed.readings.seen.handler(({ input, context }) => {
+		const userId = context.user.id
+		return asUser(userId, async (tx) => {
+			const [section] = await tx
+				.update(sections)
+				.set({ firstSeenAt: sql`coalesce(${sections.firstSeenAt}, now())` })
+				.where(eq(sections.id, input.sectionId))
+				.returning({ readingId: sections.readingId })
+			if (!section) throw new ORPCError('NOT_FOUND', { message: 'That section does not exist. It may have been removed.' })
+			// Days are UTC until members can set their time zone.
+			await tx
+				.insert(readingTime)
+				.values({ userId, readingId: section.readingId, day: sql`(now() at time zone 'utc')::date`, seconds: input.seconds })
+				.onConflictDoUpdate({
+					target: [readingTime.userId, readingTime.readingId, readingTime.day],
+					set: { seconds: sql`${readingTime.seconds} + excluded.seconds` },
+				})
+			return { ok: true as const }
+		})
+	}),
 
 	restore: authed.readings.restore.handler(async ({ input, context }) => {
 		const userId = context.user.id

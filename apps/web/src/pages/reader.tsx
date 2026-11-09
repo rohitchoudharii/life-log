@@ -1,8 +1,8 @@
-import type { ReadingWithContents } from '@life-log-club/contract'
+import { type ReadingPosition, type ReadingWithContents, SEEN_SECONDS } from '@life-log-club/contract'
 import type { Block, Note, NoteRef, Link as TextLink } from '@life-log-club/domain'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { importingText } from '../readings'
 import { client, errorMessage, orpc } from '../rpc'
 
@@ -179,8 +179,29 @@ function EndMark({ onEnd }: { onEnd: () => void }) {
 	return <div ref={mark} aria-hidden className="h-px" />
 }
 
-/** One section's text. `onEnd` runs when the member reaches its end, once its text is shown. */
-function SectionView({ id, readingId, size, onEnd }: { id: string; readingId: string; size: string; onEnd?: () => void }) {
+/** How far below the top of the window the text starts, under the sticky header. */
+const TOP = 80
+
+/** The place on screen: the shown section, and its first block not yet scrolled past. Null while it loads. */
+function placeOnScreen(): ReadingPosition | null {
+	const article = document.querySelector<HTMLElement>('article[data-section]')
+	if (!article) return null
+	const blocks = [...article.querySelectorAll<HTMLElement>('[data-block]')]
+	const top = blocks.find((b) => b.getBoundingClientRect().bottom > TOP) ?? blocks.at(-1)
+	return { sectionId: article.dataset.section!, block: Number(top?.dataset.block ?? 0) }
+}
+
+/**
+ * One section's text. `startAt` is the block to open at, scrolled to once the text is shown.
+ * `onEnd` runs when the member reaches its end.
+ */
+function SectionView({
+	id,
+	readingId,
+	size,
+	startAt,
+	onEnd,
+}: { id: string; readingId: string; size: string; startAt?: number; onEnd?: () => void }) {
 	const queryClient = useQueryClient()
 	const section = useQuery({
 		...orpc.readings.section.queryOptions({ input: { id } }),
@@ -196,6 +217,13 @@ function SectionView({ id, readingId, size, onEnd }: { id: string; readingId: st
 	}, [pending, queryClient, readingId])
 
 	const [openNote, setOpenNote] = useState<Note | null>(null)
+	const loaded = Boolean(section.data)
+	const opened = useRef(false)
+	useEffect(() => {
+		if (!loaded || opened.current) return
+		opened.current = true
+		if (startAt) document.querySelector(`[data-section="${id}"] [data-block="${startAt}"]`)?.scrollIntoView({ block: 'start' })
+	}, [loaded, id, startAt])
 
 	if (section.isError) return <p role="alert">{errorMessage(section.error)}</p>
 	if (!section.data) return <p className="text-world-muted">Loading…</p>
@@ -208,13 +236,16 @@ function SectionView({ id, readingId, size, onEnd }: { id: string; readingId: st
 				? "Heading added by AI. The text is the author's."
 				: null
 	return (
-		<article className="grid gap-4 leading-relaxed" style={{ fontSize: size }}>
+		<article data-section={id} className="grid gap-4 leading-relaxed" style={{ fontSize: size }}>
 			<header>
 				<h2 className="text-[1.35em] font-semibold tracking-tight">{section.data.title}</h2>
 				{note && <p className={`font-sans text-xs text-world-muted ${section.data.headingsPending ? 'animate-pulse' : ''}`}>{note}</p>}
 			</header>
 			{section.data.blocks.map((b, i) => (
-				<BlockView key={i} block={b} marks={marks} />
+				// The block a saved position names, and where opening at it puts the top of the screen.
+				<div key={i} data-block={i} style={{ scrollMarginTop: TOP }}>
+					<BlockView block={b} marks={marks} />
+				</div>
 			))}
 			{openNote && <NoteDialog note={openNote} onClose={() => setOpenNote(null)} />}
 			{onEnd && <EndMark key={id} onEnd={onEnd} />}
@@ -309,15 +340,74 @@ export function Reader({ readingId }: { readingId: string }) {
 	const [width, setWidth] = useChoice('reader-width', WIDTHS, 'Medium')
 	const [size, setSize] = useChoice('reader-size', SIZES, 'Medium')
 	const queryClient = useQueryClient()
-	// Reaching the end of the last section marks the reading read, which a book counts.
+	// Reaching the end of a section marks it read; the end of the last one marks the reading read, which a book counts.
 	const markRead = useMutation({
-		mutationFn: (id: string) => client.readings.markRead({ id }),
+		mutationFn: (at: { id: string; sectionId: string }) => client.readings.markRead(at),
 		onSuccess: () =>
 			Promise.all([queryClient.invalidateQueries({ queryKey: orpc.readings.key() }), queryClient.invalidateQueries({ queryKey: orpc.books.key() })]),
 	})
 	// The same query SectionView makes: a web book's section opens the page it came from.
 	const sectionId = reading.data?.status === 'ready' ? reading.data.contents[current]?.id : undefined
 	const shown = useQuery({ ...orpc.readings.section.queryOptions({ input: { id: sectionId ?? '' } }), enabled: Boolean(sectionId) })
+	const readyId = reading.data?.status === 'ready' ? reading.data.id : undefined
+
+	// Opens where the member stopped. It waits for a fresh copy of the reading, because the cached
+	// one may hold a position from before the member last read on. Placed before paint, so the
+	// first section doesn't flash on screen.
+	const [start, setStart] = useState<ReadingPosition | null>(null)
+	const placed = useRef(false)
+	useLayoutEffect(() => {
+		const data = reading.data
+		if (placed.current || data?.status !== 'ready' || !reading.isFetchedAfterMount) return
+		placed.current = true
+		const at = data.position
+		const i = at ? data.contents.findIndex((s) => s.id === at.sectionId) : -1
+		if (i < 0) return
+		setCurrent(i)
+		setStart(at)
+	}, [reading.data, reading.isFetchedAfterMount])
+
+	// Saves the place 2 seconds after scrolling stops. Two tabs open: the last save wins.
+	useEffect(() => {
+		if (!readyId) return
+		let timer: number | undefined
+		const onScroll = () => {
+			window.clearTimeout(timer)
+			timer = window.setTimeout(() => {
+				const at = placeOnScreen()
+				if (at) void client.readings.savePosition({ id: readyId, ...at })
+			}, 2000)
+		}
+		window.addEventListener('scroll', onScroll, { passive: true })
+		return () => {
+			window.clearTimeout(timer)
+			window.removeEventListener('scroll', onScroll)
+		}
+	}, [readyId])
+
+	// A heartbeat for every SEEN_SECONDS the member spends in a section with some activity (a
+	// scroll, a key or the pointer in the last minute). The first one marks the section seen.
+	useEffect(() => {
+		if (!sectionId) return
+		let lastActive = Date.now()
+		let active = 0
+		const touch = () => {
+			lastActive = Date.now()
+		}
+		const events = ['scroll', 'keydown', 'pointermove', 'pointerdown'] as const
+		for (const e of events) window.addEventListener(e, touch, { passive: true })
+		const tick = window.setInterval(() => {
+			if (document.hidden || Date.now() - lastActive > 60_000) return
+			active += 1
+			if (active < SEEN_SECONDS) return
+			active = 0
+			void client.readings.seen({ sectionId, seconds: SEEN_SECONDS })
+		}, 1000)
+		return () => {
+			window.clearInterval(tick)
+			for (const e of events) window.removeEventListener(e, touch)
+		}
+	}, [sectionId])
 
 	// A link that turned out to be a page the member already has opens that reading.
 	const keptId = reading.data?.id
@@ -343,8 +433,11 @@ export function Reader({ readingId }: { readingId: string }) {
 	const original = shown.data?.sourceUrl ?? r.sourceUrl
 	const pick = (i: number) => {
 		setCurrent(i)
+		setStart(null)
 		setContentsOpen(false)
 		window.scrollTo({ top: 0 })
+		const to = r.contents[i]
+		if (to) void client.readings.savePosition({ id: r.id, sectionId: to.id, block: 0 })
 	}
 	const contents = <Contents reading={r} current={current} onPick={pick} />
 	const step = 'rounded-xl border border-world-line px-4 py-2 font-sans text-sm transition hover:bg-world-card active:scale-[0.97]'
@@ -403,10 +496,12 @@ export function Reader({ readingId }: { readingId: string }) {
 				</div>
 				{section && (
 					<SectionView
+						key={section.id}
 						id={section.id}
 						readingId={r.id}
 						size={SIZES[size]}
-						onEnd={current === r.contents.length - 1 && !r.readAt && !markRead.isPending ? () => markRead.mutate(r.id) : undefined}
+						startAt={start?.sectionId === section.id ? start.block : undefined}
+						onEnd={!section.readAt && !markRead.isPending ? () => markRead.mutate({ id: r.id, sectionId: section.id }) : undefined}
 					/>
 				)}
 				<div className="flex justify-between gap-2">
