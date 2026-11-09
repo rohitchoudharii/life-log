@@ -1,9 +1,11 @@
-import { and, eq, isNotNull, lt, or } from 'drizzle-orm'
+import type { WriteStatus } from '@life-log-club/domain'
+import { and, eq, inArray, isNotNull, lt, or } from 'drizzle-orm'
 import { type Job, type JobWithMetadata, PgBoss } from 'pg-boss'
-import { ownerDb } from './db/client'
-import { books, entries, invites, readings, sessions } from './db/schema'
+import { asUser, ownerDb } from './db/client'
+import { books, entries, invites, readings, sections, sessions } from './db/schema'
 import { env } from './env'
 import { addChapterHeadings, importReading } from './import/reading'
+import { type WriteJob, writeKeyIdeas } from './learning/write-section'
 
 const DAY = 24 * 60 * 60 * 1000
 const ago = (days: number, now: Date) => new Date(now.getTime() - days * DAY)
@@ -51,6 +53,25 @@ type HeadingsJob = { userId: string; readingId: string; chapter: number }
 export const enqueueChapterHeadings = (job: HeadingsJob) =>
 	boss.send(HEADINGS, job, { singletonKey: `${job.readingId}:${job.chapter}` })
 
+const WRITE = 'write-section'
+
+/**
+ * Queues the writing of a section's key ideas and questions. At most one waits and one runs per
+ * section. Recall goes ahead of sections that were only seen, because the member is waiting.
+ */
+export const enqueueWriteSection = (job: WriteJob) => boss.send(WRITE, job, { singletonKey: job.sectionId, priority: job.recall ? 10 : 0 })
+
+/**
+ * Queues again the member's sections that wait in one of `statuses`: after they add a key
+ * (`needs_key`) or raise the budget (`paused`).
+ */
+export async function requeueWaiting(userId: string, statuses: WriteStatus[]) {
+	const waiting = await asUser(userId, (tx) =>
+		tx.update(sections).set({ writeStatus: 'queued' }).where(inArray(sections.writeStatus, statuses)).returning({ id: sections.id }),
+	)
+	await Promise.all(waiting.map((s) => enqueueWriteSection({ userId, sectionId: s.id })))
+}
+
 /** Background jobs run in Postgres, so there is nothing else to install or keep running. */
 export async function startJobs() {
 	boss.on('error', (error) => console.error('[jobs]', error))
@@ -76,6 +97,12 @@ export async function startJobs() {
 	if (!(await boss.getQueue(HEADINGS))) await boss.createQueue(HEADINGS, { policy: 'stately', retryLimit: 1, expireInSeconds: 5 * 60 })
 	await boss.work(HEADINGS, { localConcurrency: 4 }, async ([job]: Job<HeadingsJob>[]) => {
 		if (job) await addChapterHeadings(job.data)
+	})
+	const writeOptions = { retryLimit: 2, retryDelay: 10, retryBackoff: true, expireInSeconds: 60 * 60, heartbeatSeconds: 30 }
+	if (await boss.getQueue(WRITE)) await boss.updateQueue(WRITE, writeOptions)
+	else await boss.createQueue(WRITE, { policy: 'stately', ...writeOptions })
+	await boss.work(WRITE, { localConcurrency: 3, includeMetadata: true }, async ([job]: JobWithMetadata<WriteJob>[]) => {
+		if (job) await writeKeyIdeas(job.data, job.retryCount >= job.retryLimit)
 	})
 	// Readings left importing by a stop before their job was queued. The singleton key keeps a
 	// reading whose job is still queued from getting a second one.

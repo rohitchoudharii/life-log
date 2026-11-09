@@ -1,4 +1,4 @@
-import { Block, EntryData, EntryText, Note, PILLARS } from '@life-log-club/domain'
+import { Block, EntryData, EntryText, Note, PILLARS, WRITE_STATUSES } from '@life-log-club/domain'
 import { oc } from '@orpc/contract'
 import { z } from 'zod'
 
@@ -151,6 +151,13 @@ export const Section = z.object({
 	notes: z.array(Note),
 	/** The page this section came from, for a web book; null when it is the reading's own page or file. */
 	sourceUrl: z.string().nullable(),
+	/**
+	 * Where writing its key ideas and questions stands. Writing starts after `SEEN_SECONDS` in the
+	 * section. `needs_key`: the member has no AI key; `paused`: this month's AI budget is used.
+	 */
+	writeStatus: z.enum(WRITE_STATUSES),
+	/** How many key ideas the AI found in it. */
+	keyIdeas: z.int(),
 })
 export type Section = z.infer<typeof Section>
 

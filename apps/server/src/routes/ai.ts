@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm'
 import { encrypt } from '../crypto'
 import { asUser } from '../db/client'
 import { aiKeys } from '../db/schema'
+import { requeueWaiting } from '../jobs'
 import { keyContext, monthUsage, providers } from '../learning/ai'
 import { authed } from '../orpc'
 
@@ -52,6 +53,7 @@ export const aiRoutes = {
 				.values({ userId: context.user.id, ...row })
 				.onConflictDoUpdate({ target: aiKeys.userId, set: row }),
 		)
+		await requeueWaiting(context.user.id, ['needs_key'])
 		return { provider: row.provider, model, last4: row.last4 }
 	}),
 

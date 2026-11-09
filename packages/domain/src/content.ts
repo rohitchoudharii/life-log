@@ -248,3 +248,7 @@ export function insertHeadings(blocks: readonly Block[], headings: readonly Head
 		return h ? [{ type: 'heading', level: h.level, text: h.title, source: 'ai' } as const, block] : [block]
 	})
 }
+
+/** Where writing a section's key ideas and questions stands. */
+export const WRITE_STATUSES = ['none', 'queued', 'writing', 'ready', 'failed', 'needs_key', 'paused'] as const
+export type WriteStatus = (typeof WRITE_STATUSES)[number]

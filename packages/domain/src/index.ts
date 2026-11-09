@@ -1,6 +1,7 @@
 export * from './content'
 export * from './entries'
 export * from './ideas'
+export * from './quality'
 export * from './questions'
 export * from './scheduler'
 

@@ -18,8 +18,57 @@ function headings(user: string) {
 	return { headings: [{ before: 1, title: 'How it starts', level: 2 }, { before: Math.floor(blocks / 2) + 1, title: 'Where it leads', level: 2 }] }
 }
 
+/** The sections in a prompt, by the number the prompt gives them. */
+const sectionsIn = (user: string) => [...user.matchAll(/<section number="(\d+)"[^>]*>\n([\s\S]*?)\n<\/section>/g)].map((m) => ({ n: Number(m[1]), text: m[2]! }))
+
+/** Plain sentences of at least 6 words, not code, to stand in for what a section teaches. */
+const sentences = (text: string) =>
+	(text.match(/[A-Z][^.!?\n]*[.!?]/g) ?? []).map((x) => x.trim()).filter((x) => x.split(/\s+/).length >= 6 && !/[{}();=<>`]/.test(x))
+
+/**
+ * Up to three key ideas per section for "Task: write-section", each resting on a real sentence of
+ * the section, with one question each, plus one idea whose quote is in no section, which the
+ * app must drop.
+ */
+function writeSection(user: string) {
+	const ideas = sectionsIn(user).flatMap(({ n, text }) =>
+		sentences(text)
+			.slice(0, 3)
+			.map((quote, k) => {
+				const words = quote.split(/\s+/)
+				const half = Math.ceil(words.length / 2)
+				return {
+					section: n,
+					rank: k + 1,
+					idea: quote,
+					cue: `Which point number ${k + 1} did this part make?`,
+					quote,
+					questions: [
+						{
+							type: 'short_answer',
+							level: 'explain',
+							content: {
+								prompt: `Why does point ${k + 1} of this part matter to someone new to the topic?`,
+								reference: `${quote} That is why it matters.`,
+								mustHave: [words.slice(0, half).join(' '), words.slice(half).join(' ')],
+								misconceptions: [],
+							},
+						},
+					],
+				}
+			}),
+	)
+	if (ideas[0]) ideas.push({ ...ideas[0], rank: 99, idea: 'An idea the text never states.', quote: 'This sentence appears nowhere in the section at all.' })
+	return { ideas }
+}
+
+/** Keeps every question for "Task: check-questions". */
+const checkQuestions = (user: string) => ({ checks: [...user.matchAll(/"id": (\d+)/g)].map((m) => ({ id: Number(m[1]), verdict: 'keep' })) })
+
 function answer(system: string, user: string) {
 	if (system.startsWith('Task: headings')) return JSON.stringify(headings(user))
+	if (system.startsWith('Task: write-section')) return JSON.stringify(writeSection(user))
+	if (system.startsWith('Task: check-questions')) return JSON.stringify(checkQuestions(user))
 	return '{}'
 }
 

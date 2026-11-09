@@ -1,4 +1,4 @@
-import type { Block, Confidence, Note, QuestionLevel, Rating, ReviewState, SectionKind } from '@life-log-club/domain'
+import type { Block, Confidence, Note, QuestionLevel, Rating, ReviewState, SectionKind, WriteStatus } from '@life-log-club/domain'
 import { type AnyColumn, sql } from 'drizzle-orm'
 import {
 	type AnyPgColumn,
@@ -445,6 +445,17 @@ export const sections = pgTable(
 		firstSeenAt: timestamp({ withTimezone: true }),
 		/** The first time the end of this section was on the member's screen. */
 		readAt: timestamp({ withTimezone: true }),
+		/**
+		 * Where writing its key ideas and questions stands. `needs_key`: the member has no AI key;
+		 * `paused`: this month's AI budget is used.
+		 */
+		writeStatus: text().$type<WriteStatus>().notNull().default('none'),
+		/** Why writing failed, written for the member. */
+		writeError: text(),
+		/** The prompt version that wrote its key ideas. */
+		promptVersion: text(),
+		/** Key ideas past the most a section keeps, which the member can add from the recall results. */
+		spareIdeas: jsonb().$type<{ idea: string; cue: string; quote: string }[]>().notNull().default([]),
 		createdAt: createdAt(),
 	},
 	(t) => [uniqueIndex().on(t.readingId, t.position), index().on(t.readingId, t.chapter), ownRows(t.userId)],

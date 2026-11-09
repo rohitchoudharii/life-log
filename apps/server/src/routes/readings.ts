@@ -2,12 +2,12 @@ import { createHash } from 'node:crypto'
 import { ORPCError } from '@orpc/server'
 import { and, asc, desc, eq, inArray, isNull, or, type SQL, sql } from 'drizzle-orm'
 import { asUser, type Tx } from '../db/client'
-import { aiKeys, bookChapters, books, media, readingFiles, readings, readingTime, sections } from '../db/schema'
+import { aiKeys, bookChapters, books, cards, media, readingFiles, readings, readingTime, sections } from '../db/schema'
 import { bookKind } from '../import/book'
 import { type Captured, readCapture } from '../import/capture'
 import { ExtractError } from '../import/extract'
 import { NOT_A_BOOK, NOT_A_LINK, normaliseUrl, sectionRow } from '../import/reading'
-import { enqueueChapterHeadings, enqueueImport } from '../jobs'
+import { enqueueChapterHeadings, enqueueImport, enqueueWriteSection } from '../jobs'
 import { putInBook } from './books'
 import { authed } from '../orpc'
 
@@ -336,6 +336,8 @@ export const readingsRoutes = {
 					blocks: sections.blocks,
 					notes: sections.notes,
 					sourceUrl: sections.sourceUrl,
+					writeStatus: sections.writeStatus,
+					keyIdeas: sql<number>`(select count(*)::int from ${cards} where ${cards.sectionId} = ${sections.id} and ${cards.origin} = 'ai' and ${cards.deletedAt} is null)`,
 				})
 					.from(sections)
 					.innerJoin(readings, eq(readings.id, sections.readingId))
@@ -401,12 +403,20 @@ export const readingsRoutes = {
 		}),
 	),
 
-	seen: authed.readings.seen.handler(({ input, context }) => {
+	seen: authed.readings.seen.handler(async ({ input, context }) => {
 		const userId = context.user.id
-		return asUser(userId, async (tx) => {
+		const write = await asUser(userId, async (tx) => {
+			const [before] = await tx
+				.select({ firstSeenAt: sections.firstSeenAt, writeStatus: sections.writeStatus, kind: sections.kind, wordCount: sections.wordCount })
+				.from(sections)
+				.where(eq(sections.id, input.sectionId))
+				.for('update')
+			if (!before) throw new ORPCError('NOT_FOUND', { message: 'That section does not exist. It may have been removed.' })
+			// The first heartbeat means the member really read here, so its key ideas are worth writing.
+			const write = !before.firstSeenAt && before.writeStatus === 'none' && before.kind === 'body' && before.wordCount > 0
 			const [section] = await tx
 				.update(sections)
-				.set({ firstSeenAt: sql`coalesce(${sections.firstSeenAt}, now())` })
+				.set({ firstSeenAt: sql`coalesce(${sections.firstSeenAt}, now())`, ...(write && { writeStatus: 'queued' as const }) })
 				.where(eq(sections.id, input.sectionId))
 				.returning({ readingId: sections.readingId })
 			if (!section) throw new ORPCError('NOT_FOUND', { message: 'That section does not exist. It may have been removed.' })
@@ -418,8 +428,10 @@ export const readingsRoutes = {
 					target: [readingTime.userId, readingTime.readingId, readingTime.day],
 					set: { seconds: sql`${readingTime.seconds} + excluded.seconds` },
 				})
-			return { ok: true as const }
+			return write
 		})
+		if (write) await enqueueWriteSection({ userId, sectionId: input.sectionId })
+		return { ok: true as const }
 	}),
 
 	restore: authed.readings.restore.handler(async ({ input, context }) => {
