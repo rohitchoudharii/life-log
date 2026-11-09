@@ -2,6 +2,7 @@ import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@ta
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from '@tanstack/react-router'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { BookPage } from './books'
 import { Devices } from './pages/devices'
 import { Settings } from './pages/settings'
 import { Home } from './pages/home'
@@ -38,12 +39,20 @@ const readerRoute = createRoute({
 		return <Reader key={readingId} readingId={readingId} />
 	},
 })
+const bookRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/mind/book/$bookId',
+	component: function BookRoute() {
+		const { bookId } = bookRoute.useParams()
+		return <BookPage key={bookId} bookId={bookId} />
+	},
+})
 const bodyRoute = createRoute({ getParentRoute: () => appRoute, path: '/body', component: Body })
 const heartRoute = createRoute({ getParentRoute: () => appRoute, path: '/heart', component: Heart })
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: '/settings', component: Settings })
 
 const router = createRouter({
-	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, mindRoute, readerRoute, bodyRoute, heartRoute, devicesRoute, settingsRoute])]),
+	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, mindRoute, readerRoute, bookRoute, bodyRoute, heartRoute, devicesRoute, settingsRoute])]),
 })
 
 declare module '@tanstack/react-router' {

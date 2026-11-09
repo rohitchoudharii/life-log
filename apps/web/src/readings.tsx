@@ -2,6 +2,7 @@ import { FILE_TOO_LARGE, MAX_FILE_BYTES, type Reading } from '@life-log-club/con
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { type DragEvent, useRef, useState } from 'react'
+import { AddToBook, BookItem, useBooks } from './books'
 import { client, errorMessage, orpc } from './rpc'
 import { useToast } from './toast'
 
@@ -42,6 +43,9 @@ function useAddReading() {
 				sectionCount: 0,
 				progress: null,
 				partOfBook: null,
+				source: 'url',
+				readAt: null,
+				book: null,
 				createdAt: new Date(),
 			}
 			const before = queryClient.getQueryData<Reading[]>(listKey)
@@ -87,6 +91,9 @@ export function useAddFile() {
 				sectionCount: 0,
 				progress: null,
 				partOfBook: null,
+				source: /\.pdf$/i.test(file.name) ? 'pdf_upload' : 'epub',
+				readAt: null,
+				book: null,
 				createdAt: new Date(),
 			}
 			queryClient.setQueryData<Reading[]>(listKey, (list) => [placeholder, ...(list ?? [])])
@@ -252,6 +259,12 @@ function ReadingItem({ reading }: { reading: Reading }) {
 						</button>
 					</div>
 				)}
+				{/* Only an article from a link can be a chapter of the member's book. */}
+				{reading.source === 'url' && (
+					<div className="flex flex-wrap items-center gap-2 border-t border-world-line px-4 py-3">
+						<AddToBook reading={reading} />
+					</div>
+				)}
 			</li>
 		)
 	return (
@@ -286,10 +299,15 @@ function ReadingItem({ reading }: { reading: Reading }) {
 /** What the member is reading, newest first, with imports still running and the ones that failed. */
 export function ReadingNow() {
 	const readings = useReadings()
-	if (!readings.data) return null
-	if (!readings.data.length) return <p className="text-world-muted">Nothing to read yet. Paste a link above, or add an EPUB or PDF.</p>
+	const books = useBooks()
+	if (!readings.data || !books.data) return null
+	if (!readings.data.length && !books.data.length)
+		return <p className="text-world-muted">Nothing to read yet. Paste a link above, or add an EPUB or PDF.</p>
 	return (
 		<ul className="grid items-start gap-3 md:grid-cols-2">
+			{books.data.map((b) => (
+				<BookItem key={b.id} book={b} />
+			))}
 			{readings.data.map((r) => (
 				<ReadingItem key={r.id} reading={r} />
 			))}

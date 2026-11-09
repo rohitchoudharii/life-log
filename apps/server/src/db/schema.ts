@@ -199,6 +199,8 @@ export const readings = pgTable(
 		/** Why the import failed, written for the member. */
 		error: text(),
 		wordCount: integer().notNull().default(0),
+		/** When the member reached the end of the reading's last section. */
+		readAt: timestamp({ withTimezone: true }),
 		/**
 		 * For a chapter page of a web book: the book it belongs to, which the member can add whole.
 		 * `pages` is how many pages its contents list names.
@@ -219,6 +221,46 @@ export const readings = pgTable(
 		index().on(t.userId, t.sourceUrl),
 		ownRows(t.userId),
 	],
+)
+
+/**
+ * A book the member makes from articles (issue #5), such as a book on a site behind a login with
+ * one page per chapter. Its chapters are readings; the book only holds them in order.
+ */
+export const books = pgTable(
+	'books',
+	{
+		/** Chosen by the client, so a retried create can't make a duplicate. */
+		id: uuid().primaryKey(),
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		title: text().notNull(),
+		author: text(),
+		createdAt: createdAt(),
+		/** Removed books are hidden, their chapters show as articles again, and Undo brings them back. */
+		deletedAt: timestamp({ withTimezone: true }),
+	},
+	(t) => [index().on(t.userId, t.createdAt.desc()), ownRows(t.userId)],
+)
+
+/** One reading in a book, at `position` (from 0). A reading is a chapter of one book at most. */
+export const bookChapters = pgTable(
+	'book_chapters',
+	{
+		readingId: uuid()
+			.primaryKey()
+			.references(() => readings.id, { onDelete: 'cascade' }),
+		bookId: uuid()
+			.notNull()
+			.references(() => books.id, { onDelete: 'cascade' }),
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		position: integer().notNull(),
+		addedAt: createdAt(),
+	},
+	(t) => [index().on(t.bookId, t.position), ownRows(t.userId)],
 )
 
 /**

@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { useLogEntry } from '../entry-actions'
 import { EntryList } from '../entry-list'
 import { isToday, MOODS, when } from '../entries'
+import { NewBook } from '../books'
 import { AddReading, ReadingNow, useFileDrop } from '../readings'
 import { orpc } from '../rpc'
 import { useOpenLog } from '../shell'
@@ -82,7 +83,10 @@ export function Mind() {
 				</div>
 			</div>
 			<section className="grid gap-3">
-				<h2 className="text-xl">Reading now</h2>
+				<div className="flex flex-wrap items-center justify-between gap-2">
+					<h2 className="text-xl">Reading now</h2>
+					<NewBook />
+				</div>
 				<ReadingNow />
 			</section>
 			<section className="grid gap-3">

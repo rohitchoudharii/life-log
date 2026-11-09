@@ -65,9 +65,31 @@ export const Reading = z.object({
 	progress: z.object({ done: z.int(), total: z.int() }).nullable(),
 	/** For a chapter page of a web book: the book it belongs to, which `addBook` adds whole. */
 	partOfBook: z.object({ title: z.string(), pages: z.int() }).nullable(),
+	/** `url` is an article from a link, the only kind of reading a member's book can hold. */
+	source: z.enum(['url', 'pdf_url', 'web_book', 'epub', 'pdf_upload']),
+	/** When the member reached the end of its last section. */
+	readAt: z.date().nullable(),
+	/** The member's book this reading is a chapter of. */
+	book: z.object({ id: z.uuid(), title: z.string() }).nullable(),
 	createdAt: z.date(),
 })
 export type Reading = z.infer<typeof Reading>
+
+/** A book the member made from articles; its chapters are readings, in the member's order. */
+export const Book = z.object({
+	id: z.uuid(),
+	title: z.string(),
+	author: z.string().nullable(),
+	chapterCount: z.int(),
+	readCount: z.int(),
+	/** The first chapter not read yet, which Continue opens; null when every chapter is read. */
+	continueId: z.uuid().nullable(),
+	createdAt: z.date(),
+})
+export type Book = z.infer<typeof Book>
+export const BookWithChapters = Book.extend({ chapters: z.array(Reading) })
+export type BookWithChapters = z.infer<typeof BookWithChapters>
+const BookTitle = z.string().trim().min(1, 'Give the book a title').max(200)
 
 export const ReadingWithContents = Reading.extend({
 	/** Every section in reading order; `level` 1 to 3 nests them into a tree. */
@@ -220,6 +242,25 @@ export const contract = {
 		/** Hides the reading; `restore` brings it back (undo). Removed readings are deleted for good after 30 days. */
 		remove: oc.input(EntryId).output(Ok),
 		restore: oc.input(EntryId).output(Reading),
+		/** Marks the reading read: the member reached the end of its last section. The first time counts. */
+		markRead: oc.input(EntryId).output(Ok),
+	},
+	books: {
+		/** Makes an empty book. The client picks the id, so a retry makes one book. */
+		create: oc.input(z.object({ id: z.uuid(), title: BookTitle })).output(Book),
+		/** The member's books, newest first. */
+		list: oc.output(z.array(Book)),
+		get: oc.input(EntryId).output(BookWithChapters),
+		rename: oc.input(z.object({ id: z.uuid(), title: BookTitle })).output(Book),
+		/** Hides the book; its chapters show as articles again until `restore` (undo). */
+		remove: oc.input(EntryId).output(Ok),
+		restore: oc.input(EntryId).output(Book),
+		/** Adds an article to the end of the book; one in another book moves here. Only articles from links. */
+		addChapter: oc.input(z.object({ bookId: z.uuid(), readingId: z.uuid() })).output(BookWithChapters),
+		/** Takes the chapter out of its book; it stays as an article, with everything read and recalled. */
+		removeChapter: oc.input(z.object({ readingId: z.uuid() })).output(Ok),
+		/** Moves the chapter to `to` (from 0) in its book. */
+		moveChapter: oc.input(z.object({ readingId: z.uuid(), to: z.int().min(0) })).output(BookWithChapters),
 	},
 	ai: {
 		/** The member's own Anthropic or OpenAI key, never sent back in full. */

@@ -15,10 +15,19 @@ const sectionCount = sql<number>`(select count(*)::int from sections where secti
 const progress = sql<{ done: number; total: number } | null>`(select case when count(*) = 0 then null else json_build_object(
 	'done', count(*) filter (where web_book_pages.blocks is not null or web_book_pages.error is not null), 'total', count(*)) end
 	from web_book_pages where web_book_pages.reading_id = readings.id)`
-const columns = { reading: readings, sectionCount, progress }
-type Row = { reading: typeof readings.$inferSelect; sectionCount: number; progress: { done: number; total: number } | null }
+// The live book the reading is a chapter of. A removed book's chapters are articles again.
+const inBook = sql`from book_chapters join books on books.id = book_chapters.book_id
+	where book_chapters.reading_id = readings.id and books.deleted_at is null`
+const book = sql<{ id: string; title: string } | null>`(select json_build_object('id', books.id, 'title', books.title) ${inBook})`
+export const columns = { reading: readings, sectionCount, progress, book }
+type Row = {
+	reading: typeof readings.$inferSelect
+	sectionCount: number
+	progress: { done: number; total: number } | null
+	book: { id: string; title: string } | null
+}
 
-const toReading = ({ reading: r, sectionCount, progress }: Row) => ({
+export const toReading = ({ reading: r, sectionCount, progress, book }: Row) => ({
 	id: r.id,
 	title: r.title,
 	author: r.author,
@@ -30,18 +39,21 @@ const toReading = ({ reading: r, sectionCount, progress }: Row) => ({
 	sectionCount,
 	progress: r.status === 'importing' ? progress : null,
 	partOfBook: r.partOfBook && { title: r.partOfBook.title, pages: r.partOfBook.pages },
+	source: r.source,
+	readAt: r.readAt,
+	book,
 	createdAt: r.createdAt,
 })
 
 const notFound = () => new ORPCError('NOT_FOUND', { message: 'That reading does not exist. It may have been removed.' })
 
 /** The reading a member means by this id: a link merged into another reading opens that one. */
-async function resolve(tx: Tx, id: string): Promise<Row | undefined> {
+export async function resolve(tx: Tx, id: string): Promise<Row | undefined> {
 	const [row] = await tx.select(columns).from(readings).where(eq(readings.id, id))
 	return row?.reading.mergedInto ? resolve(tx, row.reading.mergedInto) : row
 }
 
-async function live(tx: Tx, id: string) {
+export async function live(tx: Tx, id: string) {
 	const row = await resolve(tx, id)
 	if (!row || row.reading.deletedAt) throw notFound()
 	return row
@@ -60,7 +72,7 @@ async function addReading(userId: string, values: NewReading, same: SQL, created
 		const [inserted] = await tx.insert(readings).values(values).onConflictDoNothing().returning()
 		if (inserted) {
 			await created?.(tx)
-			return { row: { reading: inserted, sectionCount: 0, progress: null }, queue: true }
+			return { row: { reading: inserted, sectionCount: 0, progress: null, book: null }, queue: true }
 		}
 		// An id that belongs to someone else is invisible here, so it can't be read or overwritten.
 		const [found] = await tx
@@ -142,7 +154,8 @@ export const readingsRoutes = {
 			const rows = await tx
 				.select(columns)
 				.from(readings)
-				.where(and(isNull(readings.deletedAt), isNull(readings.mergedInto)))
+				// A book's chapters show inside the book, not on their own.
+				.where(and(isNull(readings.deletedAt), isNull(readings.mergedInto), sql`not exists (select 1 ${inBook})`))
 				.orderBy(desc(readings.createdAt))
 			return rows.map(toReading)
 		}),
@@ -206,6 +219,17 @@ export const readingsRoutes = {
 		asUser(context.user.id, async (tx) => {
 			const row = await live(tx, input.id)
 			await tx.update(readings).set({ deletedAt: new Date() }).where(eq(readings.id, row.reading.id))
+			return { ok: true as const }
+		}),
+	),
+
+	markRead: authed.readings.markRead.handler(({ input, context }) =>
+		asUser(context.user.id, async (tx) => {
+			const row = await live(tx, input.id)
+			await tx
+				.update(readings)
+				.set({ readAt: new Date() })
+				.where(and(eq(readings.id, row.reading.id), isNull(readings.readAt)))
 			return { ok: true as const }
 		}),
 	),

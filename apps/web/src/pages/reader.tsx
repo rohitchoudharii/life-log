@@ -1,10 +1,10 @@
 import type { ReadingWithContents } from '@life-log-club/contract'
 import type { Block, Note, NoteRef, Link as TextLink } from '@life-log-club/domain'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { importingText } from '../readings'
-import { errorMessage, orpc } from '../rpc'
+import { client, errorMessage, orpc } from '../rpc'
 
 type NoteMarks = { notes: Map<string, Note>; open: (note: Note) => void }
 
@@ -128,7 +128,25 @@ function NoteDialog({ note, onClose }: { note: Note; onClose: () => void }) {
 	)
 }
 
-function SectionView({ id, readingId }: { id: string; readingId: string }) {
+/** Calls `onEnd` once, when the end of the text comes into view. */
+function EndMark({ onEnd }: { onEnd: () => void }) {
+	const mark = useRef<HTMLDivElement>(null)
+	const done = useRef(onEnd)
+	done.current = onEnd
+	useEffect(() => {
+		const observer = new IntersectionObserver((seen) => {
+			if (!seen.some((e) => e.isIntersecting)) return
+			observer.disconnect()
+			done.current()
+		})
+		if (mark.current) observer.observe(mark.current)
+		return () => observer.disconnect()
+	}, [])
+	return <div ref={mark} aria-hidden className="h-px" />
+}
+
+/** One section's text. `onEnd` runs when the member reaches its end, once its text is shown. */
+function SectionView({ id, readingId, onEnd }: { id: string; readingId: string; onEnd?: () => void }) {
 	const queryClient = useQueryClient()
 	const section = useQuery({
 		...orpc.readings.section.queryOptions({ input: { id } }),
@@ -165,6 +183,7 @@ function SectionView({ id, readingId }: { id: string; readingId: string }) {
 				<BlockView key={i} block={b} marks={marks} />
 			))}
 			{openNote && <NoteDialog note={openNote} onClose={() => setOpenNote(null)} />}
+			{onEnd && <EndMark key={id} onEnd={onEnd} />}
 		</article>
 	)
 }
@@ -198,6 +217,13 @@ export function Reader({ readingId }: { readingId: string }) {
 	})
 	const [current, setCurrent] = useState(0)
 	const [contentsOpen, setContentsOpen] = useState(false)
+	const queryClient = useQueryClient()
+	// Reaching the end of the last section marks the reading read, which a book counts.
+	const markRead = useMutation({
+		mutationFn: (id: string) => client.readings.markRead({ id }),
+		onSuccess: () =>
+			Promise.all([queryClient.invalidateQueries({ queryKey: orpc.readings.key() }), queryClient.invalidateQueries({ queryKey: orpc.books.key() })]),
+	})
 	// The same query SectionView makes: a web book's section opens the page it came from.
 	const sectionId = reading.data?.status === 'ready' ? reading.data.contents[current]?.id : undefined
 	const shown = useQuery({ ...orpc.readings.section.queryOptions({ input: { id: sectionId ?? '' } }), enabled: Boolean(sectionId) })
@@ -241,9 +267,15 @@ export function Reader({ readingId }: { readingId: string }) {
 			</aside>
 			<div className="mx-auto grid w-full max-w-[65ch] gap-6">
 				<header className="grid gap-2">
-					<Link to="/mind" className="font-sans text-sm text-world-muted">
-						← Reading room
-					</Link>
+					{r.book ? (
+						<Link to="/mind/book/$bookId" params={{ bookId: r.book.id }} className="font-sans text-sm text-world-muted">
+							← {r.book.title}
+						</Link>
+					) : (
+						<Link to="/mind" className="font-sans text-sm text-world-muted">
+							← Reading room
+						</Link>
+					)}
 					<h1 className="text-3xl font-semibold tracking-tight md:text-4xl">{r.title}</h1>
 					<p className="font-sans text-sm text-world-muted">
 						{r.author && `${r.author}${original ? ' · ' : ''}`}
@@ -264,7 +296,13 @@ export function Reader({ readingId }: { readingId: string }) {
 						</nav>
 					)}
 				</div>
-				{section && <SectionView id={section.id} readingId={r.id} />}
+				{section && (
+					<SectionView
+						id={section.id}
+						readingId={r.id}
+						onEnd={current === r.contents.length - 1 && !r.readAt && !markRead.isPending ? () => markRead.mutate(r.id) : undefined}
+					/>
+				)}
 				<div className="flex justify-between gap-2">
 					{current > 0 ? (
 						<button type="button" className={step} onClick={() => pick(current - 1)}>
