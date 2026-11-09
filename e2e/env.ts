@@ -10,6 +10,9 @@ const onTestDatabase = (url: string | undefined) => Object.assign(new URL(url!),
 export const API_PORT = 8788
 export const WEB_PORT = 5174
 export const FAKE_LLM_PORT = 8799
+export const FAKE_SITE_PORT = 8797
+/** The fake site's address, as a member would paste it. */
+export const FAKE_SITE = `http://localhost:${FAKE_SITE_PORT}`
 export const e2eEnv = {
 	NODE_ENV: 'test',
 	PORT: String(API_PORT),
@@ -20,6 +23,7 @@ export const e2eEnv = {
 	ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
 	ANTHROPIC_BASE_URL: `http://localhost:${FAKE_LLM_PORT}`,
 	OPENAI_BASE_URL: `http://localhost:${FAKE_LLM_PORT}`,
+	IMPORT_ALLOWED_ORIGINS: FAKE_SITE,
 }
 
 /** The only keys the fake AI provider (e2e/fake-llm.ts) accepts. */

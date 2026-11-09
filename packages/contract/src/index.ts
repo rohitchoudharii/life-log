@@ -1,4 +1,4 @@
-import { EntryData, EntryText, PILLARS } from '@life-log-club/domain'
+import { Block, EntryData, EntryText, PILLARS } from '@life-log-club/domain'
 import { oc } from '@orpc/contract'
 import { z } from 'zod'
 
@@ -43,6 +43,39 @@ export type Card = z.infer<typeof Card>
 
 export const AiKey = z.object({ provider: z.enum(['anthropic', 'openai']), model: z.string(), last4: z.string() })
 export type AiKey = z.infer<typeof AiKey>
+
+export const Reading = z.object({
+	id: z.uuid(),
+	title: z.string(),
+	author: z.string().nullable(),
+	/** The page's own address once it is imported; null while importing. */
+	sourceUrl: z.string().nullable(),
+	/** The link as the member added it. */
+	requestedUrl: z.string().nullable(),
+	status: z.enum(['importing', 'ready', 'failed']),
+	/** Why the import failed, written for the member. */
+	error: z.string().nullable(),
+	wordCount: z.int(),
+	sectionCount: z.int(),
+	createdAt: z.date(),
+})
+export type Reading = z.infer<typeof Reading>
+
+export const ReadingWithContents = Reading.extend({
+	/** Every section in reading order; `level` 1 to 3 nests them into a tree. */
+	contents: z.array(z.object({ id: z.uuid(), position: z.int(), level: z.int(), title: z.string(), wordCount: z.int() })),
+})
+export type ReadingWithContents = z.infer<typeof ReadingWithContents>
+
+export const Section = z.object({
+	id: z.uuid(),
+	readingId: z.uuid(),
+	position: z.int(),
+	level: z.int(),
+	title: z.string(),
+	blocks: z.array(Block),
+})
+export type Section = z.infer<typeof Section>
 
 const EntryId = z.object({ id: z.uuid() })
 const Ok = z.object({ ok: z.literal(true) })
@@ -120,6 +153,27 @@ export const contract = {
 		answer: oc
 			.input(z.object({ id: z.uuid(), rating: z.enum(['again', 'hard', 'good', 'easy']) }))
 			.output(z.object({ dueAt: z.date() })),
+	},
+	readings: {
+		/**
+		 * Adds a link to read. The reading comes back at once as `importing`, and the server
+		 * fetches the page in the background. The client picks the id. Adding a link the member
+		 * already has returns that reading instead, so the id that comes back can differ; a
+		 * removed one is restored, and a failed one is tried again.
+		 */
+		add: oc.input(z.object({ id: z.uuid(), url: z.string().trim().min(1, 'Paste a link').max(2000) })).output(Reading),
+		/** The member's readings, newest first. */
+		list: oc.output(z.array(Reading)),
+		/**
+		 * One reading with its contents. A link that turned out to be a page the member already
+		 * has returns that reading, with its own id.
+		 */
+		get: oc.input(EntryId).output(ReadingWithContents),
+		/** One section's text. */
+		section: oc.input(EntryId).output(Section),
+		/** Hides the reading; `restore` brings it back (undo). Removed readings are deleted for good after 30 days. */
+		remove: oc.input(EntryId).output(Ok),
+		restore: oc.input(EntryId).output(Reading),
 	},
 	ai: {
 		/** The member's own Anthropic or OpenAI key, never sent back in full. */

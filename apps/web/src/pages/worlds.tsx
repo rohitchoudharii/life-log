@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { useLogEntry } from '../entry-actions'
 import { EntryList } from '../entry-list'
 import { isToday, MOODS, when } from '../entries'
+import { AddReading, ReadingNow } from '../readings'
 import { orpc } from '../rpc'
 import { useOpenLog } from '../shell'
 
@@ -56,6 +57,7 @@ export function Mind() {
 			<Hero title="The reading room" sub="Read, then recall. Ideas and lessons come back until they stick.">
 				<LogButton type="lesson">Log a lesson</LogButton>
 			</Hero>
+			<AddReading />
 			<div className="grid gap-4 md:grid-cols-[16rem_1fr]">
 				<Stat label="Due for review" value={due.data?.total ?? 0} sub="cards" testId="mind-due" />
 				<div className="rounded-2xl border border-world-line bg-world-card p-5">
@@ -69,10 +71,14 @@ export function Mind() {
 							))}
 						</ul>
 					) : (
-						<p className="mt-2 text-lg">Nothing due. Your reading list and recall checks arrive here next.</p>
+						<p className="mt-2 text-lg">Nothing due. Recall checks on your readings arrive here next.</p>
 					)}
 				</div>
 			</div>
+			<section className="grid gap-3">
+				<h2 className="text-xl">Reading now</h2>
+				<ReadingNow />
+			</section>
 			<section className="grid gap-3">
 				<h2 className="text-xl">Lessons</h2>
 				<EntryList entries={lessons.data} empty="No lessons yet. Log what life teaches you." />

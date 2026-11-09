@@ -54,6 +54,15 @@ Every log is an **entry**: a time, a type (such as a gym set, a meal or a meetin
 - The text of entries about other people (meetings) is encrypted with AES-256-GCM before it is stored.
 - A removed entry can be restored for 30 days; a nightly job then deletes it for good.
 
+## Readings
+
+Paste a link into **Add a reading** on Mind. The reading shows at once as "Importing…", while a background job fetches the page, finds its article with Mozilla Readability, and splits it into sections at the author's headings. A section past about 2,500 words is cut at a paragraph. The code is in `apps/server/src/import/`.
+
+- The server fetches only public web pages. It refuses private and local addresses, checked again on every redirect and when it connects, and pages over 5 MB.
+- The same link added twice is one reading, and so are two links to the same page.
+- A page behind a sign-in fails with a message. The Chrome extension will capture those later.
+- Import tests use saved real pages in `apps/server/src/import/fixtures/`. The e2e tests fetch from a local test site (`e2e/fake-site.ts`).
+
 ## Review
 
 Ideas from reading and lessons from life are **cards** in one review queue. A new card is due at once. Remembering it brings it back after 1, 2 and 3 days, then at gaps that grow with how easily you remember it, up to a year. Forgetting it brings it back in 10 minutes and starts the steps again. The rules are in `packages/domain/src/scheduler.ts`.

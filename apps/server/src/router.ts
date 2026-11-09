@@ -4,6 +4,7 @@ import { aiRoutes } from './routes/ai'
 import { auth } from './routes/auth'
 import { devices } from './routes/devices'
 import { entriesRoutes } from './routes/entries'
+import { readingsRoutes } from './routes/readings'
 import { reviewRoutes } from './routes/review'
 
 export const router = os.router({
@@ -21,5 +22,6 @@ export const router = os.router({
 	devices,
 	entries: entriesRoutes,
 	review: reviewRoutes,
+	readings: readingsRoutes,
 	ai: aiRoutes,
 })

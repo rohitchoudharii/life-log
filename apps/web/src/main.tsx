@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client'
 import { Devices } from './pages/devices'
 import { Settings } from './pages/settings'
 import { Home } from './pages/home'
+import { Reader } from './pages/reader'
 import { Welcome } from './pages/welcome'
 import { Body, Heart, Mind } from './pages/worlds'
 import { isUnauthorized, orpc } from './rpc'
@@ -29,12 +30,20 @@ const appRoute = createRoute({ getParentRoute: () => rootRoute, id: 'app', compo
 const homeRoute = createRoute({ getParentRoute: () => appRoute, path: '/', component: Home })
 const devicesRoute = createRoute({ getParentRoute: () => appRoute, path: '/devices', component: Devices })
 const mindRoute = createRoute({ getParentRoute: () => appRoute, path: '/mind', component: Mind })
+const readerRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/mind/read/$readingId',
+	component: function ReaderPage() {
+		const { readingId } = readerRoute.useParams()
+		return <Reader key={readingId} readingId={readingId} />
+	},
+})
 const bodyRoute = createRoute({ getParentRoute: () => appRoute, path: '/body', component: Body })
 const heartRoute = createRoute({ getParentRoute: () => appRoute, path: '/heart', component: Heart })
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: '/settings', component: Settings })
 
 const router = createRouter({
-	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, mindRoute, bodyRoute, heartRoute, devicesRoute, settingsRoute])]),
+	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, mindRoute, readerRoute, bodyRoute, heartRoute, devicesRoute, settingsRoute])]),
 })
 
 declare module '@tanstack/react-router' {

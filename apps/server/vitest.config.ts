@@ -14,6 +14,8 @@ export default defineConfig({
 			DATABASE_OWNER_URL: onTestDatabase(local.DATABASE_OWNER_URL),
 			DATABASE_URL: onTestDatabase(local.DATABASE_URL),
 			ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'),
+			// The test site in src/import/test-site.ts.
+			IMPORT_ALLOWED_ORIGINS: 'http://localhost:8796',
 		},
 		fileParallelism: false,
 	},
