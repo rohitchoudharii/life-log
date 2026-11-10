@@ -5,7 +5,7 @@ import { expect, type Page, test } from '@playwright/test'
 import { newMember } from './api'
 import { FAKE_SITE, GOOD_ANTHROPIC_KEY } from './env'
 import { proof } from './proof'
-import { blankPdf, testEpub } from '../apps/server/src/import/test-books'
+import { blankPdf, scannedPdf, testEpub } from '../apps/server/src/import/test-books'
 import { joinAs } from './session'
 
 async function addLink(page: Page, url: string) {
@@ -377,10 +377,38 @@ test('a PDF shows its page numbers, and a file that is not a book is refused', a
 	await expect(page.getByText('p. 1', { exact: true })).toBeVisible()
 })
 
-test('a scanned PDF fails with a message saying so', async ({ page }) => {
+test('a scanned PDF is read page by page, then opens to its chapters', async ({ page, isMobile }, testInfo) => {
+	const chapters = ['Spaced practice', 'Testing yourself', 'Sleep on it']
+	const body = (n: number, part: number) => [
+		`Part ${part} of chapter ${n} says practice that feels easy is often the least useful kind.`,
+		'When recall takes effort, the memory gets stronger for the next time.',
+	]
+	// Four pages a chapter, so the scan runs long enough to show its progress.
+	const scan = await scannedPdf(
+		chapters.flatMap((title, i) => [1, 2, 3, 4].map((part) => (part === 1 ? [[title, 18] as [string, number], ...body(i + 1, part)] : body(i + 1, part)))),
+	)
+	await joinAs(page)
+	await page.goto('/mind')
+	await pickFile(page, { name: 'Practice scan.pdf', mimeType: 'application/pdf', buffer: Buffer.from(scan) })
+	await expect(readings(page)).toContainText(/Reading scanned pages… \d+ of 12/, { timeout: 30_000 })
+	await proof(page, testInfo, 'scanning')
+	await expect(readings(page).getByRole('link', { name: /Spaced practice/ })).toBeVisible({ timeout: 60_000 })
+	await expect(readings(page)).toContainText('3 sections')
+
+	await readings(page).getByRole('link').click()
+	await expect(page.getByRole('heading', { level: 1, name: 'Spaced practice' })).toBeVisible()
+	if (isMobile) await page.getByRole('button', { name: /^Contents/ }).click()
+	const contents = page.getByRole('navigation', { name: 'Contents' })
+	await expect(contents.getByRole('listitem')).toHaveText(chapters)
+	await contents.getByRole('button', { name: 'Testing yourself' }).click()
+	await expect(page.getByText(/Part 3 of chapter 2 says practice/)).toBeVisible()
+	await proof(page, testInfo, 'scanned-reading')
+})
+
+test('a scanned PDF with no readable text fails with a message saying what to do', async ({ page }) => {
 	await joinAs(page)
 	await page.goto('/mind')
 	await pickFile(page, { name: 'scan.pdf', mimeType: 'application/pdf', buffer: Buffer.from(blankPdf()) })
-	await expect(readings(page).getByRole('alert')).toHaveText("This PDF is scanned pages without text, so Life Log Club can't read it yet.", { timeout: 30_000 })
+	await expect(readings(page).getByRole('alert')).toHaveText('This PDF is scanned pages, and no text could be read from them. Try a sharper scan, or a copy with text.', { timeout: 30_000 })
 	await expect(readings(page).getByRole('button', { name: 'Try again' })).toHaveCount(0)
 })

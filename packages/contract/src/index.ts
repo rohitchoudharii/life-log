@@ -478,7 +478,8 @@ export const Reading = z.object({
 	/** Sections to read and recall; reference sections are not counted. */
 	sectionCount: z.int(),
 	/** While a web book is imported: how many of its pages are done. Null for everything else. */
-	progress: z.object({ done: z.int(), total: z.int() }).nullable(),
+	/** While importing: a web book's pages kept so far, or a scanned PDF's pages read so far (`scan`). */
+	progress: z.object({ done: z.int(), total: z.int(), scan: z.boolean() }).nullable(),
 	/** For a chapter page of a web book: the book it belongs to, which `addBook` adds whole. */
 	partOfBook: z.object({ title: z.string(), pages: z.int() }).nullable(),
 	/**

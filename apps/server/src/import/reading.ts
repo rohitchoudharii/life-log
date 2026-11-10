@@ -254,7 +254,10 @@ async function readFile(userId: string, readingId: string): Promise<Imported> {
 	const [file] = await asUser(userId, (tx) => tx.select().from(readingFiles).where(eq(readingFiles.readingId, readingId)))
 	const kind = file && bookKind(file.data)
 	if (!kind) throw new ExtractError(NOT_A_BOOK)
-	const book = await parseBook(kind, new Uint8Array(file.data), file.name.replace(/\.(epub|pdf)$/i, '') || 'Untitled')
+	// A scan is read page by page with OCR; the reading's tile shows how far it has got.
+	const book = await parseBook(kind, new Uint8Array(file.data), file.name.replace(/\.(epub|pdf)$/i, '') || 'Untitled', (scan) =>
+		void asUser(userId, (tx) => tx.update(readings).set({ scanProgress: scan }).where(eq(readings.id, readingId))).catch(() => {}),
+	)
 	const files = new Map(book.images)
 	const { images, withImages } = await prepareImages(files.keys(), (src) => files.get(src) ?? null)
 	const chapters: Chapter[] = book.chapters.map((c) => ({ ...c, blocks: c.blocks.flatMap(withImages) }))

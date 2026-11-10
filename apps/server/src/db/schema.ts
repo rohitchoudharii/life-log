@@ -286,6 +286,8 @@ export const readings = pgTable(
 		fileHash: text(),
 		publishedAt: timestamp({ withTimezone: true }),
 		status: text().$type<'importing' | 'ready' | 'failed'>().notNull().default('importing'),
+		/** While a scanned PDF is read with OCR: pages read so far, of all of them. */
+		scanProgress: jsonb().$type<{ done: number; total: number }>(),
 		/** Why the import failed, written for the member. */
 		error: text(),
 		wordCount: integer().notNull().default(0),

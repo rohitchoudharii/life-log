@@ -11,7 +11,7 @@ const listKey = orpc.readings.list.queryKey()
 
 /** What an importing reading shows; a web book counts its pages as they arrive. */
 export const importingText = ({ progress }: Pick<Reading, 'progress'>) =>
-	progress ? `Importing… ${progress.done} of ${progress.total} pages` : 'Importing…'
+	!progress ? 'Importing…' : progress.scan ? `Reading scanned pages… ${progress.done} of ${progress.total}` : `Importing… ${progress.done} of ${progress.total} pages`
 
 /** The member's readings, asked for again every 1.5 seconds while one is importing. */
 export const useReadings = () =>

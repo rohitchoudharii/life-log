@@ -53,7 +53,7 @@ export const toReading = ({ reading: r, sectionCount, progress, book, wordsRead 
 	error: r.error,
 	wordCount: r.wordCount,
 	sectionCount,
-	progress: r.status === 'importing' ? progress : null,
+	progress: r.status !== 'importing' ? null : r.scanProgress ? { ...r.scanProgress, scan: true } : progress && { ...progress, scan: false },
 	partOfBook: r.partOfBook && { title: r.partOfBook.title, pages: r.partOfBook.pages },
 	source: r.source,
 	readAt: r.readAt,

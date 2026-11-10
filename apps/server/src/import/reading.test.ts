@@ -9,7 +9,8 @@ import { prepareDatabase } from '../db/prepare'
 import { aiCalls, aiKeys, media, preferences, readingFiles, readings, sections, users, webBookPages } from '../db/schema'
 import { keyContext } from '../learning/ai'
 import { addChapterHeadings, BOOK_MOSTLY_FAILED, BOOK_TOO_LONG, importReading, normaliseUrl, ROBOTS_REFUSED } from './reading'
-import { blankPdf, testEpub } from './test-books'
+import { SCAN_UNREADABLE } from './pdf'
+import { blankPdf, scannedPdf, testEpub } from './test-books'
 import { fixture, TEST_SITE, testSite } from './test-site'
 
 const site = testSite()
@@ -352,9 +353,28 @@ describe('uploaded books', () => {
 		expect(await failure(testEpub({ 'META-INF/license.lcpl': '{}' }), 'locked.epub')).toBe(
 			"This book is protected with DRM, so Life Log Club can't read it. Try a DRM-free copy.",
 		)
-		expect(await failure(blankPdf(), 'scan.pdf')).toBe("This PDF is scanned pages without text, so Life Log Club can't read it yet.")
+		expect(await failure(blankPdf(), 'scan.pdf')).toBe(SCAN_UNREADABLE)
 		expect(await failure(new TextEncoder().encode('just some notes'), 'notes.epub')).toBe('Life Log Club reads EPUB and PDF files. Choose one of those.')
 	})
+
+	it('reads a scan with OCR into its chapters by the same rules as a PDF with text, counting pages as it goes', async () => {
+		const userId = await member()
+		const body = (n: number) => [
+			`Practice that feels easy is often the least useful kind in chapter ${n}.`,
+			'When recall takes effort, the memory gets stronger for the next time.',
+			'Spacing the sessions apart makes each one harder, and that is the point.',
+		]
+		const scan = await scannedPdf([[['Spaced practice', 18], ...body(1)], [['Testing yourself', 18], ...body(2)]])
+		const { reading, sections: stored } = await load(userId, await addFile(userId, scan, 'Practice scan.pdf'))
+		expect(reading).toMatchObject({ status: 'ready', title: 'Spaced practice', scanProgress: { done: 2, total: 2 } })
+		expect(stored.map((s) => s.title)).toEqual(['Spaced practice', 'Testing yourself'])
+		expect(stored[1]!.blocks.filter((b) => b.type === 'paragraph')).toEqual([
+			{
+				type: 'paragraph',
+				text: 'Practice that feels easy is often the least useful kind in chapter 2. When recall takes effort, the memory gets stronger for the next time. Spacing the sessions apart makes each one harder, and that is the point.',
+			},
+		])
+	}, 60_000)
 })
 
 describe('web books (issue #3)', () => {

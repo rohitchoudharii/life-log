@@ -397,8 +397,69 @@ async function outlineOf(doc: PdfDocument): Promise<OutlineEntry[]> {
 	return out
 }
 
-/** Reads a PDF's text with pdf.js, in chapters (see pdfChapters). A PDF with almost no text is a scan, which Life Log Club cannot read yet. */
-export async function readPdf(bytes: Uint8Array, fallbackTitle: string): Promise<Pdf> {
+/** The most scanned pages read in one file: about 10 minutes of OCR. */
+export const MAX_SCANNED_PAGES = 400
+export const SCAN_TOO_LONG = `This scanned PDF has more than ${MAX_SCANNED_PAGES} pages. Split it into parts and add each one.`
+export const SCAN_UNREADABLE = "This PDF is scanned pages, and no text could be read from them. Try a sharper scan, or a copy with text."
+/** Pages are drawn at twice their size, about 150 dots per inch, for OCR. */
+const OCR_SCALE = 2
+
+type PdfDoc = Awaited<ReturnType<(typeof import('pdfjs-dist/legacy/build/pdf.mjs'))['getDocument']>['promise']>
+
+/**
+ * Reads a scan's pages with OCR (Tesseract, in English, on this server: no AI key and no cost).
+ * Each line read becomes one text item where it stands on the page, sized by the height of its row,
+ * so the same rules split it into chapters and paragraphs as a PDF with a text layer.
+ */
+async function ocrPages(doc: PdfDoc, onPage: (done: number, total: number) => void): Promise<PdfPage[]> {
+	const { createCanvas } = await import('@napi-rs/canvas')
+	const { createWorker } = await import('tesseract.js')
+	// The English data ships as a package, so OCR never downloads anything.
+	const { langPath } = createRequire(import.meta.url)('@tesseract.js-data/eng') as { langPath: string }
+	const worker = await createWorker('eng', 1, { langPath, gzip: true, cacheMethod: 'none' })
+	const pages: PdfPage[] = []
+	try {
+		onPage(0, doc.numPages)
+		for (let n = 1; n <= doc.numPages; n++) {
+			const page = await doc.getPage(n)
+			const { width, height } = page.getViewport({ scale: 1 })
+			const viewport = page.getViewport({ scale: OCR_SCALE })
+			const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
+			const context = canvas.getContext('2d')
+			// A scan is an image over a white page; transparency would read as black.
+			context.fillStyle = 'white'
+			context.fillRect(0, 0, canvas.width, canvas.height)
+			await page.render({ canvas: canvas as never, canvasContext: context as never, viewport }).promise
+			const { data } = await worker.recognize(canvas.toBuffer('image/png'), {}, { blocks: true, text: false })
+			const lines = (data.blocks ?? []).flatMap((b) => b.paragraphs.flatMap((p) => p.lines))
+			const items = lines
+				.filter((l) => l.confidence >= 40 && l.text.trim())
+				.map((l) => ({
+					str: l.text.trim(),
+					x: l.bbox.x0 / OCR_SCALE,
+					y: height - l.baseline.y0 / OCR_SCALE,
+					// Rows of one type size have about the same height; whole points keep them together.
+					size: Math.round((l.rowAttributes?.rowHeight || l.bbox.y1 - l.bbox.y0) / OCR_SCALE),
+					width: (l.bbox.x1 - l.bbox.x0) / OCR_SCALE,
+				}))
+			pages.push({ number: n, width, height, items })
+			page.cleanup()
+			onPage(n, doc.numPages)
+		}
+	} finally {
+		await worker.terminate()
+	}
+	return pages
+}
+
+const charsIn = (pages: PdfPage[]) => pages.reduce((n, p) => n + p.items.reduce((m, i) => m + i.str.trim().length, 0), 0)
+const tooLittle = (pages: PdfPage[]) => charsIn(pages) < Math.max(200, pages.length * 40)
+
+/**
+ * Reads a PDF's text with pdf.js, in chapters (see pdfChapters). A PDF with almost no text is a
+ * scan: its pages are read with OCR instead, reporting each page done to `onScanPage`.
+ */
+export async function readPdf(bytes: Uint8Array, fallbackTitle: string, onScanPage: (done: number, total: number) => void = () => {}): Promise<Pdf> {
 	const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs')
 	let doc
 	try {
@@ -424,9 +485,11 @@ export async function readPdf(bytes: Uint8Array, fallbackTitle: string): Promise
 		pages.push({ number: n, width, height, items })
 		page.cleanup()
 	}
-	const chars = pages.reduce((n, p) => n + p.items.reduce((m, i) => m + i.str.trim().length, 0), 0)
-	if (chars < Math.max(200, pages.length * 40))
-		throw new ExtractError("This PDF is scanned pages without text, so Life Log Club can't read it yet.")
+	if (tooLittle(pages)) {
+		if (doc.numPages > MAX_SCANNED_PAGES) throw new ExtractError(SCAN_TOO_LONG)
+		pages.splice(0, pages.length, ...(await ocrPages(doc, onScanPage)))
+		if (tooLittle(pages)) throw new ExtractError(SCAN_UNREADABLE)
+	}
 	const meta = (await doc.getMetadata().catch(() => null))?.info as { Title?: string; Author?: string } | undefined
 	const outline = await outlineOf(doc)
 	await doc.destroy()

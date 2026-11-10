@@ -80,6 +80,66 @@ export function testPdf(pages: (string | [string, number])[][], outline: TestBoo
 	return pdfOf(objects)
 }
 
+/**
+ * A scan of `testPdf(pages)`: each page drawn at 150 dots per inch and stored as a JPEG image,
+ * with no text layer, as a scanner makes it.
+ */
+export async function scannedPdf(pages: (string | [string, number])[][]) {
+	const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+	const { createCanvas } = await import('@napi-rs/canvas')
+	const doc = await getDocument({ data: testPdf(pages), isEvalSupported: false, verbosity: 0 }).promise
+	const images: { jpeg: Uint8Array; width: number; height: number }[] = []
+	for (let n = 1; n <= doc.numPages; n++) {
+		const page = await doc.getPage(n)
+		const viewport = page.getViewport({ scale: 150 / 72 })
+		const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
+		const context = canvas.getContext('2d')
+		context.fillStyle = 'white'
+		context.fillRect(0, 0, canvas.width, canvas.height)
+		await page.render({ canvas: canvas as never, canvasContext: context as never, viewport }).promise
+		images.push({ jpeg: new Uint8Array(canvas.toBuffer('image/jpeg', 85)), width: canvas.width, height: canvas.height })
+	}
+	await doc.destroy()
+	// Objects as bytes: the images are binary, so they can't go through pdfOf's strings.
+	const parts: Uint8Array[] = []
+	const offsets: number[] = []
+	let length = 0
+	const push = (bytes: Uint8Array) => {
+		parts.push(bytes)
+		length += bytes.length
+	}
+	const text = (t: string) => push(strToU8(t, true))
+	text('%PDF-1.4\n')
+	const object = (body: () => void) => {
+		offsets.push(length)
+		text(`${offsets.length} 0 obj\n`)
+		body()
+		text('\nendobj\n')
+	}
+	object(() => text('<< /Type /Catalog /Pages 2 0 R >>'))
+	object(() => text(`<< /Type /Pages /Kids [${images.map((_, i) => `${3 + i * 3} 0 R`).join(' ')}] /Count ${images.length} >>`))
+	images.forEach((image, i) => {
+		const draw = '612 0 0 792 0 0 cm /Im0 Do'
+		object(() => text(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im0 ${5 + i * 3} 0 R >> >> /Contents ${4 + i * 3} 0 R >>`))
+		object(() => text(`<< /Length ${draw.length} >>\nstream\n${draw}\nendstream`))
+		object(() => {
+			text(`<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${image.jpeg.length} >>\nstream\n`)
+			push(image.jpeg)
+			text('\nendstream')
+		})
+	})
+	const xref = length
+	text(`xref\n0 ${offsets.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`)
+	text(`trailer\n<< /Size ${offsets.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`)
+	const out = new Uint8Array(length)
+	let at = 0
+	for (const part of parts) {
+		out.set(part, at)
+		at += part.length
+	}
+	return out
+}
+
 /** Writes numbered objects as a PDF file, with its cross-reference table. */
 function pdfOf(objects: string[]) {
 	let body = '%PDF-1.4\n'

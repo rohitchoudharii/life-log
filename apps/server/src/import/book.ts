@@ -8,6 +8,11 @@ export type BookKind = 'epub' | 'pdf'
 export type Book = { title: string; author: string | null; chapters: Chapter[]; notes: Note[]; article: boolean; images: [src: string, bytes: Uint8Array][] }
 
 const TIME_LIMIT = 2 * 60 * 1000
+/** While a scan is read, each page restarts this limit, so a long scan has time but a stuck page does not. */
+const PAGE_TIME_LIMIT = 60 * 1000
+
+/** Scanned pages read so far, while OCR runs. */
+export type ScanProgress = { done: number; total: number }
 
 /** What kind of book the bytes are, from their first bytes rather than the file's name. */
 export function bookKind(bytes: Uint8Array): BookKind | null {
@@ -20,7 +25,7 @@ export function bookKind(bytes: Uint8Array): BookKind | null {
  * Reads an EPUB or PDF in a worker thread, with a memory cap and a time limit, so one large or
  * hostile file can't stall or crash the server. Throws ExtractError with a message for the member.
  */
-export function parseBook(kind: BookKind, bytes: Uint8Array, name: string): Promise<Book> {
+export function parseBook(kind: BookKind, bytes: Uint8Array, name: string, onScan: (progress: ScanProgress) => void = () => {}): Promise<Book> {
 	return new Promise((resolve, reject) => {
 		// The worker runs TypeScript through tsx, as the server does; tests run without it, so it is asked for here.
 		const worker = new Worker(new URL('./book-worker.ts', import.meta.url), {
@@ -28,11 +33,18 @@ export function parseBook(kind: BookKind, bytes: Uint8Array, name: string): Prom
 			execArgv: ['--import', 'tsx'],
 			resourceLimits: { maxOldGenerationSizeMb: 1024 },
 		})
-		const timer = setTimeout(() => {
+		const tooLong = () => {
 			void worker.terminate()
 			reject(new ExtractError('This file took too long to read. Try again, or try another copy.'))
-		}, TIME_LIMIT)
-		worker.once('message', (message: { book?: Book; refused?: string }) => {
+		}
+		let timer = setTimeout(tooLong, TIME_LIMIT)
+		worker.on('message', (message: { book?: Book; refused?: string; scan?: ScanProgress }) => {
+			if (message.scan) {
+				clearTimeout(timer)
+				timer = setTimeout(tooLong, PAGE_TIME_LIMIT)
+				onScan(message.scan)
+				return
+			}
 			clearTimeout(timer)
 			void worker.terminate()
 			if (message.book) resolve(message.book)

@@ -12,7 +12,7 @@ try {
 	if (kind === 'epub') {
 		const epub = readEpub(bytes)
 		book = { ...epub, article: false, images: [...epub.images] }
-	} else book = { ...(await readPdf(bytes, name)), images: [] }
+	} else book = { ...(await readPdf(bytes, name, (done, total) => parentPort!.postMessage({ scan: { done, total } }))), images: [] }
 	parentPort!.postMessage({ book })
 } catch (error) {
 	if (error instanceof ExtractError) parentPort!.postMessage({ refused: error.message })

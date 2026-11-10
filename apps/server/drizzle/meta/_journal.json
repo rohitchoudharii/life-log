@@ -169,6 +169,13 @@
       "when": 1794288947788,
       "tag": "0023_scheduler_fits",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794290271191,
+      "tag": "0024_scan_progress",
+      "breakpoints": true
     }
   ]
 }
