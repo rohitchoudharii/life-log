@@ -63,6 +63,23 @@ export async function monthUsage(tx: Tx, userId: string, now = new Date()) {
 	}
 }
 
+/** AI calls and tokens in each of the last 12 calendar months (UTC) that had any, newest first. */
+export async function usageHistory(tx: Tx, now = new Date()) {
+	const month = sql<string>`date_trunc('month', ${aiCalls.at} at time zone 'UTC')`
+	const since = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1))
+	const rows = await tx
+		.select({
+			month,
+			calls: sql<number>`count(*)::int`,
+			tokens: sql<number>`(coalesce(sum(${aiCalls.inputTokens}), 0) + coalesce(sum(${aiCalls.outputTokens}), 0))::int`,
+		})
+		.from(aiCalls)
+		.where(gte(aiCalls.at, since))
+		.groupBy(month)
+		.orderBy(sql`1 desc`)
+	return rows.map((r) => ({ month: new Date(`${String(r.month).slice(0, 10)}T00:00:00Z`), calls: r.calls, tokens: r.tokens }))
+}
+
 /**
  * The one check background AI work makes before it spends: false once this month's estimated
  * spend has reached the member's budget. Work the member is waiting on, such as grading, doesn't

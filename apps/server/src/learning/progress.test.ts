@@ -191,3 +191,51 @@ it('calibration counts recall and review answers given with a confidence, and Su
 		sureWrongThisMonth: 2,
 	})
 })
+
+it('scheduler fit groups answers by predicted recall in tenths, against how many were right; honesty and reading count as defined', async () => {
+	const [user] = await ownerDb.insert(users).values({ email: `fit-${randomUUID()}@example.com`, name: 'F' }).returning()
+	const userId = user!.id
+	const cardId = randomUUID()
+	await ownerDb.insert(cards).values({ id: cardId, userId, kind: 'idea', prompt: 'Why?', answer: 'Because.', state: defaultScheduler.initial(), dueAt: now, startedAt: ago(60) })
+	type Row = { predicted: number | null; correct: boolean; mode?: 'recall' | 'review' | 'practice'; daysAgo?: number; gradedBy?: 'ai' | 'code' | 'self'; overridden?: boolean }
+	const rows: Row[] = [
+		// 90 to 100%: four answers, three right.
+		{ predicted: 0.95, correct: true },
+		{ predicted: 0.91, correct: true },
+		{ predicted: 1, correct: true },
+		{ predicted: 0.9, correct: false, gradedBy: 'ai', overridden: false },
+		// 60 to 70%: two answers, one right, one of them counted as right by the member.
+		{ predicted: 0.62, correct: false, gradedBy: 'ai' },
+		{ predicted: 0.68, correct: true, gradedBy: 'ai', overridden: true },
+		// 0 to 10%: a recall answer.
+		{ predicted: 0.05, correct: false, mode: 'recall', gradedBy: 'code' },
+		// Left out: practice, no prediction, and before the period.
+		{ predicted: 0.5, correct: true, mode: 'practice', gradedBy: 'ai', overridden: true },
+		{ predicted: null, correct: true },
+		{ predicted: 0.5, correct: true, daysAgo: 100 },
+	]
+	await ownerDb.insert(reviewLog).values(
+		rows.map((r) => ({
+			userId,
+			cardId,
+			mode: r.mode ?? ('review' as const),
+			rating: r.correct ? ('good' as const) : ('again' as const),
+			correct: r.correct,
+			predictedRecall: r.predicted,
+			gradedBy: r.gradedBy ?? 'self',
+			overriddenAt: r.overridden ? ago(1) : null,
+			reviewedAt: ago(r.daysAgo ?? 2),
+			nextDueAt: now,
+		})),
+	)
+	const summary = await asUser(userId, (tx) => progressSummary(tx, userId, 84, now))
+	expect(summary.schedulerFit.map(({ predicted, ...b }) => ({ ...b, predicted: Math.round(predicted * 1000) / 1000 }))).toEqual([
+		{ bucket: 0, answers: 1, right: 0, predicted: 0.05 },
+		{ bucket: 6, answers: 2, right: 1, predicted: 0.65 },
+		{ bucket: 9, answers: 4, right: 3, predicted: 0.94 },
+	])
+	expect(summary.honesty).toEqual({ counted: 1, checked: 4, reported: 0 })
+	expect(summary.reading).toMatchObject({ finished: 0, words: 0 })
+	expect(summary.reading.weeks).toHaveLength(13)
+	expect(summary.reading.weeks.every((w) => w.minutes === 0)).toBe(true)
+})

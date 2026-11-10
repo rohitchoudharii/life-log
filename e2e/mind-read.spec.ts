@@ -1628,3 +1628,33 @@ test('Teach it back after a miss in Review: explain the idea, answer the student
 	await saved.getByRole('button', { name: 'Teach it back' }).click()
 	await expect(dialog.getByLabel('Your explanation')).toBeFocused()
 })
+
+test('Progress shows how well the schedule predicts recall, tenth by tenth, and where it is off; Honesty and Reading count plainly', async ({ page }, testInfo) => {
+	await joinAs(page)
+	const id = crypto.randomUUID()
+	expect((await api(page, 'review/add', { id, kind: 'idea', prompt: 'Why space practice?', answer: 'Forgetting makes recall work harder.' })).ok()).toBe(true)
+	await page.goto('/mind/progress')
+	await expect(page.getByTestId('scheduler-fit')).toHaveText('Not enough answers yet (0 of 20)')
+
+	// 12 answers predicted at 92%, 11 right; 10 predicted at 65%, only 3 right; one of them counted as right by the member.
+	await sql(
+		`insert into review_log (user_id, card_id, mode, rating, correct, predicted_recall, graded_by, overridden_at, reviewed_at, next_due_at)
+		select c.user_id, c.id, 'review', case when g.right then 'good' else 'again' end, g.right, g.p, 'ai', case when g.n = 1 then now() end, now() - interval '1 day', now()
+		from cards c, (
+			select n, 0.92::real as p, n <= 11 as right from generate_series(1, 12) n
+			union all select 100 + n, 0.65::real, n <= 3 from generate_series(1, 10) n
+		) g where c.id = $1`,
+		[id],
+	)
+	await page.reload()
+	const fit = page.getByTestId('scheduler-fit').getByRole('listitem')
+	await expect(fit).toHaveText(['60–70%30% of 10', '90–100%92% of 12'])
+	await expect(page.getByTestId('scheduler-fit-verdict')).toHaveText('Off by more than 10 points at 60–70%. Once you have 1,000 answers, the schedule tunes itself to you each month.')
+	await expect(page.getByTestId('honesty')).toHaveText('You counted 1 of 22 checked answers as right yourself · 0 questions reported')
+	await expect(page.getByTestId('reading')).toHaveText('0 min this week · 0 readings finished · 0 words added')
+	await expect(page.getByRole('list', { name: 'Minutes read by week' })).toHaveCount(0)
+	await page.getByRole('region', { name: 'Scheduler fit' }).scrollIntoViewIfNeeded()
+	await proof(page, testInfo, 'scheduler-fit')
+	await page.getByRole('region', { name: 'Honesty' }).scrollIntoViewIfNeeded()
+	await proof(page, testInfo, 'honesty-reading')
+})

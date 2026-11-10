@@ -275,6 +275,41 @@ function usageLine(u: { calls: number; tokens: number; costUsd: number | null; b
 	return `This month: ${calls} · ${spend}`
 }
 
+const monthName = new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+
+/** Calls and tokens in each earlier month, so the member sees how their use changes over time. */
+function UsageHistory() {
+	const history = useQuery(orpc.ai.usageHistory.queryOptions())
+	const now = new Date()
+	const earlier = (history.data ?? []).filter((m) => m.month.getUTCFullYear() !== now.getUTCFullYear() || m.month.getUTCMonth() !== now.getUTCMonth())
+	if (!earlier.length) return null
+	return (
+		<details className="text-sm">
+			<summary className="cursor-pointer text-ink/60">Earlier months</summary>
+			<table className="mt-2 w-full" data-testid="usage-history">
+				<thead className="sr-only">
+					<tr>
+						<th>Month</th>
+						<th>Calls</th>
+						<th>Tokens</th>
+					</tr>
+				</thead>
+				<tbody>
+					{earlier.map((m) => (
+						<tr key={m.month.toISOString()} className="border-t border-ink/5">
+							<td className="py-1.5">{monthName.format(m.month)}</td>
+							<td className="py-1.5 text-right tabular-nums">
+								{m.calls.toLocaleString('en')} {m.calls === 1 ? 'call' : 'calls'}
+							</td>
+							<td className="py-1.5 text-right tabular-nums">{m.tokens.toLocaleString('en')} tokens</td>
+						</tr>
+					))}
+				</tbody>
+			</table>
+		</details>
+	)
+}
+
 function AiUsage() {
 	const queryClient = useQueryClient()
 	const usage = useQuery(orpc.ai.usage.queryOptions())
@@ -297,6 +332,7 @@ function AiUsage() {
 				</p>
 				{u?.reached && <p className="mt-1 text-sm text-red">This month’s budget is used, so questions are not written in the background.</p>}
 			</div>
+			<UsageHistory />
 			<form
 				className="flex flex-wrap items-end gap-3"
 				onSubmit={(e) => {

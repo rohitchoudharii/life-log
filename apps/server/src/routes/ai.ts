@@ -5,7 +5,7 @@ import { encrypt } from '../crypto'
 import { asUser } from '../db/client'
 import { aiKeys } from '../db/schema'
 import { requeueWaiting } from '../jobs'
-import { keyContext, monthUsage, providers } from '../learning/ai'
+import { keyContext, monthUsage, usageHistory, providers } from '../learning/ai'
 import { authed } from '../orpc'
 
 /** Proves the key works by listing its models, which costs nothing, and picks a low-cost one. */
@@ -63,4 +63,5 @@ export const aiRoutes = {
 	}),
 
 	usage: authed.ai.usage.handler(({ context }) => asUser(context.user.id, (tx) => monthUsage(tx, context.user.id))),
+	usageHistory: authed.ai.usageHistory.handler(({ context }) => asUser(context.user.id, (tx) => usageHistory(tx))),
 }

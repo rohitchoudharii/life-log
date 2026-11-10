@@ -404,6 +404,16 @@ export const ProgressSummary = z.object({
 	 * many answers this calendar month (UTC) were wrong though the member was sure.
 	 */
 	calibration: z.object({ sure: RightOf, think_so: RightOf, guessing: RightOf, sureWrongThisMonth: z.int() }),
+	/**
+	 * Scheduler fit: answers in Recall and Review by the recall the scheduler predicted when each was
+	 * asked, in tenths (bucket 0 is 0 to 10%, 9 is 90 to 100%). For each tenth with answers: how
+	 * many, their mean predicted recall, and how many were right.
+	 */
+	schedulerFit: z.array(z.object({ bucket: z.int().min(0).max(9), answers: z.int(), predicted: z.number(), right: z.int() })),
+	/** Answers checked by code or AI that the member counted as right themselves, out of all of them, and questions reported. */
+	honesty: z.object({ counted: z.int(), checked: z.int(), reported: z.int() }),
+	/** Minutes read by week (Monday, UTC), every week of the period, oldest first; readings finished and words added in it. */
+	reading: z.object({ weeks: z.array(z.object({ week: z.date(), minutes: z.int() })), finished: z.int(), words: z.int() }),
 	/** Practice minutes per skill by week (Monday, UTC), every week of the period, oldest first; skills with practice in it only. */
 	practice: z.array(z.object({ skillId: z.uuid(), name: z.string(), weeklyMinutes: z.int().nullable(), weeks: z.array(z.object({ week: z.date(), minutes: z.int() })) })),
 })
@@ -903,6 +913,8 @@ export const contract = {
 			.input(z.object({ provider: AiKey.shape.provider, apiKey: z.string().trim().min(10, 'Paste the whole key').max(500) }))
 			.output(AiKey),
 		removeKey: oc.output(Ok),
+		/** AI calls and tokens in each of the last 12 calendar months (UTC) that had any, newest first. */
+		usageHistory: oc.output(z.array(z.object({ month: z.date(), calls: z.int(), tokens: z.int() }))),
 		/**
 		 * This month's AI calls (calendar month, UTC) and their estimated cost against the member's
 		 * budget. `costUsd` is null when no call was to a model with a known price. Once `reached`,

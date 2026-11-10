@@ -64,6 +64,10 @@ test('Settings shows this month’s AI use against the budget, and Mind says whe
 	)
 	await page.reload()
 	await expect(page.getByTestId('ai-usage')).toHaveText('This month: 2 calls · about $0.04 of $5')
+	// Earlier months show calls and tokens, this month already being above.
+	await page.getByText('Earlier months').click()
+	const earlier = new Date(Date.now() - 40 * 86_400_000).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+	await expect(page.getByTestId('usage-history').getByRole('row')).toHaveText([/Month/, `${earlier}1 call12,000 tokens`])
 	await proof(page, testInfo, 'settings-usage')
 	await page.getByRole('link', { name: 'Mind' }).first().click()
 	await expect(page.getByRole('heading', { name: 'The reading room' })).toBeVisible()

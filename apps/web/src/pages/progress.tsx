@@ -175,6 +175,88 @@ function Dumps({ dumps }: { dumps: ProgressSummary['dumps'] }) {
 	)
 }
 
+const tenth = (b: number) => `${b * 10}–${b * 10 + 10}%`
+
+/**
+ * Scheduler fit: for each tenth of predicted recall, how often the member was right (the bar)
+ * against how likely the schedule thought it was (the mark). Bars that reach their marks mean the
+ * schedule knows this member's memory.
+ */
+function SchedulerFit({ fit }: { fit: ProgressSummary['schedulerFit'] }) {
+	const answers = fit.reduce((n, b) => n + b.answers, 0)
+	const off = fit.filter((b) => b.answers >= 10 && Math.abs(b.right / b.answers - b.predicted) > 0.1)
+	return (
+		<Block title="Scheduler fit" sub="How often you were right, against how likely the schedule thought you would be.">
+			{answers < RECALL_MIN_REVIEWS ? (
+				<p className="font-sans text-sm text-world-muted" data-testid="scheduler-fit">
+					Not enough answers yet ({answers} of {RECALL_MIN_REVIEWS})
+				</p>
+			) : (
+				<>
+					<ol aria-label="Recall by prediction" className="grid gap-2 font-sans text-sm" data-testid="scheduler-fit">
+						{fit.map((b) => (
+							<li key={b.bucket} className="grid grid-cols-[4.5rem_1fr_7.5rem] items-center gap-3">
+								<span className="text-world-muted tabular-nums">{tenth(b.bucket)}</span>
+								<div className="relative h-2.5 w-full rounded-full bg-world-line" aria-hidden>
+									<div className="h-full rounded-full bg-world-accent" style={{ width: `${(b.right / b.answers) * 100}%` }} />
+									<div className="absolute -inset-y-1 w-0.5 bg-red" style={{ left: `${b.predicted * 100}%` }} />
+								</div>
+								<span className="text-right tabular-nums">
+									{percent(b.right, b.answers)} of {b.answers}
+								</span>
+							</li>
+						))}
+					</ol>
+					<p className="font-sans text-xs text-world-muted">
+						Left: the chance of recall the schedule predicted. Bar: how often you were right. Red mark: what it predicted.
+					</p>
+					<p className="font-sans text-sm" data-testid="scheduler-fit-verdict">
+						{off.length
+							? `Off by more than 10 points at ${off.map((b) => tenth(b.bucket)).join(', ')}. Once you have 1,000 answers, the schedule tunes itself to you each month.`
+							: 'The schedule predicts your recall well.'}
+					</p>
+				</>
+			)}
+		</Block>
+	)
+}
+
+/** How often the member overrode a check, and how many questions they reported: shown plainly, never as a score. */
+function Honesty({ honesty }: { honesty: ProgressSummary['honesty'] }) {
+	return (
+		<Block title="Honesty" sub="Where you changed what the app decided.">
+			<p className="font-sans text-sm" data-testid="honesty">
+				You counted {honesty.counted} of {honesty.checked} checked {honesty.checked === 1 ? 'answer' : 'answers'} as right yourself · {honesty.reported}{' '}
+				{honesty.reported === 1 ? 'question' : 'questions'} reported
+			</p>
+		</Block>
+	)
+}
+
+/** Minutes read a week, with readings finished and words added in the same weeks. */
+function Reading({ reading }: { reading: ProgressSummary['reading'] }) {
+	const top = Math.max(1, ...reading.weeks.map((w) => w.minutes))
+	const thisWeek = reading.weeks.at(-1)?.minutes ?? 0
+	return (
+		<Block title="Reading" sub="Time spent reading each week. Time alone is not learning; recall above is the real measure.">
+			<p className="font-sans text-sm" data-testid="reading">
+				{thisWeek} min this week · {reading.finished} {reading.finished === 1 ? 'reading' : 'readings'} finished · {reading.words} {reading.words === 1 ? 'word' : 'words'} added
+			</p>
+			{/* No chart of empty weeks: the line above already says nothing was read. */}
+			{reading.weeks.some((w) => w.minutes) ? (
+				<ol aria-label="Minutes read by week" className="flex h-12 items-end gap-1">
+					{reading.weeks.map((w) => (
+						<li key={w.week.toISOString()} className="flex h-full flex-1 items-end" title={`${w.minutes} min`}>
+							<div className="w-full rounded-t-sm bg-world-accent" style={{ height: `${(w.minutes / top) * 100}%`, minHeight: w.minutes ? 3 : 0 }} />
+							<span className="sr-only">{w.minutes} min</span>
+						</li>
+					))}
+				</ol>
+			) : null}
+		</Block>
+	)
+}
+
 /** Practice minutes a week on each skill, with its target as a mark, oldest week first. */
 function Practice({ practice }: { practice: ProgressSummary['practice'] }) {
 	return (
@@ -257,8 +339,11 @@ export function Progress() {
 					<Ideas ideas={data.ideas} />
 					<RecallAtReview recall={data.recallAtReview} />
 					<RecallByGap gaps={data.recallByGap} />
+					<SchedulerFit fit={data.schedulerFit} />
 					<Calibration calibration={data.calibration} />
+					<Honesty honesty={data.honesty} />
 					<Dumps dumps={data.dumps} />
+					<Reading reading={data.reading} />
 					<Practice practice={data.practice} />
 				</>
 			)}
