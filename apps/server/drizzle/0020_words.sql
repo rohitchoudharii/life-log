@@ -1,0 +1,2 @@
+ALTER TABLE "sections" ADD COLUMN "terms" jsonb DEFAULT '[]'::jsonb NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "cards_user_word" ON "cards" USING btree ("user_id",lower("details"->>'word')) WHERE "cards"."kind" = 'word';

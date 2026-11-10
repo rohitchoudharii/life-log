@@ -8,6 +8,7 @@ import { addChapterHeadings, importReading } from './import/reading'
 import { type CueJob, writeLessonCue } from './learning/lessons'
 import { type GradeJob, gradeAttempt } from './learning/recall'
 import { type IdeaCueJob, writeIdeaCue } from './learning/saved-ideas'
+import { type DefineWordJob, defineWord } from './learning/words'
 import { type TopUpJob, topUpQuestions } from './learning/top-up'
 import { type WriteJob, writeKeyIdeas } from './learning/write-section'
 
@@ -125,6 +126,11 @@ const IDEA_CUE = 'write-cue'
 /** Queues the writing of a cue for an idea saved from a reading without a question. */
 export const enqueueIdeaCue = (job: IdeaCueJob) => boss.send(IDEA_CUE, job, { singletonKey: job.cardId })
 
+const DEFINE_WORD = 'define-word'
+
+/** Queues the defining of a word added without a meaning. */
+export const enqueueDefineWord = (job: DefineWordJob) => boss.send(DEFINE_WORD, job, { singletonKey: job.cardId })
+
 /**
  * Queues again the member's sections that wait in one of `statuses`: after they add a key
  * (`needs_key`) or raise the budget (`paused`).
@@ -202,6 +208,11 @@ export async function startJobs() {
 	if (!(await boss.getQueue(IDEA_CUE))) await boss.createQueue(IDEA_CUE, { policy: 'stately', retryLimit: 1, retryDelay: 30, expireInSeconds: 5 * 60 })
 	await boss.work(IDEA_CUE, { localConcurrency: 4 }, async ([job]: Job<IdeaCueJob>[]) => {
 		if (job) await writeIdeaCue(job.data)
+	})
+	// A word that can't be defined asks the member for its meaning, so one retry is enough.
+	if (!(await boss.getQueue(DEFINE_WORD))) await boss.createQueue(DEFINE_WORD, { policy: 'stately', retryLimit: 1, retryDelay: 30, expireInSeconds: 5 * 60 })
+	await boss.work(DEFINE_WORD, { localConcurrency: 4 }, async ([job]: Job<DefineWordJob>[]) => {
+		if (job) await defineWord(job.data)
 	})
 	// Readings left importing by a stop before their job was queued. The singleton key keeps a
 	// reading whose job is still queued from getting a second one.

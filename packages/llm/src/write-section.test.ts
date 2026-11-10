@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { explainRequest, parseExplanation } from './explain'
 import { parseJudgeVerdict } from './judge'
 import { parseRecallVerdict } from './recall'
+import { parseDefinition, parseTerms } from './words'
 import { type Complete, MAX_IDEAS, writeQuestions, writeSection } from './write-section'
 
 const section = {
@@ -207,6 +208,29 @@ describe('writeSection', () => {
 		expect(written.ideas[0]!.section).toBe(1)
 	})
 
+	it('suggests up to 3 words per section, each in a sentence of that section', async () => {
+		const term = (word: string, form: string, sentence: string, n = 1) => ({ section: n, word, form, sentence, meaning: `what ${word} means here` })
+		const { complete } = scripted({
+			'write-section': {
+				ideas: [idea(1)],
+				terms: [
+					term('fluent', 'fluent', 'Cramming feels fluent but fades within days.'),
+					// Not a sentence of the section: dropped.
+					term('consolidate', 'consolidates', 'Sleep consolidates memory.'),
+					// The sentence does not use the word: dropped.
+					term('retrieval', 'retrieval', 'Recall after a gap is harder than recall right away.'),
+					term('effort', 'effort', 'The effort of pulling a memory back is what makes it last.'),
+				],
+			},
+		})
+		const written = await writeSection(complete, [section], { amount: 'quick', style: 'mixed', qualityCheck: false })
+		expect(written.terms).toEqual([[
+			{ word: 'fluent', form: 'fluent', sentence: 'Cramming feels fluent but fades within days.', meaning: 'what fluent means here' },
+			{ word: 'effort', form: 'effort', sentence: 'The effort of pulling a memory back is what makes it last.', meaning: 'what effort means here' },
+		]])
+		expect(parseTerms(Array.from({ length: 5 }, (_, i) => term(`w${i}`, 'gap', 'Recall after a gap is harder than recall right away.')), section.text)).toHaveLength(3)
+	})
+
 	it('refuses a reply that is not JSON', async () => {
 		const complete: Complete = async () => 'Sorry, I cannot help with that.'
 		await expect(writeSection(complete, [section], { amount: 'standard', style: 'mixed', qualityCheck: false })).rejects.toThrow(/key ideas/)
@@ -257,5 +281,21 @@ describe('parseExplanation', () => {
 		const input = { section, passage: 'This keeps softmax from saturating.', kind: 'analogy' } as const
 		expect(explainRequest('m', input).user).toMatch(/one analogy from everyday life/)
 		expect(explainRequest('m', { ...input, kind: 'explain' }).user).toMatch(/from first principles/)
+	})
+})
+
+describe('parseDefinition', () => {
+	it('keeps the sentence the member read, and an example sentence only when it uses the word', () => {
+		const read = { form: 'Saturating', sentence: 'Scaling keeps softmax from Saturating.' }
+		expect(parseDefinition('{"word": "saturate", "meaning": "pushing nearly all weight onto one option", "sentence": "Other."}', read)).toEqual({
+			word: 'saturate',
+			form: 'Saturating',
+			sentence: 'Scaling keeps softmax from Saturating.',
+			meaning: 'pushing nearly all weight onto one option',
+		})
+		const typed = { form: 'gist', sentence: null }
+		expect(parseDefinition('{"word": "gist", "meaning": "the main point", "sentence": "I got the gist of it."}', typed)?.sentence).toBe('I got the gist of it.')
+		expect(parseDefinition('{"word": "gist", "meaning": "the main point", "sentence": "I got the point."}', typed)?.sentence).toBe('')
+		expect(parseDefinition('{"word": "gist", "meaning": ""}', typed)).toBeNull()
 	})
 })

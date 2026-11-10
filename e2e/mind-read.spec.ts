@@ -1354,8 +1354,6 @@ test('Explain on a selected passage explains it from first principles over the r
 	await expect(explanation).toContainText('The analogy breaks down')
 	await dialog.getByRole('button', { name: 'Example' }).click()
 	await expect(explanation.locator('pre')).toHaveText('let gap = 1\nconsole.log(gap * 2)')
-	// The pointer resting on the pressed pill draws it faded in a full-page capture.
-	await page.mouse.move(0, 0)
 	await proof(page, testInfo, 'explain-example')
 	// Back to the first explanation: shown again without another AI call.
 	await dialog.getByRole('button', { name: 'From first principles' }).click()
@@ -1379,4 +1377,123 @@ test('Explain on a selected passage explains it from first principles over the r
 	await page.keyboard.press('Escape')
 	await expect(page.getByRole('dialog', { name: 'Explain' })).toHaveCount(0)
 	await expect(paragraph).toBeVisible()
+})
+
+/** Selects the first place `word` appears in the open section's text, as a double-click would. */
+const selectWord = (page: Page, word: string) =>
+	page.locator('article[data-section]').first().evaluate((article, w) => {
+		const walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT)
+		for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+			const at = node.textContent!.search(new RegExp(`\\b${w}\\b`))
+			if (at < 0) continue
+			const range = document.createRange()
+			range.setStart(node, at)
+			range.setEnd(node, at + w.length)
+			document.getSelection()!.removeAllRanges()
+			document.getSelection()!.addRange(range)
+			return
+		}
+		throw new Error(`${w} is not in the section`)
+	}, word)
+const wordCards = (userEmail: string) =>
+	sql<{ id: string; answer: string; details: { word: string; form: string; sentence: string | null }; section_id: string | null; deleted_at: Date | null }>(
+		"select id, answer, details, section_id, deleted_at from cards where kind = 'word' and user_id = (select id from users where email = $1) order by created_at",
+		[userEmail],
+	)
+
+test('Words while reading: a suggested word is underlined and kept in one click, Add word on a selection is defined by AI in its sentence, and Words lists them', async ({ page }, testInfo) => {
+	const { readingId, ids } = await openWithKey(page)
+	const email = (await sql<{ email: string }>('select email from users where id = (select user_id from readings where id = $1)', [readingId]))[0]!.email
+	await stay(page)
+	await expect.poll(() => writeStatus(ids[0]!), { timeout: 15_000 }).toBe('ready')
+
+	// The AI found "cooperation" worth knowing: underlined faintly where it stands, never added for the member.
+	const suggested = page.locator('article').getByRole('button', { name: 'cooperation', exact: true })
+	await expect(suggested).toBeVisible()
+	expect(await wordCards(email)).toEqual([])
+	await proof(page, testInfo, 'suggested-word')
+	await suggested.click()
+	const term = page.getByRole('dialog', { name: 'A word worth knowing' })
+	await expect(term).toContainText('the sense of "cooperation" in this text')
+	await expect(term).toContainText('JavaScript execution requires the cooperation of two pieces of software')
+	await proof(page, testInfo, 'keep-word')
+	await term.getByRole('button', { name: 'Keep' }).click()
+	await expect(page.getByRole('status').filter({ hasText: 'Added “cooperation”. It comes back tomorrow.' })).toBeVisible()
+	// Kept, so no longer suggested.
+	await expect(suggested).toHaveCount(0)
+
+	// A word selected in the text: one click, and the AI defines it in its sentence.
+	await selectWord(page, 'parses')
+	const bar = page.getByRole('toolbar', { name: 'Selection' })
+	await expect(bar.getByRole('button')).toHaveText(['Add word', 'Explain'])
+	await proof(page, testInfo, 'add-word-bar')
+	await bar.getByRole('button', { name: 'Add word' }).click()
+	await expect(page.getByRole('status').filter({ hasText: 'Added “parses”. Its meaning comes in a moment.' })).toBeVisible()
+	await expect.poll(async () => (await wordCards(email)).find((c) => c.details.form === 'parses')?.answer, { timeout: 10_000 }).toBe('what "parses" means here')
+
+	const cards = await wordCards(email)
+	expect(cards.map((c) => [c.details.word, c.details.sentence, c.section_id])).toEqual([
+		['cooperation', 'JavaScript execution requires the cooperation of two pieces of software: the JavaScript engine and the host environment.', ids[0]],
+		['parses', 'It takes source code, parses it, and executes it.', ids[0]],
+	])
+
+	// Words: both, with meaning, sentence, when they come back and where they came from.
+	await page.goto('/mind')
+	await page.getByRole('link', { name: 'Words', exact: true }).click()
+	const list = page.getByRole('list', { name: 'Your words' }).getByTestId('word')
+	await expect(list).toHaveCount(2)
+	await expect(list.first()).toContainText('parses')
+	await expect(list.first()).toContainText('what "parses" means here')
+	await expect(list.first()).toContainText('“It takes source code, parses it, and executes it.”')
+	await expect(list.first().getByTestId('word-due')).toHaveText('Back tomorrow')
+	await expect(list.first()).toContainText('JavaScript execution model')
+
+	// By hand: the same word again keeps one card; a new one without a sentence gets an example sentence.
+	const add = page.getByRole('form', { name: 'Add a word' })
+	await add.getByLabel('Word').fill('Cooperation')
+	await add.getByRole('button', { name: 'Add' }).click()
+	await expect(page.getByRole('status').filter({ hasText: '“cooperation” is in your words already.' })).toBeVisible()
+	await add.getByLabel('Word').fill('gist')
+	await add.getByLabel('Word').press('Enter')
+	await expect(list).toHaveCount(3)
+	await expect.poll(async () => (await wordCards(email)).find((c) => c.details.word === 'gist')?.answer, { timeout: 10_000 }).toBe('what "gist" means here')
+	await page.reload()
+	await expect(list.first()).toContainText('“She used gist in a sentence.”')
+	await proof(page, testInfo, 'words')
+
+	// Remove, then Undo.
+	await list.first().getByRole('button', { name: 'Remove' }).click()
+	await expect(list).toHaveCount(2)
+	await page.getByRole('button', { name: 'Undo' }).click()
+	await expect(list).toHaveCount(3)
+})
+
+test('Words without a key: Add word asks what the word means, and adding by hand needs a meaning', async ({ page }, testInfo) => {
+	const email = await joinAs(page)
+	const text = 'Interleaving mixes problem types within one session. A learner who interleaves must choose a method each time, and that choice is what transfers.'
+	const added = await api(page, 'readings/addText', { id: crypto.randomUUID(), title: 'Practice', text: `# Mixing\n\n${text}` })
+	expect(added.ok()).toBe(true)
+	const { json: reading } = (await added.json()) as { json: { id: string } }
+	await page.goto(`/mind/read/${reading.id}`)
+	await expect(sectionTitle(page)).toHaveText('Mixing')
+
+	await selectWord(page, 'interleaves')
+	await page.getByRole('toolbar', { name: 'Selection' }).getByRole('button', { name: 'Add word' }).click()
+	const dialog = page.getByRole('dialog', { name: 'Add word' })
+	await expect(dialog).toContainText('A learner who interleaves must choose a method each time, and that choice is what transfers.')
+	await dialog.getByLabel('What it means here').fill('mixes different kinds of problems in one sitting')
+	await proof(page, testInfo, 'add-word-no-key')
+	await dialog.getByLabel('What it means here').press('Enter')
+	await expect(page.getByRole('status').filter({ hasText: 'Added “interleaves”. It comes back tomorrow.' })).toBeVisible()
+	expect((await wordCards(email)).map((c) => [c.details.form, c.answer])).toEqual([['interleaves', 'mixes different kinds of problems in one sitting']])
+
+	await page.goto('/mind/words')
+	const add = page.getByRole('form', { name: 'Add a word' })
+	await add.getByLabel('Word').fill('desirable difficulty')
+	await add.getByRole('button', { name: 'Add' }).click()
+	await expect(add.getByRole('alert')).toHaveText('Add what it means.')
+	await add.getByLabel('What it means').fill('a struggle while learning that makes memory last')
+	await add.getByRole('button', { name: 'Add' }).click()
+	await expect(page.getByRole('list', { name: 'Your words' }).getByTestId('word')).toHaveCount(2)
+	await expect(add.getByRole('alert')).toHaveCount(0)
 })

@@ -1,13 +1,18 @@
 import { MAX_EXPLAIN_CHARS, MAX_QUOTE_CHARS, type SavedCard } from '@life-log-club/contract'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { MAX_WORD_CHARS } from '@life-log-club/domain'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ExplainDialog } from './explain'
 import { client, errorMessage, orpc } from './rpc'
 import { useToast } from './toast'
+import { MeaningDialog, useWordAdded } from './word-dialogs'
 
-/** What a selection in the reader would save: its text, where it starts, and where to show the button. */
-type Picked = { quote: string; sectionId: string; block: number; top: number; left: number }
+/**
+ * What a selection in the reader would save: its text, the sentence it starts in, where it
+ * starts, and where to show the bar.
+ */
+type Picked = { quote: string; sentence: string; sectionId: string; block: number; top: number; left: number }
 
 /** A selection keeps line breaks and spacing; quotes are compared as one run of text, as the server keeps them. */
 const oneRun = (text: string) => text.replace(/\s+/g, ' ').trim()
@@ -37,9 +42,29 @@ function pick(): Picked | null {
 	if (!article || article.dataset.pending !== undefined) return null
 	const quote = textOf(range)
 	if (!quote) return null
-	const block = Number(start?.closest<HTMLElement>('[data-block]')?.dataset.block ?? 0)
+	const blockEl = start?.closest<HTMLElement>('[data-block]')
+	const block = Number(blockEl?.dataset.block ?? 0)
 	const rect = range.getBoundingClientRect()
-	return { quote, sectionId: article.dataset.section!, block, top: rect.bottom + window.scrollY + 8, left: rect.left + window.scrollX }
+	const sentence = blockEl ? sentenceAt(blockEl, range) : quote
+	return { quote, sentence, sectionId: article.dataset.section!, block, top: rect.bottom + window.scrollY + 8, left: rect.left + window.scrollX }
+}
+
+/** The sentence of a block that a selection starts in, as one run of text. */
+function sentenceAt(block: HTMLElement, range: Range) {
+	const before = document.createRange()
+	before.setStart(block, 0)
+	before.setEnd(range.startContainer, range.startOffset)
+	const at = before.toString().length
+	const text = block.textContent ?? ''
+	for (const s of new Intl.Segmenter(undefined, { granularity: 'sentence' }).segment(text))
+		if (at >= s.index && at < s.index + s.segment.length) return oneRun(s.segment)
+	return oneRun(text)
+}
+
+/** A selection that is a word or a short term, not a phrase or a passage: what Add word takes. */
+const asWord = (quote: string) => {
+	const word = quote.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
+	return word && word.length <= MAX_WORD_CHARS && word.split(' ').length <= 3 && /^[\p{L}\p{N}'’ -]+$/u.test(word) ? word : null
 }
 
 /** The idea form: the quote, with the member's own words and question, both optional. Enter saves. */
@@ -147,6 +172,19 @@ export function SaveIdea({ readingId }: { readingId: string }) {
 	const [picked, setPicked] = useState<Picked | null>(null)
 	const [open, setOpen] = useState<{ picked: Picked; saved: SavedCard | undefined } | null>(null)
 	const [explaining, setExplaining] = useState<Picked | null>(null)
+	const [defining, setDefining] = useState<{ picked: Picked; form: string } | null>(null)
+	const key = useQuery(orpc.ai.getKey.queryOptions())
+	const added = useWordAdded()
+	// With a key, Add word is one click: the AI defines the word in its sentence. Without one, the member says what it means.
+	const addWord = useMutation({
+		mutationFn: ({ picked, form }: { picked: Picked; form: string }) => client.words.add({ id: crypto.randomUUID(), form, sentence: picked.sentence, sectionId: picked.sectionId }),
+		onSuccess: async (result) => {
+			document.getSelection()?.removeAllRanges()
+			setPicked(null)
+			await added(result)
+		},
+	})
+	const toast = useToast()
 	// Asked when the form opens, so a cue the AI wrote since the save shows in it. Without an
 	// answer the form opens as new, and the server still returns the first card.
 	const openForm = async (p: Picked) => {
@@ -167,8 +205,9 @@ export function SaveIdea({ readingId }: { readingId: string }) {
 		}
 	}, [])
 
-	// One idea fits a card; a few paragraphs can still be explained.
-	const canSave = picked && picked.quote.length <= MAX_QUOTE_CHARS
+	// One idea fits a card; a few paragraphs can still be explained. A word is added, not saved as an idea.
+	const word = picked && asWord(picked.quote)
+	const canSave = picked && !word && picked.quote.length <= MAX_QUOTE_CHARS
 	const canExplain = picked && picked.quote.length <= MAX_EXPLAIN_CHARS
 	const barButton = 'px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/10 active:scale-[0.97]'
 	// Keeps the selection while a button is pressed.
@@ -178,6 +217,7 @@ export function SaveIdea({ readingId }: { readingId: string }) {
 			{picked &&
 				!open &&
 				!explaining &&
+				!defining &&
 				createPortal(
 					<div className="absolute z-40 font-sans" style={{ top: picked.top, left: Math.max(8, Math.min(picked.left, window.innerWidth - 220)) }}>
 						{!canExplain ? (
@@ -186,7 +226,20 @@ export function SaveIdea({ readingId }: { readingId: string }) {
 							</p>
 						) : (
 							<div role="toolbar" aria-label="Selection" className="flex divide-x divide-white/20 overflow-hidden rounded-xl bg-navy shadow-lg">
-								{canSave ? (
+								{word ? (
+									<button
+										type="button"
+										{...keepSelection}
+										disabled={addWord.isPending}
+										onClick={() => {
+											if (key.data) addWord.mutate({ picked, form: word }, { onError: (e) => toast({ text: errorMessage(e) }) })
+											else setDefining({ picked, form: word })
+										}}
+										className={barButton}
+									>
+										Add word
+									</button>
+								) : canSave ? (
 									<button type="button" {...keepSelection} onClick={() => void openForm(picked)} className={barButton}>
 										Save idea
 									</button>
@@ -203,6 +256,17 @@ export function SaveIdea({ readingId }: { readingId: string }) {
 					</div>,
 					document.body,
 				)}
+			{defining && (
+				<MeaningDialog
+					form={defining.form}
+					sentence={defining.picked.sentence}
+					sectionId={defining.picked.sectionId}
+					onClose={() => {
+						setDefining(null)
+						setPicked(null)
+					}}
+				/>
+			)}
 			{explaining && (
 				<ExplainDialog
 					sectionId={explaining.sectionId}

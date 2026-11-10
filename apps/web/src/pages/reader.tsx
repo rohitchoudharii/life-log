@@ -1,4 +1,4 @@
-import { type ReadingPosition, type ReadingWithContents, type Section, SEEN_SECONDS } from '@life-log-club/contract'
+import { type ReadingPosition, type ReadingWithContents, type Section, SEEN_SECONDS, type Suggestion } from '@life-log-club/contract'
 import type { Block, Note, NoteRef, Link as TextLink } from '@life-log-club/domain'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
@@ -8,15 +8,38 @@ import { importingText } from '../readings'
 import { SaveIdea } from '../save-idea'
 import { client, errorMessage, orpc } from '../rpc'
 import { useToast } from '../toast'
+import { TermDialog } from '../word-dialogs'
 
-type NoteMarks = { notes: Map<string, Note>; open: (note: Note) => void }
+type NoteMarks = {
+	notes: Map<string, Note>
+	open: (note: Note) => void
+	/** Words the AI suggests in this section, underlined faintly where their sentence is. */
+	terms?: Suggestion[]
+	openTerm?: (term: Suggestion) => void
+}
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** Where each suggested word sits in a text: inside its own sentence, as a whole word, once. */
+function termRanges(text: string, terms: Suggestion[] = []) {
+	return terms.flatMap((term) => {
+		const at = text.indexOf(term.sentence)
+		if (at < 0) return []
+		const m = new RegExp(`(?<![\\p{L}])${escapeRegExp(term.form)}(?![\\p{L}])`, 'u').exec(term.sentence)
+		return m ? [{ start: at + m.index, end: at + m.index + term.form.length, term }] : []
+	})
+}
 
 /**
  * Text with its link ranges as links that open the original page in a new tab, and its note
  * markers as small buttons that open the note.
  */
 function Inline({ text, links = [], refs = [], marks }: { text: string; links?: TextLink[]; refs?: NoteRef[]; marks: NoteMarks }) {
-	const cuts = [...new Set([0, text.length, ...links.flatMap((l) => [l.start, l.end]), ...refs.map((r) => r.at)])].sort((a, b) => a - b)
+	// A suggested word inside a link stays a link.
+	const terms = termRanges(text, marks.terms).filter((t) => !links.some((l) => l.start < t.end && t.start < l.end))
+	const cuts = [...new Set([0, text.length, ...links.flatMap((l) => [l.start, l.end]), ...refs.map((r) => r.at), ...terms.flatMap((t) => [t.start, t.end])])].sort(
+		(a, b) => a - b,
+	)
 	const out: ReactNode[] = []
 	cuts.forEach((at, i) => {
 		for (const ref of refs.filter((r) => r.at === at)) {
@@ -39,8 +62,20 @@ function Inline({ text, links = [], refs = [], marks }: { text: string; links?: 
 		if (end === undefined || end === at) return
 		const piece = text.slice(at, end)
 		const link = links.find((l) => l.start <= at && end <= l.end)
+		const term = terms.find((t) => t.start <= at && end <= t.end)
 		out.push(
-			link ? (
+			term && marks.openTerm ? (
+				<button
+					key={at}
+					type="button"
+					aria-haspopup="dialog"
+					title="A word worth knowing"
+					onClick={() => marks.openTerm!(term.term)}
+					className="cursor-help underline decoration-world-muted/50 decoration-dotted underline-offset-4 hover:decoration-world-accent focus-visible:outline-2 focus-visible:outline-world-accent"
+				>
+					{piece}
+				</button>
+			) : link ? (
 				<a key={at} href={link.href} target="_blank" rel="noopener noreferrer nofollow" className="text-world-accent underline underline-offset-2">
 					{piece}
 				</a>
@@ -385,6 +420,9 @@ function SectionView({
 	}, [pending, queryClient, readingId])
 
 	const [openNote, setOpenNote] = useState<Note | null>(null)
+	// Words worth knowing come with the key ideas, once the section is written.
+	const suggested = useQuery({ ...orpc.words.suggestions.queryOptions({ input: { sectionId: id } }), enabled: section.data?.writeStatus === 'ready' })
+	const [openTerm, setOpenTerm] = useState<Suggestion | null>(null)
 	const loaded = Boolean(section.data)
 	const opened = useRef(false)
 	useEffect(() => {
@@ -395,7 +433,7 @@ function SectionView({
 
 	if (section.isError) return <p role="alert">{errorMessage(section.error)}</p>
 	if (!section.data) return <p className="text-world-muted">Loading…</p>
-	const marks: NoteMarks = { notes: new Map(section.data.notes.map((n) => [n.id, n])), open: setOpenNote }
+	const marks: NoteMarks = { notes: new Map(section.data.notes.map((n) => [n.id, n])), open: setOpenNote, terms: suggested.data, openTerm: setOpenTerm }
 	const rewriting = ['queued', 'writing'].includes(section.data.writeStatus)
 	const note = section.data.headingsPending
 		? 'Adding headings to this long chapter…'
@@ -429,6 +467,7 @@ function SectionView({
 				</div>
 			))}
 			{openNote && <NoteDialog note={openNote} onClose={() => setOpenNote(null)} />}
+			{openTerm && <TermDialog term={openTerm} sectionId={id} onClose={() => setOpenTerm(null)} />}
 			{onEnd && <EndMark key={id} onEnd={onEnd} />}
 		</article>
 	)
@@ -603,13 +642,16 @@ export function Reader({ readingId, at: openAt }: { readingId: string; at?: Read
 			active += 1
 			if (active < SEEN_SECONDS) return
 			active = 0
-			void client.readings.seen({ sectionId, seconds: SEEN_SECONDS })
+			// The first heartbeat queues the section's writing; the section then follows it until its key ideas and words are in.
+			void client.readings
+				.seen({ sectionId, seconds: SEEN_SECONDS })
+				.then(() => queryClient.invalidateQueries({ queryKey: orpc.readings.section.queryKey({ input: { id: sectionId } }) }))
 		}, 1000)
 		return () => {
 			window.clearInterval(tick)
 			for (const e of events) window.removeEventListener(e, touch)
 		}
-	}, [sectionId])
+	}, [sectionId, queryClient])
 
 	// A link that turned out to be a page the member already has opens that reading.
 	const keptId = reading.data?.id

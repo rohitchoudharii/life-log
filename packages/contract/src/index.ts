@@ -5,6 +5,7 @@ import {
 	EntryText,
 	EXPLAIN_KINDS,
 	GAP_BUCKETS,
+	MAX_WORD_CHARS,
 	Note,
 	PILLARS,
 	QUESTION_AMOUNTS,
@@ -60,6 +61,30 @@ export type Card = z.infer<typeof Card>
 
 /** The longest passage a saved idea can quote. */
 export const MAX_QUOTE_CHARS = 1000
+
+/**
+ * A word in the member's vocabulary. `meaning` is null until there is one; `defining` says the
+ * AI is writing it now.
+ */
+export const Word = z.object({
+	id: z.uuid(),
+	word: z.string(),
+	/** The word as it appears in its sentence. */
+	form: z.string(),
+	sentence: z.string().nullable(),
+	meaning: z.string().nullable(),
+	defining: z.boolean(),
+	readingId: z.uuid().nullable(),
+	sectionId: z.uuid().nullable(),
+	readingTitle: z.string().nullable(),
+	dueAt: z.date(),
+	createdAt: z.date(),
+})
+export type Word = z.infer<typeof Word>
+
+/** A word the AI found worth learning in a section, offered in the reader to keep. */
+export const Suggestion = z.object({ word: z.string(), form: z.string(), sentence: z.string(), meaning: z.string() })
+export type Suggestion = z.infer<typeof Suggestion>
 
 /** The longest passage Explain takes: a few paragraphs. */
 export const MAX_EXPLAIN_CHARS = 4000
@@ -855,6 +880,35 @@ export const contract = {
 		get: oc.output(Preferences),
 		/** Changes the preferences given and returns them all. */
 		update: oc.input(Preferences.partial()).output(Preferences),
+	},
+	/** The member's vocabulary: words met while reading or added by hand, reviewed with everything else. */
+	words: {
+		/**
+		 * Adds a word, from a selection in the reader (with its sentence and section) or by hand.
+		 * Without `meaning`, the member's AI defines it in its sentence, in the background; with
+		 * no key, the meaning is needed. A word already in the vocabulary returns that card, with
+		 * its first sentence, as `existing`; a removed one comes back. The client picks the id.
+		 */
+		add: oc
+			.input(
+				z.object({
+					id: z.uuid(),
+					form: z.string().trim().min(1, 'Type a word.').max(MAX_WORD_CHARS, 'That is longer than a word or a short term.'),
+					sentence: z.string().trim().max(600, 'Use one sentence.').optional(),
+					meaning: z.string().trim().max(500, 'Keep the meaning to a line or two.').optional(),
+					sectionId: z.uuid().optional(),
+				}),
+			)
+			.output(z.object({ word: Word, existing: z.boolean() })),
+		/** Every word, newest first. */
+		list: oc.output(z.array(Word)),
+		/** Words worth learning in a section that the member has not kept yet. */
+		suggestions: oc.input(z.object({ sectionId: z.uuid() })).output(z.array(Suggestion)),
+		/** Sets what a word means. */
+		update: oc.input(z.object({ id: z.uuid(), meaning: z.string().trim().min(1, 'Add what it means.').max(500, 'Keep the meaning to a line or two.') })).output(Word),
+		/** Takes a word out of the vocabulary and the review queue; `restore` brings it back (undo). */
+		remove: oc.input(z.object({ id: z.uuid() })).output(Ok),
+		restore: oc.input(z.object({ id: z.uuid() })).output(Word),
 	},
 }
 

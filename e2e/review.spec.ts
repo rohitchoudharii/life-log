@@ -577,6 +577,46 @@ test('Explain needs a key, explains only the member’s own sections, takes a fe
 	])
 })
 
+test('a word is added once per member by either form, needs a sentence that uses it and a meaning without a key, and stays the member’s own', async () => {
+	const a = await newMember('A')
+	const b = await newMember('B')
+	const reading = await a.client.readings.addText({ id: randomUUID(), title: 'Habits', text: '# Learning\n\nSpaced practice beats cramming because effortful recall strengthens memory traces.' })
+	const [section] = (await a.client.readings.get({ id: reading.id })).contents
+	const sentence = 'Spaced practice beats cramming because effortful recall strengthens memory traces.'
+
+	expect(await code(a.client.words.add({ id: randomUUID(), form: 'cram', sentence, sectionId: section!.id }))).toBe('BAD_REQUEST')
+	const first = await a.client.words.add({ id: randomUUID(), form: 'cram', sentence, meaning: 'study a lot at the last moment', sectionId: section!.id })
+	// The word as the sentence uses it, the dictionary form as typed, due tomorrow.
+	expect(first).toMatchObject({ existing: false, word: { word: 'cramming', form: 'cramming', sentence, meaning: 'study a lot at the last moment', readingTitle: 'Habits', defining: false } })
+	expect(await code(a.client.words.add({ id: randomUUID(), form: 'gradient', sentence }))).toBe('BAD_REQUEST')
+	// Again, by the other form or in another case: the first card, with its first sentence.
+	const again = await a.client.words.add({ id: randomUUID(), form: 'CRAMMING', sentence: 'Cramming fades.', meaning: 'other' })
+	expect(again).toMatchObject({ existing: true, word: { id: first.word.id, sentence, meaning: 'study a lot at the last moment' } })
+	expect(await a.client.words.list()).toHaveLength(1)
+
+	// Removed, then added again: the same card comes back.
+	await a.client.words.remove({ id: first.word.id })
+	expect(await a.client.words.list()).toEqual([])
+	expect((await a.client.words.add({ id: randomUUID(), form: 'cramming', meaning: 'x' })).word.id).toBe(first.word.id)
+
+	// Another member: their own words, never this section or this card.
+	expect(await code(b.client.words.add({ id: randomUUID(), form: 'cramming', sentence, meaning: 'x', sectionId: section!.id }))).toBe('NOT_FOUND')
+	expect(await code(b.client.words.update({ id: first.word.id, meaning: 'mine' }))).toBe('NOT_FOUND')
+	expect(await code(b.client.words.suggestions({ sectionId: section!.id }))).toBe('NOT_FOUND')
+	expect((await b.client.words.add({ id: randomUUID(), form: 'cramming', meaning: 'theirs' })).existing).toBe(false)
+	expect(await a.client.words.list()).toEqual([expect.objectContaining({ meaning: 'study a lot at the last moment' })])
+
+	// Suggestions leave out a word the member has kept, by either form.
+	await sql('update sections set terms = $2 where id = $1', [
+		section!.id,
+		JSON.stringify([
+			{ word: 'cram', form: 'cramming', sentence, meaning: 'm1' },
+			{ word: 'effortful', form: 'effortful', sentence, meaning: 'm2' },
+		]),
+	])
+	expect((await a.client.words.suggestions({ sectionId: section!.id })).map((t) => t.word)).toEqual(['effortful'])
+})
+
 test('Rewrite key ideas replaces ideas none of which is in use; once one is answered only questions can be rewritten, and never on Quick or without a key', async () => {
 	const { client, user } = await newMember()
 	await client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })

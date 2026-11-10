@@ -136,7 +136,7 @@ async function store(userId: string, batch: Row[], written: Written) {
 			const spareIdeas = written.spare.filter((i) => i.section === n).map(({ idea, cue, quote }) => ({ idea, cue, quote }))
 			await tx
 				.update(sections)
-				.set({ writeStatus: 'ready', writeError: null, promptVersion: WRITE_SECTION_PROMPT_VERSION, spareIdeas })
+				.set({ writeStatus: 'ready', writeError: null, promptVersion: WRITE_SECTION_PROMPT_VERSION, spareIdeas, terms: written.terms[n] ?? [] })
 				.where(eq(sections.id, section.id))
 		}
 	})

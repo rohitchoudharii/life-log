@@ -74,7 +74,13 @@ function writeSection(system: string, user: string) {
 			}),
 	)
 	if (ideas[0]) ideas.push({ ...ideas[0], rank: 99, idea: 'An idea the text never states.', quote: 'This sentence appears nowhere in the section at all.' })
-	return { ideas }
+	// The first long word of each section's first sentence is suggested as worth learning.
+	const terms = sectionsIn(user).flatMap(({ n, text }) => {
+		const sentence = sentences(text)[0]
+		const form = sentence?.match(/[A-Za-z]{11,}/)?.[0]
+		return sentence && form ? [{ section: n, word: form.toLowerCase(), form, sentence, meaning: `the sense of "${form.toLowerCase()}" in this text` }] : []
+	})
+	return { ideas, terms }
 }
 
 /**
@@ -155,7 +161,14 @@ function explainPassage(user: string) {
 	return { text: `From first principles: "${passage}" holds because each part rests on the cause underneath it. Start from that cause and the rest follows.`, quote }
 }
 
+/** For "Task: define-word": a meaning, and an example sentence when the member gave none. */
+function defineWord(user: string) {
+	const form = user.match(/^Word: (.+)$/m)?.[1] ?? ''
+	return { word: form.toLowerCase(), meaning: `what "${form.toLowerCase()}" means here`, sentence: `She used ${form} in a sentence.` }
+}
+
 function answer(system: string, user: string) {
+	if (system.startsWith('Task: define-word')) return JSON.stringify(defineWord(user))
 	if (system.startsWith('Task: explain-passage')) return JSON.stringify(explainPassage(user))
 	if (system.startsWith('Task: judge-answer')) return JSON.stringify(judgeAnswer(user))
 	if (system.startsWith('Task: grade-recall')) return JSON.stringify(gradeRecall(user))

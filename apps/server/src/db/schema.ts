@@ -1,4 +1,4 @@
-import type { Block, Confidence, Note, PointStatus, QuestionLevel, Rating, RecallStatus, SchedulerState, SectionKind, WriteStatus } from '@life-log-club/domain'
+import type { Block, Confidence, Note, PointStatus, QuestionLevel, Rating, RecallStatus, SchedulerState, SectionKind, Term, WriteStatus } from '@life-log-club/domain'
 import type { Reveal } from '@life-log-club/contract'
 import { type AnyColumn, sql } from 'drizzle-orm'
 import {
@@ -155,7 +155,13 @@ export const cards = pgTable(
 		dueAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 		createdAt: createdAt(),
 	},
-	(t) => [index().on(t.userId, t.dueAt), index().on(t.sectionId, t.position), ownRows(t.userId)],
+	(t) => [
+		index().on(t.userId, t.dueAt),
+		index().on(t.sectionId, t.position),
+		// One card per word: adding it again opens the first, removed or not.
+		uniqueIndex('cards_user_word').on(t.userId, sql`lower(${t.details}->>'word')`).where(sql`${t.kind} = 'word'`),
+		ownRows(t.userId),
+	],
 )
 
 /**
@@ -473,6 +479,8 @@ export const sections = pgTable(
 		recalledAt: timestamp({ withTimezone: true }),
 		/** Key ideas past the most a section keeps, which the member can add from the recall results. */
 		spareIdeas: jsonb().$type<{ idea: string; cue: string; quote: string }[]>().notNull().default([]),
+		/** Words worth learning the AI found in the section, suggested in the reader; never added for the member. */
+		terms: jsonb().$type<Term[]>().notNull().default([]),
 		createdAt: createdAt(),
 	},
 	(t) => [uniqueIndex().on(t.readingId, t.position), index().on(t.readingId, t.chapter), ownRows(t.userId)],

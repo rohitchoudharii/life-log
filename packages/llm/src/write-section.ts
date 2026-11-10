@@ -13,11 +13,13 @@ import {
 	type McqContent,
 	type QuestionAmount,
 	type QuestionStyle,
+	type Term,
 } from '@life-log-club/domain'
 import type { ChatRequest } from './providers'
+import { parseTerms } from './words'
 
 /** Bump when the prompt or the checks change, so stored questions record which rules made them. */
-export const WRITE_SECTION_PROMPT_VERSION = 'questions-v12'
+export const WRITE_SECTION_PROMPT_VERSION = 'questions-v13'
 /** The most key ideas one section keeps; the rest are offered to the member to add. */
 export const MAX_IDEAS = 20
 /** The guide given to the model: about one idea per this many words. Not a limit. */
@@ -50,6 +52,8 @@ export type Written = {
 	spare: WrittenIdea[]
 	/** What the checks threw out, and why. */
 	rejected: { what: string; reasons: string[] }[]
+	/** Up to 3 words worth learning in each section, by section index: suggested to the member, never added for them. */
+	terms: Term[][]
 }
 export type QuestionPrefs = { amount: QuestionAmount; style: QuestionStyle; qualityCheck: boolean }
 
@@ -82,10 +86,12 @@ Questions, on each key idea, at the amount the section asks for:
 - order_steps: 4 to 7 steps of a process in the right order (they are shuffled before the learner sees them), each a short phrase with no numbering and no "first", "then" or "finally". "explanation" says why the order matters, from the cause the text teaches.
 - find_error: flawed code in "code", or a flawed claim in quotes in the prompt, with one mistake a half-understanding learner would make. The learner says what is wrong and why. "mustHave" names what is wrong and why it is wrong (or the fix); "reference" and "misconceptions" as for short_answer.
 
+Words worth learning, in "terms": up to 3 per section, words a newcomer to the field might not know or terms the text relies on. Leave out everyday words; none is fine. "form" is the word exactly as it appears in the text, "word" its dictionary form, "sentence" the sentence it appears in, copied exactly, and "meaning" what it means in that sentence, in plain words, in one short line.
+
 Write in the language of the text. Write plain text: no Markdown, no backticks. Put code on its own lines, exactly as it would be typed.
 
 Reply with JSON only, no prose and no code fence:
-{"ideas": [{"section": 1, "rank": 1, "idea": "…", "cue": "…?", "quote": "…", "questions": [{"type": "short_answer", "level": "explain", "content": {"prompt": "…", "reference": "…", "mustHave": ["…", "…"], "misconceptions": ["…"]}}]}]}
+{"ideas": [{"section": 1, "rank": 1, "idea": "…", "cue": "…?", "quote": "…", "questions": [{"type": "short_answer", "level": "explain", "content": {"prompt": "…", "reference": "…", "mustHave": ["…", "…"], "misconceptions": ["…"]}}]}], "terms": [{"section": 1, "word": "…", "form": "…", "sentence": "…", "meaning": "…"}]}
 Other question shapes ("code" is optional except where the type needs it):
 {"type": "mcq", "level": "apply", "content": {"prompt": "…", "code": "…", "options": ["…", "…", "…", "…"], "answerIndex": 0, "explanation": "…", "whyWrong": ["", "…", "…", "…"]}}
 {"type": "worked_problem", "level": "apply", "content": {"prompt": "…", "answer": 0.25, "unit": "…", "tolerance": 0.005, "solution": "…", "steps": ["…", "…"], "misconceptions": ["…"]}}
@@ -267,7 +273,7 @@ export async function writeSection(complete: Complete, sections: SectionText[], 
 		maxTokens: MAX_REPLY_TOKENS,
 		timeoutMs: TIMEOUT_MS,
 	}))
-	const parsed = jsonIn(reply) as { ideas?: unknown } | null
+	const parsed = jsonIn(reply) as { ideas?: unknown; terms?: unknown } | null
 	if (!parsed || !Array.isArray(parsed.ideas)) throw new Error('The model did not return key ideas')
 
 	const rejected: Written['rejected'] = []
@@ -314,7 +320,10 @@ export async function writeSection(complete: Complete, sections: SectionText[], 
 	rejected.push(...(await fillQuestions(complete, context, sections, ideas, pending, prefs)))
 
 	const strip = ({ rank: _rank, raw: _raw, ...idea }: (typeof ranked)[number]): WrittenIdea => idea
-	return { ideas: ideas.map(strip), spare: spare.map(strip), rejected }
+	const terms = sections.map((s, n) =>
+		parseTerms(Array.isArray(parsed.terms) ? parsed.terms.filter((t: { section?: unknown }) => Number(t?.section) - 1 === n) : [], s.text),
+	)
+	return { ideas: ideas.map(strip), spare: spare.map(strip), rejected, terms }
 }
 
 /**

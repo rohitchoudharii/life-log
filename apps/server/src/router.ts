@@ -10,6 +10,7 @@ import { mindRoutes, progressRoutes } from './routes/progress'
 import { readingsRoutes } from './routes/readings'
 import { recallRoutes } from './routes/recall'
 import { questionRoutes, reviewRoutes } from './routes/review'
+import { wordRoutes } from './routes/words'
 
 export const router = os.router({
 	system: {
@@ -34,4 +35,5 @@ export const router = os.router({
 	mind: mindRoutes,
 	progress: progressRoutes,
 	recall: recallRoutes,
+	words: wordRoutes,
 })
