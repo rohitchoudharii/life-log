@@ -2,12 +2,13 @@ import type { WriteStatus } from '@life-log-club/domain'
 import { and, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm'
 import { type Job, type JobWithMetadata, PgBoss } from 'pg-boss'
 import { asUser, ownerDb } from './db/client'
-import { books, cards, entries, invites, readings, recallAttempts, sections, sessions } from './db/schema'
+import { aiKeys, books, cards, entries, invites, readings, recallAttempts, sections, sessions } from './db/schema'
 import { env } from './env'
 import { addChapterHeadings, importReading } from './import/reading'
 import { type CueJob, writeLessonCue } from './learning/lessons'
 import { type GradeJob, gradeAttempt } from './learning/recall'
 import { type IdeaCueJob, writeIdeaCue } from './learning/saved-ideas'
+import { type TopUpJob, topUpQuestions } from './learning/top-up'
 import { type WriteJob, writeKeyIdeas } from './learning/write-section'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -110,6 +111,15 @@ const CUE = 'lesson-cue'
 /** Queues the writing of a cue for a lesson logged without one. */
 export const enqueueLessonCue = (job: CueJob) => boss.send(CUE, job, { singletonKey: job.entryId })
 
+const TOP_UP = 'top-up-questions'
+const TOP_UP_ALL = 'top-up-all'
+
+/**
+ * Queues a top-up of the member's questions a few minutes from now, after Review answers. Answers
+ * in one sitting share the one queued job.
+ */
+export const enqueueTopUp = (userId: string) => boss.send(TOP_UP, { userId }, { singletonKey: userId, startAfter: 5 * 60 })
+
 const IDEA_CUE = 'write-cue'
 
 /** Queues the writing of a cue for an idea saved from a reading without a question. */
@@ -175,6 +185,18 @@ export async function startJobs() {
 	if (!(await boss.getQueue(CUE))) await boss.createQueue(CUE, { policy: 'stately', retryLimit: 1, retryDelay: 30, expireInSeconds: 5 * 60 })
 	await boss.work(CUE, { localConcurrency: 4 }, async ([job]: Job<CueJob>[]) => {
 		if (job) await writeLessonCue(job.data)
+	})
+	// A card whose top-up fails is asked through its cue, so one retry is enough.
+	if (!(await boss.getQueue(TOP_UP))) await boss.createQueue(TOP_UP, { policy: 'stately', retryLimit: 1, retryDelay: 60, expireInSeconds: 15 * 60 })
+	await boss.work(TOP_UP, { localConcurrency: 2 }, async ([job]: Job<TopUpJob>[]) => {
+		if (job) await topUpQuestions(job.data)
+	})
+	// Every 6 hours, each member with a key gets a top-up, so cards due soon have a fresh question waiting.
+	if (!(await boss.getQueue(TOP_UP_ALL))) await boss.createQueue(TOP_UP_ALL)
+	await boss.schedule(TOP_UP_ALL, '0 */6 * * *')
+	await boss.work(TOP_UP_ALL, async () => {
+		const members = await ownerDb.select({ userId: aiKeys.userId }).from(aiKeys)
+		await Promise.all(members.map(({ userId }) => boss.send(TOP_UP, { userId }, { singletonKey: userId })))
 	})
 	// Like a lesson's, a saved idea keeps its fallback cue when this fails.
 	if (!(await boss.getQueue(IDEA_CUE))) await boss.createQueue(IDEA_CUE, { policy: 'stately', retryLimit: 1, retryDelay: 30, expireInSeconds: 5 * 60 })

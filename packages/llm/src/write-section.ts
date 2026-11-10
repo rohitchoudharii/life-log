@@ -177,8 +177,15 @@ async function qualityCheck(complete: Complete, context: string, list: { idea: W
  * already passed in code (when `qualityCheck` is on), then sends what failed or is missing back
  * once with its reasons, and keeps the replacements that pass. Returns what was thrown out.
  */
-async function fillQuestions(complete: Complete, context: string, sections: SectionText[], ideas: WrittenIdea[], pending: Pending[], prefs: QuestionPrefs) {
-	const perIdea = QUESTIONS_PER_IDEA[prefs.amount]
+async function fillQuestions(
+	complete: Complete,
+	context: string,
+	sections: SectionText[],
+	ideas: WrittenIdea[],
+	pending: Pending[],
+	prefs: QuestionPrefs,
+	perIdea = QUESTIONS_PER_IDEA[prefs.amount],
+) {
 	const check = async (list: { idea: WrittenIdea; question: WrittenQuestion }[]) => {
 		if (!prefs.qualityCheck) return
 		for (const r of await qualityCheck(complete, context, list)) {
@@ -290,24 +297,31 @@ export async function writeSection(complete: Complete, sections: SectionText[], 
 	return { ideas: ideas.map(strip), spare: spare.map(strip), rejected }
 }
 
-/** An idea that has a card already, with the prompts of its questions so far, which new ones must not repeat. */
-export type IdeaToAsk = { idea: string; cue: string; quote: string; asked: string[] }
+/**
+ * An idea that has a card already: the section its quote is in (an index into the sections
+ * given), the prompts of its questions so far, which new ones must not repeat, and the level to
+ * ask at, when it matters.
+ */
+export type IdeaToAsk = { section: number; idea: string; cue: string; quote: string; asked: string[]; level?: QuestionLevel }
 
 /**
- * Writes fresh questions at the member's amount on ideas that have cards already, for Rewrite
- * questions. They pass the same checks as a section's first questions; a question too like one
- * asked before is thrown out. Returns one list of questions per idea, in order.
+ * Writes fresh questions on ideas that have cards already: `perIdea` each, by default the
+ * member's amount (Rewrite questions); one each for a top-up before review. They pass the same
+ * checks as a section's first questions, and a question too like one asked before is thrown out.
+ * Returns one list of questions per idea, in order.
  */
-export async function writeQuestions(complete: Complete, section: SectionText, asks: IdeaToAsk[], prefs: QuestionPrefs) {
-	const context = material([section], prefs.amount)
-	const perIdea = QUESTIONS_PER_IDEA[prefs.amount]
-	const ideas: WrittenIdea[] = asks.map(({ idea, cue, quote }) => ({ section: 0, idea, cue, quote, questions: [] }))
+export async function writeQuestions(complete: Complete, sections: SectionText[], asks: IdeaToAsk[], prefs: QuestionPrefs, perIdea = QUESTIONS_PER_IDEA[prefs.amount]) {
+	const context = material(sections, prefs.amount)
+	const ideas: WrittenIdea[] = asks.map(({ section, idea, cue, quote }) => ({ section, idea, cue, quote, questions: [] }))
 	const pending: Pending[] = ideas.flatMap((idea, i) => {
-		const asked = asks[i]!.asked
-		const reason = asked.length ? `missing: write a new question on this idea, unlike these: ${asked.map((a) => JSON.stringify(a)).join('; ')}` : 'missing: write a question on this idea'
+		const { asked, level } = asks[i]!
+		const at = level ? ` at the ${level} level` : ''
+		const reason = asked.length
+			? `missing: write a new question${at} on this idea, from a different angle and with new examples, unlike these: ${asked.map((a) => JSON.stringify(a)).join('; ')}`
+			: `missing: write a question${at} on this idea`
 		return Array.from({ length: perIdea }, () => ({ idea, raw: {}, reasons: [reason] }))
 	})
-	const rejected = await fillQuestions(complete, context, [section], ideas, pending, prefs)
+	const rejected = await fillQuestions(complete, context, sections, ideas, pending, prefs, perIdea)
 	const questions = ideas.map((idea, i) => idea.questions.filter((q) => !asks[i]!.asked.some((a) => isDuplicatePrompt(a, (q.content as { prompt: string }).prompt))))
 	return { questions, rejected }
 }

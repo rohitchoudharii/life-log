@@ -3,7 +3,7 @@ import { ORPCError } from '@orpc/server'
 import { and, asc, count, desc, eq, gt, isNotNull, isNull } from 'drizzle-orm'
 import { asUser, type Tx } from '../db/client'
 import { cards, entries, questions, readings, sections } from '../db/schema'
-import { enqueueIdeaCue, enqueueWriteSection } from '../jobs'
+import { enqueueIdeaCue, enqueueTopUp, enqueueWriteSection } from '../jobs'
 import { answerCard, overrideAnswer, reportQuestion } from '../learning/answer'
 import { dueNow, minutesFor, nextBatch } from '../learning/review'
 import { saveIdea } from '../learning/saved-ideas'
@@ -153,7 +153,12 @@ export const reviewRoutes = {
 		}),
 	),
 
-	answer: authed.review.answer.handler(({ input, context }) => answerCard(context.user.id, input)),
+	answer: authed.review.answer.handler(async ({ input, context }) => {
+		const result = await answerCard(context.user.id, input)
+		// A Review answer may use up a card's last unasked question: top up a few minutes later.
+		if (input.mode === 'review') await enqueueTopUp(context.user.id)
+		return result
+	}),
 
 	override: authed.review.override.handler(({ input, context }) => overrideAnswer(context.user.id, input.answerId)),
 

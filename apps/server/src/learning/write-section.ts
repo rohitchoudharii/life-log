@@ -42,7 +42,7 @@ export function chapterBatches<S extends { wordCount: number }>(list: S[]): S[][
 export const WRITE_FAILED = 'Writing questions for this section failed. Try again in a few minutes.'
 const NO_IDEAS = 'No key ideas could be found in this section. Try again, or save ideas yourself.'
 
-class NoKey extends Error {}
+export class NoKey extends Error {}
 
 const setStatus = (tx: Tx, ids: string[], writeStatus: WriteStatus, writeError: string | null = null) =>
 	Promise.all(ids.map((id) => tx.update(sections).set({ writeStatus, writeError }).where(eq(sections.id, id))))
@@ -51,7 +51,7 @@ const hasIdeas = async (tx: Tx, sectionId: string) =>
 	(await tx.select({ id: cards.id }).from(cards).where(and(eq(cards.sectionId, sectionId), eq(cards.origin, 'ai'))).limit(1)).length > 0
 
 type Row = typeof sections.$inferSelect
-const toText = (s: Row): SectionText => ({ title: s.title, text: s.blocks.map(blockText).filter(Boolean).join('\n\n'), wordCount: s.wordCount })
+export const toText = (s: Row): SectionText => ({ title: s.title, text: s.blocks.map(blockText).filter(Boolean).join('\n\n'), wordCount: s.wordCount })
 
 const writable = (s: Row) => s.kind === 'body' && s.wordCount > 0
 
@@ -276,12 +276,13 @@ async function rewriteQuestions({ userId, sectionId }: WriteJob, lastTry: boolea
 	}
 	try {
 		const asks = ideas.map((c) => ({
+			section: 0,
 			idea: c.answer,
 			cue: c.prompt,
 			quote: c.quote ?? '',
 			asked: asked.filter((q) => q.cardId === c.id).map((q) => String(q.content.prompt ?? '')),
 		}))
-		const written = await writeQuestions(complete, toText(section), asks, { amount: prefs.questionAmount, style: prefs.questionStyle, qualityCheck: prefs.qualityCheck })
+		const written = await writeQuestions(complete, [toText(section)], asks, { amount: prefs.questionAmount, style: prefs.questionStyle, qualityCheck: prefs.qualityCheck })
 		await asUser(userId, async (tx) => {
 			const rows = ideas.flatMap((card, i) =>
 				(written.questions[i] ?? []).map((q) => ({

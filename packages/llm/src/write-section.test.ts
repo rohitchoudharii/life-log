@@ -131,8 +131,8 @@ describe('writeSection', () => {
 				],
 			},
 		})
-		const ideas = [{ idea: 'Idea number 1 about memory.', cue: 'Which point?', quote: 'The effort of pulling a memory back is what makes it last.', asked: [asked] }]
-		const written = await writeQuestions(complete, section, ideas, { amount: 'thorough', style: 'written', qualityCheck: false })
+		const ideas = [{ section: 0, idea: 'Idea number 1 about memory.', cue: 'Which point?', quote: 'The effort of pulling a memory back is what makes it last.', asked: [asked] }]
+		const written = await writeQuestions(complete, [section], ideas, { amount: 'thorough', style: 'written', qualityCheck: false })
 		expect(calls).toEqual(['rewrite-questions'])
 		expect(written.questions.map((qs) => qs.map((q) => (q.content as { prompt: string }).prompt))).toEqual([['How would a week between tests change what a learner keeps?']])
 	})
