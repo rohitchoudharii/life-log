@@ -159,8 +159,11 @@ const mcqContent = z
 	.refine((c) => c.answerIndex < c.options.length, 'answerIndex out of range')
 export type McqContent = z.infer<typeof mcqContent>
 
-/** What a graded choice shows: every option, the right one, the learner's pick (null for I don't know) and why each wrong one is wrong. */
-export type ChoiceReveal = { options: string[]; right: number; picked: number | null; whyWrong: string[] }
+/**
+ * What a graded choice shows: every option, the right one, the learner's pick (null for I don't
+ * know), why each wrong one is wrong, and the guess typed before the options showed (Guess first).
+ */
+export type ChoiceReveal = { options: string[]; right: number; picked: number | null; whyWrong: string[]; guess: string | null }
 
 export const questionTypes = {
 	short_answer: def({
@@ -172,13 +175,15 @@ export const questionTypes = {
 	/** Four options, one right, each wrong one a tempting misconception. Graded in code. */
 	mcq: def({
 		content: mcqContent,
-		response: z.union([z.object({ choice: z.int().min(0) }), z.object({ skipped: z.literal(true) })]),
+		// `guess`: with Guess first, a few words typed before the options showed. It is kept, not graded.
+		response: z.union([z.object({ choice: z.int().min(0), guess: z.string().trim().min(1).max(500).optional() }), z.object({ skipped: z.literal(true) })]),
 		showsChoices: true,
 		toPrompt: ({ prompt, code, options }) => ({ prompt, code, options }),
 		async grade(c, r) {
 			const picked = 'choice' in r ? r.choice : null
 			const correct = picked === c.answerIndex
-			const choice: ChoiceReveal = { options: c.options, right: c.answerIndex, picked, whyWrong: c.options.map((_, i) => c.whyWrong[i] ?? '') }
+			const guess = 'guess' in r ? (r.guess ?? null) : null
+			const choice: ChoiceReveal = { options: c.options, right: c.answerIndex, picked, whyWrong: c.options.map((_, i) => c.whyWrong[i] ?? ''), guess }
 			return { rating: correct ? 'good' : 'again', correct, reveal: { reference: c.explanation || c.options[c.answerIndex], choice } }
 		},
 	}),

@@ -1,8 +1,9 @@
 import type { MindSummary, ProgressSummary } from '@life-log-club/contract'
-import { GAP_BUCKETS, gapBucket, ideaStatus, isGraduated, recallNow, type IdeaStatus } from '@life-log-club/domain'
-import { and, asc, eq, gt, gte, isNotNull, isNull, sql } from 'drizzle-orm'
+import { calibration, GAP_BUCKETS, gapBucket, ideaStatus, isGraduated, recallNow, type IdeaStatus } from '@life-log-club/domain'
+import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { Tx } from '../db/client'
 import { cards, readings, recallAttempts, reviewLog, sections } from '../db/schema'
+import { monthStart } from './ai'
 import { preferencesOf } from './preferences'
 
 const DAY = 86_400_000
@@ -91,6 +92,24 @@ export async function progressSummary(tx: Tx, userId: string, days: number, now 
 		.filter((a) => a.results?.length)
 		.map((a) => ({ attemptId: a.attemptId, at: a.at!, reading: a.reading, covered: a.results!.filter((r) => r.status === 'covered').length, total: a.results!.length }))
 
+	// Practice is left out: a retry right after seeing the answer says little about judgement.
+	const confident = await tx
+		.select({ confidence: reviewLog.confidence, correct: sql<boolean>`coalesce(${reviewLog.correct}, ${reviewLog.rating} <> 'again')` })
+		.from(reviewLog)
+		.where(and(inArray(reviewLog.mode, ['recall', 'review']), isNotNull(reviewLog.confidence), gte(reviewLog.reviewedAt, ago(now, days))))
+	const month = monthStart(now)
+	const sureWrongThisMonth = await tx
+		.select({ n: sql<number>`count(*)::int` })
+		.from(reviewLog)
+		.where(
+			and(
+				inArray(reviewLog.mode, ['recall', 'review']),
+				eq(reviewLog.confidence, 'sure'),
+				sql`not coalesce(${reviewLog.correct}, ${reviewLog.rating} <> 'again')`,
+				gte(reviewLog.reviewedAt, month),
+			),
+		)
+
 	return {
 		ideas: { total, readings: [...perReading.values()].sort((a, b) => a.title.localeCompare(b.title)) },
 		recallAtReview: {
@@ -100,6 +119,7 @@ export async function progressSummary(tx: Tx, userId: string, days: number, now 
 		},
 		recallByGap: byGap,
 		dumps,
+		calibration: { ...calibration(confident), sureWrongThisMonth: sureWrongThisMonth[0]?.n ?? 0 },
 	}
 }
 

@@ -1,9 +1,10 @@
 import { REPORT_REASONS, type AnswerResult, type ReviewFilter, type ReviewItem } from '@life-log-club/contract'
+import { calibration, calibrationLine } from '@life-log-club/domain'
 import { ORPCError } from '@orpc/client'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useState } from 'react'
-import { type Answered, primary, QuestionForm, RevealTile, SelfRating } from '../answer'
+import { type Answered, GuessFirstSwitch, primary, QuestionForm, RevealTile, SelfRating } from '../answer'
 import { quiet } from '../books'
 import { client, errorMessage, orpc } from '../rpc'
 import { ErrorText } from '../ui'
@@ -216,6 +217,7 @@ function Summary({
 	const right = records.filter((r) => r.result.correct).length
 	// Sure but wrong first: the errors most worth fixing (hypercorrection).
 	const sureWrong = records.filter((r) => !r.result.correct && r.confidence === 'sure')
+	const sureness = calibrationLine(calibration(records.map((r) => ({ confidence: r.confidence, correct: r.result.correct }))))
 	return (
 		<div className="grid gap-6">
 			<p className="text-xl">{records.length ? `You answered ${right} of ${records.length} right.` : 'That was the batch.'}</p>
@@ -226,6 +228,11 @@ function Summary({
 						<p key={r.answerId}>{r.item.answer}</p>
 					))}
 				</section>
+			)}
+			{sureness && (
+				<p className="font-sans text-sm text-world-muted" data-testid="calibration">
+					{sureness}
+				</p>
 			)}
 			<div className="flex flex-wrap gap-3">
 				{more && (
@@ -328,6 +335,7 @@ export function Review({ first }: { first?: string }) {
 						</button>
 					))}
 				</div>
+				<GuessFirstSwitch />
 			</header>
 			{batch.isError && <p role="alert">{errorMessage(batch.error)}</p>}
 			{data && data.items.length === 0 && (

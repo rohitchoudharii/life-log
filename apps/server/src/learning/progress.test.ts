@@ -151,3 +151,43 @@ it('counts ideas by status, recall at review by week, recall by gap and brain du
 	expect(theirs.recallAtReview.total).toBe(0)
 	expect(theirs.dumps).toEqual([])
 })
+
+it('calibration counts recall and review answers given with a confidence, and Sure but wrong in this month', async () => {
+	const [user] = await ownerDb.insert(users).values({ email: `calibration-${randomUUID()}@example.com`, name: 'C' }).returning()
+	const userId = user!.id
+	const cardId = randomUUID()
+	await ownerDb.insert(cards).values({ id: cardId, userId, kind: 'idea', prompt: 'Why?', answer: 'Because.', state: defaultScheduler.initial(), startedAt: ago(60) })
+	const answer = (daysAgo: number, confidence: 'sure' | 'think_so' | 'guessing' | null, correct: boolean | null, extra: Partial<typeof reviewLog.$inferInsert> = {}) => ({
+		userId,
+		cardId,
+		answerId: randomUUID(),
+		mode: 'review' as const,
+		rating: correct === false ? ('again' as const) : ('good' as const),
+		correct,
+		confidence,
+		reviewedAt: ago(daysAgo),
+		nextDueAt: ago(daysAgo),
+		...extra,
+	})
+	await ownerDb.insert(reviewLog).values([
+		answer(1, 'sure', true),
+		answer(2, 'sure', false),
+		// 22 October: counted, but not in this month.
+		answer(20, 'sure', false, { mode: 'recall' }),
+		// No verdict kept: Forgot is wrong.
+		answer(5, 'sure', null, { rating: 'again' }),
+		answer(3, 'think_so', true),
+		answer(4, 'guessing', false),
+		// Left out: practice, no confidence, and past the 84 days.
+		answer(1, 'sure', false, { mode: 'practice' }),
+		answer(1, null, true),
+		answer(100, 'sure', true),
+	])
+	const progress = await asUser(userId, (tx) => progressSummary(tx, userId, 84, now))
+	expect(progress.calibration).toEqual({
+		sure: { right: 1, total: 4 },
+		think_so: { right: 1, total: 1 },
+		guessing: { right: 0, total: 1 },
+		sureWrongThisMonth: 2,
+	})
+})

@@ -1,5 +1,5 @@
 import type { ProgressSummary } from '@life-log-club/contract'
-import { type GapBucket, RECALL_MIN_REVIEWS } from '@life-log-club/domain'
+import { calibrationLine, type GapBucket, RECALL_MIN_REVIEWS } from '@life-log-club/domain'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
@@ -176,6 +176,22 @@ function Dumps({ dumps }: { dumps: ProgressSummary['dumps'] }) {
 }
 
 /** Progress: what the member knows and what is fading, measured at review, never flattered. */
+/** How often each confidence was right: a percentage from 20 answers, counts below that. */
+function Calibration({ calibration }: { calibration: ProgressSummary['calibration'] }) {
+	const { sureWrongThisMonth, ...levels } = calibration
+	const line = calibrationLine(levels, RECALL_MIN_REVIEWS)
+	return (
+		<Block title="Calibration" sub="How often you were right when you said you were sure, thought so, or guessed.">
+			<p className="font-sans text-sm" data-testid="calibration">
+				{line || 'No answers with a confidence yet.'}
+			</p>
+			<p className="font-sans text-sm text-world-muted" data-testid="sure-wrong">
+				Sure but wrong this month: {sureWrongThisMonth}
+			</p>
+		</Block>
+	)
+}
+
 export function Progress() {
 	const summary = useQuery(orpc.progress.summary.queryOptions({ input: { days: DAYS } }))
 	const data = summary.data
@@ -193,6 +209,7 @@ export function Progress() {
 					<Ideas ideas={data.ideas} />
 					<RecallAtReview recall={data.recallAtReview} />
 					<RecallByGap gaps={data.recallByGap} />
+					<Calibration calibration={data.calibration} />
 					<Dumps dumps={data.dumps} />
 				</>
 			)}

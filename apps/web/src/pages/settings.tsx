@@ -2,6 +2,7 @@ import type { AiKey } from '@life-log-club/contract'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
+import { GuessFirstSwitch } from '../answer'
 import { errorMessage, orpc } from '../rpc'
 import { useSignOut } from '../shell'
 import { Button, ErrorText, Field } from '../ui'
@@ -101,6 +102,10 @@ export function Settings() {
 			</div>
 			<AiUsage />
 			<ReviewTarget />
+			<div className="grid gap-3 rounded-2xl bg-white p-5 ring-1 ring-ink/5">
+				<h2 className="text-lg font-semibold">Questions</h2>
+				<GuessFirstSwitch />
+			</div>
 			<div className="flex flex-wrap items-center gap-3 rounded-2xl bg-white p-5 ring-1 ring-ink/5">
 				<div className="mr-auto">
 					<h2 className="text-lg font-semibold">Account</h2>

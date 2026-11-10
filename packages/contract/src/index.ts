@@ -82,6 +82,8 @@ export const Preferences = z.object({
 	aiMonthlyBudgetUsd: z.number().min(0, 'The budget can’t be below $0.').max(1000, 'Choose a budget of $1,000 or less.'),
 	/** The chance of recall to aim for when an idea comes back, from 0.8 to 0.95. Higher means more reviews. */
 	desiredRetention: z.number().min(0.8, 'Choose a target of 80% or more.').max(0.95, 'Choose a target of 95% or less.'),
+	/** Guess first: type a few words before multiple-choice options show. On by default. */
+	guessFirst: z.boolean(),
 })
 export type Preferences = z.infer<typeof Preferences>
 
@@ -126,7 +128,16 @@ export const Reveal = z.object({
 	 * For a multiple-choice question: every option, the right one, the learner's pick (null for
 	 * I don't know), and why each wrong option is wrong.
 	 */
-	choice: z.object({ options: z.array(z.string()), right: z.int(), picked: z.int().nullable(), whyWrong: z.array(z.string()) }).optional(),
+	choice: z
+		.object({
+			options: z.array(z.string()),
+			right: z.int(),
+			picked: z.int().nullable(),
+			whyWrong: z.array(z.string()),
+			/** The guess typed before the options showed, with Guess first; absent on answers from before it. */
+			guess: z.string().nullable().optional(),
+		})
+		.optional(),
 })
 export type Reveal = z.infer<typeof Reveal>
 export const AnswerResult = z.object({
@@ -259,6 +270,11 @@ export const ProgressSummary = z.object({
 	recallByGap: z.array(RightOf.extend({ gap: z.enum(GAP_BUCKETS) })),
 	/** Each graded brain dump, oldest first: how many of its key ideas it covered. */
 	dumps: z.array(z.object({ attemptId: z.uuid(), at: z.date(), reading: z.string(), covered: z.int(), total: z.int() })),
+	/**
+	 * How often each confidence was right, over recall and review answers given with one, and how
+	 * many answers this calendar month (UTC) were wrong though the member was sure.
+	 */
+	calibration: z.object({ sure: RightOf, think_so: RightOf, guessing: RightOf, sureWrongThisMonth: z.int() }),
 })
 export type ProgressSummary = z.infer<typeof ProgressSummary>
 

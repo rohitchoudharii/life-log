@@ -206,6 +206,8 @@ test('after reading, Recall asks one question per idea, missed ideas first, and 
 	const box = page.getByLabel('What you remember')
 	await expect(box).toBeFocused()
 	await expect(page.getByRole('button', { name: 'Done' })).toBeDisabled()
+	// The recall start screen has the Guess first switch, on by default.
+	await expect(page.getByRole('switch', { name: /Guess first/ })).toBeChecked()
 	// The dump brings back the first idea and nothing else.
 	await box.fill(`I remember this: ${ideas[0]!.answer}`)
 	await proof(page, testInfo, 'brain-dump')
@@ -526,7 +528,7 @@ test('Report a problem on a question in Review retires it, and the answer to it 
 	await expect(page.getByRole('button', { name: 'Report a problem' })).toHaveCount(0)
 })
 
-test('Multiple choice in Review: options stored shuffled, the pick graded against the key, and why each wrong option is wrong', async ({ page }, testInfo) => {
+test('Multiple choice in Review: options stored shuffled, shown after a typed guess (Guess first), graded against the key, then confident errors and the calibration line', async ({ page }, testInfo) => {
 	const { readingId, ids } = await openWithKey(page)
 	// Choice only, so every question the fake AI writes is multiple choice.
 	await sql(
@@ -556,10 +558,19 @@ test('Multiple choice in Review: options stored shuffled, the pick graded agains
 	await sql("update cards set started_at = now(), level = 1, due_at = now() - interval '2 seconds' where id = $1", [idea!.id])
 	await sql("update cards set started_at = now(), level = 1, due_at = now() - interval '1 second' where id = $1", [other!.id])
 
-	// A wrong pick: the result marks it, shows the right answer, and says why each wrong option is wrong.
+	// Guess first is on by default: the options wait until the member types a guess.
 	await page.goto('/mind/review')
+	await expect(page.getByRole('switch', { name: /Guess first/ })).toBeChecked()
 	await expect(page.getByTestId('question')).toHaveText('Which reading of point 1 of this part holds up?')
 	const options = page.getByRole('radiogroup', { name: 'Options' })
+	await expect(options).toHaveCount(0)
+	await expect(page.getByRole('button', { name: 'Show options' })).toBeDisabled()
+	await proof(page, testInfo, 'guess-first')
+	await page.getByLabel('Your answer in a few words').fill('It is never true')
+	await page.getByRole('button', { name: 'Show options' }).click()
+	await expect(page.getByText('Your guess: It is never true')).toBeVisible()
+
+	// A wrong pick: the result marks it, shows the right answer, and says why each wrong option is wrong.
 	await expect(options.getByRole('radio')).toHaveCount(4)
 	await expect(page.getByRole('button', { name: 'Sure', exact: true })).toBeDisabled()
 	await options.getByRole('radio', { name: 'It never holds in practice.' }).click()
@@ -567,6 +578,7 @@ test('Multiple choice in Review: options stored shuffled, the pick graded agains
 	await page.getByRole('button', { name: 'Sure', exact: true }).click()
 	const result = page.getByTestId('result')
 	await expect(result).toContainText('Not quite')
+	await expect(result).toContainText('You guessed: It is never true')
 	await expect(result.getByRole('listitem').filter({ hasText: 'It never holds in practice.' })).toContainText('Your pick')
 	await expect(result.getByRole('listitem').filter({ hasText: RIGHT })).toContainText('Right answer')
 	for (const [option, why] of Object.entries(reasons)) if (why) await expect(result.getByRole('listitem').filter({ hasText: option })).toContainText(why)
@@ -580,22 +592,42 @@ test('Multiple choice in Review: options stored shuffled, the pick graded agains
 			graded_by: 'code',
 			correct: false,
 			rating: 'again',
-			response: { choice: stored.find((q) => q.card_id === idea!.id)!.content.options.indexOf('It never holds in practice.') },
+			response: { choice: stored.find((q) => q.card_id === idea!.id)!.content.options.indexOf('It never holds in practice.'), guess: 'It is never true' },
 		},
 	])
 	await page.getByRole('button', { name: 'Next' }).click()
 
-	// The right pick, by keys: its letter, then 3 for Sure.
+	// The right pick, by keys after the guess: its letter, then 1 for Guessing. A right guess is spaced like a hard answer.
 	await expect(page.getByText('Card 2 of 2')).toBeVisible()
+	await page.getByLabel('Your answer in a few words').fill('As the text says')
+	await page.getByRole('button', { name: 'Show options' }).click()
 	const radios = page.getByRole('radiogroup', { name: 'Options' }).getByRole('radio')
 	const right = (await radios.allInnerTexts()).findIndex((t) => t.includes(RIGHT))
 	await page.keyboard.press('abcd'[right]!)
 	await expect(radios.nth(right)).toHaveAttribute('aria-checked', 'true')
-	await page.keyboard.press('3')
+	await page.keyboard.press('1')
 	await expect(page.getByTestId('result')).toContainText('Right')
-	await expect(page.getByTestId('result')).toContainText('Back tomorrow')
 	const [log] = await sql<{ graded_by: string; rating: string; confidence: string }>('select graded_by, rating, confidence from review_log where card_id = $1', [other!.id])
-	expect(log).toEqual({ graded_by: 'code', rating: 'good', confidence: 'sure' })
+	expect(log).toEqual({ graded_by: 'code', rating: 'hard', confidence: 'guessing' })
+	await page.getByRole('button', { name: 'Next' }).click()
+
+	// The batch ends with the confident error first, then how often each confidence was right.
+	await expect(page.getByText('You answered 1 of 2 right.')).toBeVisible()
+	await expect(page.getByRole('region', { name: 'You were sure about these' })).toContainText(idea!.answer)
+	await expect(page.getByTestId('calibration')).toHaveText('Sure: 0 of 1 right · Guessing: 1 of 1')
+	await proof(page, testInfo, 'calibration-results')
+
+	// Turning Guess first off on Review turns it off in Settings → Questions too.
+	await page.getByRole('switch', { name: /Guess first/ }).click()
+	await expect.poll(() => sql<{ guess_first: boolean }>('select guess_first from preferences where user_id = (select user_id from readings where id = $1)', [readingId]).then((r) => r[0]!.guess_first)).toBe(false)
+	await page.goto('/settings')
+	await expect(page.getByRole('switch', { name: /Guess first/ })).not.toBeChecked()
+
+	// Progress shows the same calibration over the last 12 weeks, and the Sure-but-wrong count this month.
+	await page.goto('/mind/progress')
+	await expect(page.getByTestId('calibration')).toHaveText('Sure: 0 of 1 right · Guessing: 1 of 1')
+	await expect(page.getByTestId('sure-wrong')).toHaveText('Sure but wrong this month: 1')
+	await proof(page, testInfo, 'calibration-progress')
 })
 
 test('Review without a key: self-rated cards, 20 at a time with Keep going, filters, and answer keys that never switch worlds', async ({ page }, testInfo) => {

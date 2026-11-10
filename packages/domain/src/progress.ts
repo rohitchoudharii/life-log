@@ -1,3 +1,4 @@
+import type { Confidence } from './questions'
 import { defaultScheduler, type SchedulerState } from './scheduler'
 
 /** Where an idea stands: not started, in the 1, 2 and 3 day steps, or past them and known or fading. */
@@ -55,4 +56,39 @@ export function goalPace({ wordCount, wordsRead, goalBy, today }: { wordCount: n
 	if (days < 1) return { percent, passed: true as const }
 	const pages = Math.ceil(Math.max(0, wordCount - wordsRead) / WORDS_PER_PAGE / days)
 	return { percent, passed: false as const, pagesPerDay: pages }
+}
+
+/** How many answers at each confidence were right. */
+export type Calibration = Record<Confidence, { right: number; total: number }>
+
+/** Tallies answers by the confidence given with them. Answers with no confidence, such as self-rated ones, are left out. */
+export function calibration(answers: { confidence: Confidence | null; correct: boolean }[]): Calibration {
+	const out: Calibration = { sure: { right: 0, total: 0 }, think_so: { right: 0, total: 0 }, guessing: { right: 0, total: 0 } }
+	for (const a of answers) {
+		if (!a.confidence) continue
+		out[a.confidence].total++
+		if (a.correct) out[a.confidence].right++
+	}
+	return out
+}
+
+const CALIBRATION_LABELS: [Confidence, string][] = [
+	['sure', 'Sure'],
+	['think_so', 'Think so'],
+	['guessing', 'Guessing'],
+]
+
+/**
+ * "Sure: 4 of 5 right · Think so: 2 of 3 · Guessing: 1 of 2", leaving out levels with no answers;
+ * empty when there are none. A level with at least `percentFrom` answers shows a percentage
+ * instead, as in "Sure: 91% right".
+ */
+export function calibrationLine(c: Calibration, percentFrom = Number.POSITIVE_INFINITY) {
+	return CALIBRATION_LABELS.filter(([level]) => c[level].total > 0)
+		.map(([level, label], i) => {
+			const { right, total } = c[level]
+			const share = total >= percentFrom ? `${Math.round((right / total) * 100)}%` : `${right} of ${total}`
+			return `${label}: ${share}${i === 0 ? ' right' : ''}`
+		})
+		.join(' · ')
 }

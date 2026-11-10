@@ -55,7 +55,7 @@ describe('multiple choice questions', () => {
 		expect(await gradeResponse('mcq', mcq, { choice: 0 }, noJudge)).toMatchObject({
 			correct: false,
 			rating: 'again',
-			reveal: { reference: 'Divide by √d_k.', choice: { options: mcq.options, right: 1, picked: 0, whyWrong: ['Too large.', '', 'Inverted.'] } },
+			reveal: { reference: 'Divide by √d_k.', choice: { options: mcq.options, right: 1, picked: 0, whyWrong: ['Too large.', '', 'Inverted.'], guess: null } },
 		})
 		expect(await gradeResponse('mcq', mcq, { choice: 1 }, noJudge)).toMatchObject({ correct: true, rating: 'good' })
 		// I don't know is a miss with nothing picked.
@@ -63,8 +63,9 @@ describe('multiple choice questions', () => {
 		expect(() => gradeResponse('mcq', mcq, { answer: 'd_k' }, noJudge)).toThrow()
 	})
 
-	it('spaces a right answer called a guess like a hard one', async () => {
-		const right = await gradeResponse('mcq', mcq, { choice: 1 }, noJudge)
+	it('accepts a typed guess with an MCQ pick, and spaces a right answer called a guess like a hard one', async () => {
+		const right = await gradeResponse('mcq', mcq, { choice: 1, guess: 'the square root of d_k' }, noJudge)
+		expect(right.reveal).toMatchObject({ choice: { guess: 'the square root of d_k' } })
 		const wrong = await gradeResponse('mcq', mcq, { choice: 0 }, noJudge)
 		expect(withConfidence(right, 'guessing')).toMatchObject({ correct: true, rating: 'hard' })
 		expect(withConfidence(right, 'think_so').rating).toBe('good')

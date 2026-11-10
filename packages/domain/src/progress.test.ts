@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gapBucket, goalPace, ideaStatus } from './progress'
+import { calibration, calibrationLine, gapBucket, goalPace, ideaStatus } from './progress'
 import { stepsThenFsrs } from './scheduler'
 
 const DAY = 86_400_000
@@ -44,5 +44,23 @@ describe('goalPace', () => {
 		expect(goalPace({ wordCount: 600, wordsRead: 0, goalBy: '2026-11-10', today: '2026-11-10' })).toEqual({ percent: 0, passed: false, pagesPerDay: 2 })
 		expect(goalPace({ wordCount: 600, wordsRead: 0, goalBy: '2026-11-09', today: '2026-11-10' })).toEqual({ percent: 0, passed: true })
 		expect(goalPace({ wordCount: 600, wordsRead: 600, goalBy: '2026-12-01', today: '2026-11-10' })).toEqual({ percent: 100, passed: false, pagesPerDay: 0 })
+	})
+})
+
+describe('calibration', () => {
+	const a = (confidence: 'sure' | 'think_so' | 'guessing' | null, correct: boolean) => ({ confidence, correct })
+
+	it('counts only answers given with a confidence', () => {
+		const c = calibration([a('sure', true), a('sure', true), a('sure', false), a('guessing', true), a(null, false), a(null, true)])
+		expect(c).toEqual({ sure: { right: 2, total: 3 }, think_so: { right: 0, total: 0 }, guessing: { right: 1, total: 1 } })
+		expect(calibrationLine(c)).toBe('Sure: 2 of 3 right · Guessing: 1 of 1')
+		expect(calibrationLine(calibration([a(null, true)]))).toBe('')
+	})
+
+	it('shows a percentage for a level with enough answers, and counts for the rest', () => {
+		const many = [...Array.from({ length: 20 }, (_, i) => a('sure', i < 18)), a('think_so', true), a('think_so', false)]
+		expect(calibrationLine(calibration(many), 20)).toBe('Sure: 90% right · Think so: 1 of 2')
+		// The first level shown carries "right", whichever it is.
+		expect(calibrationLine(calibration([a('think_so', true)]))).toBe('Think so: 1 of 1 right')
 	})
 })

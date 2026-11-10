@@ -1,10 +1,10 @@
 import type { AnswerResult, RecallAttempt } from '@life-log-club/contract'
-import type { PointStatus } from '@life-log-club/domain'
+import { calibration, calibrationLine, type PointStatus } from '@life-log-club/domain'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { quiet } from '../books'
-import { backIn, primary, QuestionForm, RevealTile } from '../answer'
+import { backIn, GuessFirstSwitch, primary, QuestionForm, RevealTile } from '../answer'
 import { client, errorMessage, orpc } from '../rpc'
 import { ErrorText } from '../ui'
 import { SectionText } from './reader'
@@ -52,6 +52,8 @@ function Dump({ attempt }: { attempt: RecallAttempt }) {
 					Nothing comes to mind
 				</button>
 			</div>
+			{/* The questions after the dump may include multiple choice. */}
+			<GuessFirstSwitch />
 			<ErrorText>{submit.error && errorMessage(submit.error)}</ErrorText>
 		</form>
 	)
@@ -232,6 +234,7 @@ function Results({ attempt }: { attempt: RecallAttempt }) {
 	const asked = ideas.filter((i) => i.answer).length
 	// Sure but wrong first: the errors most worth fixing (hypercorrection).
 	const sureWrong = ideas.filter((i) => i.answer && !i.answer.correct && i.answer.confidence === 'sure')
+	const sureness = calibrationLine(calibration(ideas.flatMap((i) => (i.answer ? [{ confidence: i.answer.confidence, correct: i.answer.correct }] : []))))
 	const retryLeft = (attempt.retry ?? []).some((i) => !i.answered)
 	const done = useBackToReading(attempt)
 	if (retrying) return <Retry attempt={attempt} onDone={() => setRetrying(false)} />
@@ -250,6 +253,11 @@ function Results({ attempt }: { attempt: RecallAttempt }) {
 						<p key={i.cardId}>{i.idea}</p>
 					))}
 				</section>
+			)}
+			{sureness && (
+				<p className="font-sans text-sm text-world-muted" data-testid="calibration">
+					{sureness}
+				</p>
 			)}
 			<ol aria-label="Recall map" className="grid gap-3">
 				{ideas.map((idea) => (

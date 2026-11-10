@@ -1,10 +1,10 @@
 import { asUser } from '../db/client'
 import { requeueWaiting } from '../jobs'
 import { withinBudget } from '../learning/ai'
-import { preferencesOf, updatePreferences } from '../learning/preferences'
+import { type Preferences, preferencesOf, updatePreferences } from '../learning/preferences'
 import { authed } from '../orpc'
 
-const shown = ({ aiMonthlyBudgetUsd, desiredRetention }: { aiMonthlyBudgetUsd: number; desiredRetention: number }) => ({ aiMonthlyBudgetUsd, desiredRetention })
+const shown = ({ aiMonthlyBudgetUsd, desiredRetention, guessFirst }: Preferences) => ({ aiMonthlyBudgetUsd, desiredRetention, guessFirst })
 
 export const preferencesRoutes = {
 	get: authed.preferences.get.handler(({ context }) => asUser(context.user.id, async (tx) => shown(await preferencesOf(tx, context.user.id)))),

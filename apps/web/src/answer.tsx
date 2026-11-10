@@ -1,5 +1,5 @@
 import type { AnswerResult, AskItem } from '@life-log-club/contract'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { quiet } from './books'
 import { client, errorMessage, orpc } from './rpc'
@@ -50,6 +50,39 @@ export function useAnswerKeys(keys: Record<string, () => void>, active = true) {
 
 export type Answered = { answerId: string; given: string | null; confidence: Confidence | null }
 
+/**
+ * Guess first: type a few words before multiple-choice options show. One value for the member,
+ * on by default, changed from the recall and Review start screens and from Settings.
+ */
+export function useGuessFirst() {
+	const queryClient = useQueryClient()
+	const prefs = useQuery(orpc.preferences.get.queryOptions())
+	const save = useMutation(
+		orpc.preferences.update.mutationOptions({
+			onSuccess: (saved) => queryClient.setQueryData(orpc.preferences.get.queryKey(), saved),
+		}),
+	)
+	const on = (save.isPending ? save.variables.guessFirst : undefined) ?? prefs.data?.guessFirst ?? true
+	return { on, set: (guessFirst: boolean) => save.mutate({ guessFirst }), error: save.error }
+}
+
+/** The Guess first switch, the same value wherever it shows. */
+export function GuessFirstSwitch({ className = '' }: { className?: string }) {
+	const guessFirst = useGuessFirst()
+	return (
+		<div className={`grid gap-1 ${className}`}>
+			<label className="flex cursor-pointer items-center gap-2 font-sans text-sm">
+				<input type="checkbox" role="switch" className="size-4 accent-world-accent" checked={guessFirst.on} onChange={(e) => guessFirst.set(e.target.checked)} />
+				<span>
+					<span className="font-medium">Guess first</span>
+					<span className="text-world-muted"> · type a few words before the options show</span>
+				</span>
+			</label>
+			<ErrorText>{guessFirst.error && errorMessage(guessFirst.error)}</ErrorText>
+		</div>
+	)
+}
+
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
 
 /**
@@ -81,14 +114,23 @@ export function QuestionForm({
 	const [answerId] = useState(() => crypto.randomUUID())
 	const [text, setText] = useState('')
 	const [picked, setPicked] = useState<number | null>(null)
+	const [guess, setGuess] = useState('')
+	const [guessed, setGuessed] = useState(false)
 	const [checking, setChecking] = useState<{ confidence: Confidence } | null>(null)
 	const { options } = item
+	const guessFirst = useGuessFirst().on
+	// With Guess first, the options wait behind the member's own few words.
+	const hidden = Boolean(options) && guessFirst && !guessed
 	const given = options ? (picked === null ? '' : options[picked]!) : text
 	const send = useMutation({
 		mutationFn: (choice: { confidence: Confidence | null; skipped?: boolean; made?: boolean[] }) => {
 			const base = { answerId, cardId: item.cardId, mode, attemptId }
 			if (item.questionId) {
-				const response = choice.skipped ? { skipped: true } : options ? { choice: picked } : { answer: text, ...(choice.made && { made: choice.made }) }
+				const response = choice.skipped
+					? { skipped: true }
+					: options
+						? { choice: picked, ...(guessed && guess.trim() && { guess: guess.trim() }) }
+						: { answer: text, ...(choice.made && { made: choice.made }) }
 				return client.review.answer({ ...base, ask: 'question', questionId: item.questionId, response, confidence: choice.confidence })
 			}
 			const response = choice.skipped ? { skipped: true as const } : { answer: text, ...(choice.made && { made: choice.made }) }
@@ -106,7 +148,7 @@ export function QuestionForm({
 	useAnswerKeys(
 		{
 			...Object.fromEntries(CONFIDENCE.map((c) => [c.key, () => pick(c.value)])),
-			...Object.fromEntries((options ?? []).map((_, i) => [LETTERS[i]!.toLowerCase(), () => setPicked(i)])),
+			...Object.fromEntries((hidden ? [] : (options ?? [])).map((_, i) => [LETTERS[i]!.toLowerCase(), () => setPicked(i)])),
 		},
 		keys && !checking,
 	)
@@ -126,8 +168,30 @@ export function QuestionForm({
 				{item.prompt}
 			</p>
 			{item.code && <pre className="overflow-x-auto rounded-xl bg-world-card p-3 text-sm whitespace-pre-wrap">{item.code}</pre>}
-			{options ? (
+			{hidden ? (
+				<div className="grid gap-3">
+					<textarea
+						aria-label="Your answer in a few words"
+						autoFocus
+						rows={2}
+						maxLength={500}
+						value={guess}
+						onChange={(e) => setGuess(e.target.value)}
+						placeholder="Your answer in a few words"
+						className="w-full rounded-2xl border border-world-line bg-world-card p-4 text-lg leading-relaxed outline-none focus:border-world-accent"
+					/>
+					<div className="flex flex-wrap items-center gap-2">
+						<button type="button" className={primary} disabled={!guess.trim()} onClick={() => setGuessed(true)}>
+							Show options
+						</button>
+						<button type="button" className={quiet} disabled={send.isPending} onClick={() => send.mutate({ confidence: null, skipped: true })}>
+							I don’t know
+						</button>
+					</div>
+				</div>
+			) : options ? (
 				<div role="radiogroup" aria-label="Options" className="grid gap-2">
+					{guessed && guess.trim() && <p className="font-sans text-sm text-world-muted">Your guess: {guess.trim()}</p>}
 					{options.map((option, i) => (
 						<button
 							key={i}
@@ -156,19 +220,21 @@ export function QuestionForm({
 					className="w-full rounded-2xl border border-world-line bg-world-card p-4 text-lg leading-relaxed outline-none focus:border-world-accent"
 				/>
 			)}
-			<div className="grid gap-2">
-				<p className="font-sans text-xs text-world-muted">How sure are you?</p>
-				<div className="flex flex-wrap items-center gap-2">
-					{CONFIDENCE.map((c) => (
-						<button key={c.value} type="button" className={primary} disabled={empty || send.isPending} onClick={() => pick(c.value)}>
-							{c.label}
+			{!hidden && (
+				<div className="grid gap-2">
+					<p className="font-sans text-xs text-world-muted">How sure are you?</p>
+					<div className="flex flex-wrap items-center gap-2">
+						{CONFIDENCE.map((c) => (
+							<button key={c.value} type="button" className={primary} disabled={empty || send.isPending} onClick={() => pick(c.value)}>
+								{c.label}
+							</button>
+						))}
+						<button type="button" className={quiet} disabled={send.isPending} onClick={() => send.mutate({ confidence: null, skipped: true })}>
+							I don’t know
 						</button>
-					))}
-					<button type="button" className={quiet} disabled={send.isPending} onClick={() => send.mutate({ confidence: null, skipped: true })}>
-						I don’t know
-					</button>
+					</div>
 				</div>
-			</div>
+			)}
 			{send.isPending && <p className="animate-pulse font-sans text-sm text-world-muted">Checking your answer…</p>}
 			{!onError && <ErrorText>{send.error && errorMessage(send.error)}</ErrorText>}
 		</form>
@@ -311,6 +377,7 @@ export function RevealTile({
 			<p className={`font-sans text-sm font-semibold ${result.correct ? 'text-path' : 'text-red'}`}>{verdict}</p>
 			{prompt && <p className="text-lg leading-snug">{prompt}</p>}
 			{given !== null && !choice && <p className="whitespace-pre-wrap text-world-muted">You wrote: {given}</p>}
+			{choice?.guess && <p className="whitespace-pre-wrap text-world-muted">You guessed: {choice.guess}</p>}
 			{choice && (
 				<ul className="grid gap-2" aria-label="Options">
 					{choice.options.map((option, i) => {
