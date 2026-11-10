@@ -1497,3 +1497,60 @@ test('Words without a key: Add word asks what the word means, and adding by hand
 	await expect(page.getByRole('list', { name: 'Your words' }).getByTestId('word')).toHaveCount(2)
 	await expect(add.getByRole('alert')).toHaveCount(0)
 })
+
+test('Words in Review: fill the blank with a hint, see the right word beside your own and its meaning, then say what a word means; Words shows the next test', async ({ page }, testInfo) => {
+	const email = await joinAs(page)
+	expect((await api(page, 'ai/saveKey', { provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })).ok()).toBe(true)
+	const add = async (form: string, sentence: string, meaning: string) => {
+		const res = await api(page, 'words/add', { id: crypto.randomUUID(), form, sentence, meaning })
+		return ((await res.json()) as { json: { word: { id: string } } }).json.word.id
+	}
+	const cram = await add('cramming', 'Students who rely on cramming forget most of it within a week.', 'studying a lot at the last moment')
+	const lapse = await add('lapse', 'After a long lapse, the old habit came back within days.', 'a gap in time when something stops')
+	await sql("update cards set due_at = now() - interval '2 seconds' where id = $1", [cram])
+	// Answered right twice already: now its meaning is asked.
+	await sql("update cards set level = 2, due_at = now() - interval '1 second' where id = $1", [lapse])
+
+	await page.goto('/mind/review')
+	await page.getByRole('button', { name: 'Words', exact: true }).click()
+	await expect(page.getByTestId('question')).toHaveText('Which word fills the blank?')
+	await expect(page.getByTestId('word-sentence')).toHaveText('Students who rely on _____ forget most of it within a week.')
+	await expect(page.getByText('The missing word · Starts with “c”, 8 letters')).toBeVisible()
+	// Guess first is for multiple choice; a word test asks for the word itself.
+	await expect(page.getByLabel('Your answer in a few words')).toHaveCount(0)
+	await page.getByLabel('The missing word').fill('revising')
+	await proof(page, testInfo, 'word-cloze')
+	await page.getByRole('button', { name: 'Sure', exact: true }).click()
+	const result = page.getByTestId('result')
+	await expect(result).toContainText('Not quite')
+	await expect(result.getByRole('definition').first()).toHaveText('cramming')
+	await expect(result.getByRole('definition').nth(1)).toHaveText('revising')
+	await expect(result).toContainText('Meaning studying a lot at the last moment')
+	await expect(result).toContainText('Met in: “Students who rely on cramming forget most of it within a week.”')
+	await expect(result).toContainText('Back in 10 minutes')
+	await proof(page, testInfo, 'word-cloze-wrong')
+	await page.getByRole('button', { name: 'Next' }).click()
+
+	// The meaning, judged by the AI against its meaning in the sentence.
+	await expect(page.getByTestId('question')).toHaveText('What does “lapse” mean here?')
+	await expect(page.getByTestId('word-sentence')).toHaveText('After a long lapse, the old habit came back within days.')
+	await page.getByLabel('Your answer').fill('A gap in time when the habit stops for a while.')
+	await proof(page, testInfo, 'word-meaning')
+	await page.getByRole('button', { name: 'Think so' }).click()
+	await expect(result).toContainText('Right')
+	await expect(result).toContainText('lapse')
+	await proof(page, testInfo, 'word-meaning-right')
+	expect(
+		await sql("select c.details->>'word' as word, l.graded_by, l.correct from review_log l join cards c on c.id = l.card_id where c.user_id = (select id from users where email = $1) order by l.id", [email]),
+	).toEqual([
+		{ word: 'cramming', graded_by: 'code', correct: false },
+		{ word: 'lapse', graded_by: 'ai', correct: true },
+	])
+
+	// Words says what each word gets next.
+	await page.goto('/mind/words')
+	const words = page.getByTestId('word')
+	await expect(words.filter({ hasText: 'cramming' }).getByTestId('word-test')).toHaveText('· Next: fill it into its sentence')
+	await expect(words.filter({ hasText: 'lapse' }).getByTestId('word-test')).toHaveText('· Next: use it in a sentence of your own')
+	await proof(page, testInfo, 'words-next')
+})

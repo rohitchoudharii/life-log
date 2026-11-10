@@ -7,6 +7,13 @@ import { backIn } from '../answer'
 import { client, errorMessage, orpc } from '../rpc'
 import { useToast } from '../toast'
 
+/** What a word's next test asks, so the member sees where it stands. */
+const NEXT: Record<Word['test'], string> = {
+	word_cloze: 'Next: fill it into its sentence',
+	word_meaning: 'Next: say what it means',
+	word_use: 'Next: use it in a sentence of your own',
+}
+
 const field =
 	'w-full rounded-lg border border-world-line bg-world px-3 py-2 font-sans text-base outline-none focus:border-world-accent focus:ring-2 focus:ring-world-accent/20'
 const button = 'rounded-xl bg-world-accent px-4 py-2 font-sans text-sm font-semibold text-world-on-accent transition hover:opacity-90 disabled:opacity-60'
@@ -131,6 +138,9 @@ function WordCard({ word }: { word: Word }) {
 			<div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-sans text-sm">
 				<span className="text-world-muted" data-testid="word-due">
 					{backIn(word.dueAt)}
+				</span>
+				<span className="text-world-muted" data-testid="word-test">
+					· {NEXT[word.test]}
 				</span>
 				{word.readingId && word.readingTitle && (
 					<Link

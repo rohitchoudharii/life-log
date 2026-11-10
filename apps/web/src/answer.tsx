@@ -1,5 +1,5 @@
 import type { AnswerResult, AskItem } from '@life-log-club/contract'
-import { parseNumber } from '@life-log-club/domain'
+import { parseNumber, type WordTest } from '@life-log-club/domain'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { quiet } from './books'
@@ -111,7 +111,13 @@ export function QuestionForm({
 	onAnswered,
 	onError,
 }: {
-	item: Pick<AskItem, 'cardId' | 'questionId' | 'prompt' | 'code'> & { options?: string[] | null; type?: string | null; unit?: string | null }
+	item: Pick<AskItem, 'cardId' | 'questionId' | 'prompt' | 'code'> & {
+		options?: string[] | null
+		type?: string | null
+		unit?: string | null
+		/** A word's test: its sentence (blanked for the cloze) and the cloze's hint. */
+		word?: { test: WordTest; sentence: string | null; hint: string | null }
+	}
 	mode: 'recall' | 'review' | 'practice'
 	attemptId?: string
 	keys?: boolean
@@ -131,8 +137,11 @@ export function QuestionForm({
 	const [checking, setChecking] = useState<{ confidence: Confidence } | null>(null)
 	const { options } = item
 	// A worked problem is answered with a number, a predicted output with exactly what the code prints.
-	const form =
-		item.type === 'worked_problem' ? 'number' : item.type === 'predict_output' ? 'output' : item.type === 'order_steps' ? 'order' : options ? 'choice' : 'written'
+	const form = item.word
+		? item.word.test === 'word_cloze'
+			? 'cloze'
+			: 'written'
+		: item.type === 'worked_problem' ? 'number' : item.type === 'predict_output' ? 'output' : item.type === 'order_steps' ? 'order' : options ? 'choice' : 'written'
 	const exact = form === 'number' || form === 'output'
 	const guessFirst = useGuessFirst().on
 	// With Guess first, the options wait behind the member's own few words.
@@ -142,6 +151,10 @@ export function QuestionForm({
 	const send = useMutation({
 		mutationFn: (choice: { confidence: Confidence | null; skipped?: boolean; made?: boolean[] }) => {
 			const base = { answerId, cardId: item.cardId, mode, attemptId }
+			if (item.word) {
+				const response = choice.skipped ? { skipped: true as const } : { answer: text, ...(choice.made && { made: choice.made }) }
+				return client.review.answer({ ...base, ask: 'word', response, confidence: choice.confidence })
+			}
 			if (item.questionId) {
 				const response = choice.skipped
 					? { skipped: true }
@@ -193,6 +206,11 @@ export function QuestionForm({
 				{item.prompt}
 			</p>
 			{item.code && <pre className="overflow-x-auto rounded-xl bg-world-card p-3 text-sm whitespace-pre-wrap">{item.code}</pre>}
+			{item.word?.sentence && (
+				<blockquote className="border-l-2 border-world-accent pl-3 text-lg leading-relaxed italic" data-testid="word-sentence">
+					{item.word.sentence}
+				</blockquote>
+			)}
 			{hidden ? (
 				<div className="grid gap-3">
 					<textarea
@@ -282,6 +300,21 @@ export function QuestionForm({
 						</button>
 					))}
 				</div>
+			) : form === 'cloze' ? (
+				<label className="grid gap-1">
+					<span className="font-sans text-xs text-world-muted">The missing word{item.word?.hint ? ` · ${item.word.hint}` : ''}</span>
+					<input
+						aria-label="The missing word"
+						autoFocus
+						autoComplete="off"
+						autoCapitalize="off"
+						spellCheck={false}
+						maxLength={100}
+						value={text}
+						onChange={(e) => setText(e.target.value)}
+						className="w-64 max-w-full rounded-2xl border border-world-line bg-world-card px-4 py-3 text-lg outline-none focus:border-world-accent"
+					/>
+				</label>
 			) : form === 'number' ? (
 				<div className="grid gap-3">
 					<label className="grid gap-1">
@@ -496,7 +529,7 @@ export function RevealTile({
 	const { reveal } = result
 	// A cue's one point is the model answer itself; the verdict already says whether it was made.
 	const points = reveal.points.length === 1 && reveal.points[0]!.point === reveal.reference ? [] : reveal.points
-	const { choice, exact, order } = reveal
+	const { choice, exact, order, word } = reveal
 	const answered = choice ? choice.picked !== null : exact ? exact.given !== null : order ? order.given !== null : given !== null
 	// Partial credit by pairs: most pairs in order is close, and says so.
 	const pairs = order && order.given ? pairsCount(order) : null
@@ -515,6 +548,8 @@ export function RevealTile({
 		<div className="grid gap-3 rounded-2xl border border-world-line bg-world-card p-4" data-testid="result">
 			<p className={`font-sans text-sm font-semibold ${result.correct ? 'text-path' : 'text-red'}`}>{verdict}</p>
 			{prompt && <p className="text-lg leading-snug">{prompt}</p>}
+			{/* A cloze already shows the word as its right answer, beside the learner's. */}
+			{word && !exact && <p className="text-2xl font-semibold">{word.word}</p>}
 			{order && (
 				<div className="grid gap-2">
 					{pairs && !result.correct && (
@@ -586,11 +621,15 @@ export function RevealTile({
 			)}
 			{reveal.reference && (
 				<p>
-					<span className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">{choice ? 'Why ' : order ? 'Why this order ' : exact?.kind === 'number' ? 'Worked solution ' : exact ? 'Why it prints that ' : 'Model answer '}</span>
+					<span className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">{word ? 'Meaning ' : choice ? 'Why ' : order ? 'Why this order ' : exact?.kind === 'number' ? 'Worked solution ' : exact ? 'Why it prints that ' : 'Model answer '}</span>
 					{reveal.reference}
 				</p>
 			)}
-			{reveal.quote && <p className="text-sm text-world-muted italic">From the text: “{reveal.quote}”</p>}
+			{reveal.quote && (
+				<p className="text-sm text-world-muted italic">
+					{word ? 'Met in' : 'From the text'}: “{reveal.quote}”
+				</p>
+			)}
 			{showDue && <p className="font-sans text-xs text-world-muted">{backIn(result.dueAt)}</p>}
 			{/* A choice is checked against its key, so there is nothing to count again; a wrong key is reported instead. */}
 			{answerId && given !== null && !choice && !order && !result.correct && (

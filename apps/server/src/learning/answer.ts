@@ -5,6 +5,10 @@ import {
 	defaultScheduler,
 	type ExactReveal,
 	type OrderReveal,
+	gradeWord,
+	type WordReveal,
+	type WrittenResponse,
+	wordTestFor,
 	type Grade,
 	gradeResponse,
 	gradeWritten,
@@ -23,6 +27,7 @@ import { asUser, type Tx } from '../db/client'
 import { cards, questions, recallAttempts, reviewLog } from '../db/schema'
 import { callAi } from './ai'
 import { preferencesOf } from './preferences'
+import { wordOf } from './review'
 
 const NOT_CHECKED = 'Your answer couldn’t be checked just now. Try again in a moment.'
 
@@ -55,6 +60,7 @@ function toReveal(reveal: Record<string, unknown>, quote: string | null): Reveal
 		...(reveal.choice ? { choice: reveal.choice as ChoiceReveal } : {}),
 		...(reveal.exact ? { exact: reveal.exact as ExactReveal } : {}),
 		...(reveal.order ? { order: reveal.order as OrderReveal } : {}),
+		...(reveal.word ? { word: reveal.word as WordReveal } : {}),
 	}
 }
 
@@ -99,6 +105,7 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
 			if (!attempt) throw new ORPCError('NOT_FOUND', { message: 'That recall check does not exist.' })
 		}
 		checkWhen(card, input.mode, new Date())
+		if (input.ask === 'word' && (card.kind !== 'word' || !card.answer)) throw new ORPCError('BAD_REQUEST', { message: 'This card is not a word to test.' })
 		if (input.ask !== 'question') return { card, question: null }
 		const [question] = await tx.select().from(questions).where(and(eq(questions.id, input.questionId), eq(questions.cardId, card.id)))
 		if (!question || !isQuestionType(question.type)) throw new ORPCError('NOT_FOUND', { message: 'That question does not exist.' })
@@ -117,20 +124,29 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
 		// I don't know, a choice, an order, a number and an output are graded in code (a number's working by the
 		// judge), the learner's own check of the points by them, the rest by the judge.
 		const r = input.response
+		// A word's test is the one for its level now, as Review showed it.
+		const test = input.ask === 'word' ? wordTestFor(card.level, Boolean(wordOf(card).sentence)) : null
 		gradedBy =
-			'skipped' in r || 'choice' in r || 'order' in r || 'output' in r || ('value' in r && !r.working) ? 'code' : 'made' in r ? 'self' : 'ai'
+			'skipped' in r || 'choice' in r || 'order' in r || 'output' in r || ('value' in r && !r.working) || test === 'word_cloze'
+				? 'code'
+				: 'made' in r
+					? 'self'
+					: 'ai'
 		try {
 			grade =
 				input.ask === 'cue'
 					? await gradeWritten({ prompt: card.prompt, reference: card.answer, mustHave: [card.answer], misconceptions: [] }, input.response, judge)
-					: await gradeResponse(question!.type as never, question!.content, input.response, judge)
+					: test
+						? await gradeWord(test, wordOf(card), input.response as WrittenResponse, judge)
+						: await gradeResponse(question!.type as never, question!.content, input.response, judge)
 		} catch (error) {
 			if (error instanceof ZodError) throw new ORPCError('BAD_REQUEST', { message: 'Write an answer, or choose I don’t know.' })
 			throw error
 		}
 		grade = withConfidence(grade, input.confidence)
 	}
-	const reveal = toReveal(grade.reveal, card.quote)
+	// A word's sentence is where it was met, which may be an example the AI wrote rather than a quote.
+	const reveal = toReveal(grade.reveal, card.kind === 'word' ? wordOf(card).sentence : card.quote)
 
 	return asUser(userId, async (tx) => {
 		const now = new Date()

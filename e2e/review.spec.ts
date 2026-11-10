@@ -617,6 +617,64 @@ test('a word is added once per member by either form, needs a sentence that uses
 	expect((await a.client.words.suggestions({ sectionId: section!.id })).map((t) => t.word)).toEqual(['effortful'])
 })
 
+test('a word is tested by its level: the blank twice, checked in code even without a key, then its meaning, then a sentence of one’s own, judged', async () => {
+	const { client } = await newMember()
+	const sentence = 'Students who rely on cramming forget most of it within a week.'
+	const { word } = await client.words.add({ id: randomUUID(), form: 'cramming', sentence, meaning: 'studying a lot at the last moment' })
+	const due = () => sql("update cards set due_at = now() - interval '1 second' where id = $1", [word.id])
+	const askOf = async () => (await client.review.next({ filter: 'words' })).items[0]!.ask
+	const answer = (response: Record<string, unknown>) =>
+		client.review.answer({ answerId: randomUUID(), cardId: word.id, mode: 'review', ask: 'word', response: response as { answer: string }, confidence: 'sure' })
+	const card = () => sql<{ level: number }>('select level from cards where id = $1', [word.id]).then((r) => r[0]!)
+
+	// Level 0, no key: the blank, with a hint, checked in code.
+	await due()
+	expect(await askOf()).toEqual({ kind: 'word', test: 'word_cloze', prompt: 'Which word fills the blank?', sentence: 'Students who rely on _____ forget most of it within a week.', hint: 'Starts with “c”, 8 letters' })
+	expect(await answer({ answer: 'revising' })).toMatchObject({
+		correct: false,
+		rating: 'again',
+		reveal: { reference: 'studying a lot at the last moment', quote: sentence, word: { word: 'cramming', test: 'word_cloze' }, exact: { kind: 'word', expected: 'cramming', given: 'revising' } },
+	})
+	expect((await card()).level).toBe(0)
+	// Two right answers, one with a typo, move it on to the meaning.
+	for (const typed of ['Cramming', 'crammng']) {
+		await due()
+		expect((await answer({ answer: typed })).correct).toBe(true)
+	}
+	expect((await card()).level).toBe(2)
+	expect(await sql('select ask, graded_by from review_log where card_id = $1', [word.id])).toEqual(Array(3).fill({ ask: 'word', graded_by: 'code' }))
+
+	// The meaning needs the judge: without a key, the card is self-rated against its meaning.
+	await due()
+	expect(await askOf()).toEqual({ kind: 'self', prompt: 'What does “cramming” mean?' })
+	expect((await client.words.list())[0]!.test).toBe('word_meaning')
+	await client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })
+	expect(await askOf()).toEqual({ kind: 'word', test: 'word_meaning', prompt: 'What does “cramming” mean here?', sentence, hint: null })
+	expect(await answer({ answer: 'Studying hard at the very last moment.' })).toMatchObject({ correct: true, reveal: { reference: 'studying a lot at the last moment', word: { test: 'word_meaning' } } })
+
+	// Then a sentence of one's own, judged against the meaning.
+	await due()
+	expect(await askOf()).toMatchObject({ kind: 'word', test: 'word_use', prompt: 'Use “cramming” in a sentence of your own, with the meaning it has here.' })
+	const use = await answer({ answer: 'Before the exam he was cramming all night.' })
+	expect(use.reveal).toMatchObject({ reference: 'studying a lot at the last moment', word: { test: 'word_use' } })
+	expect(use.reveal.points.map((p) => p.point)).toEqual(['Uses "cramming" (or a form of it) correctly, with the meaning: studying a lot at the last moment', "Is a new sentence of the learner's own, not the one shown or a near copy of it"])
+	const [last] = await sql<{ graded_by: string }>('select graded_by from review_log where card_id = $1 order by id desc limit 1', [word.id])
+	expect(last!.graded_by).toBe('ai')
+
+	// Another form of the word can be right too: the learner counts it, and the level moves on.
+	const { word: other } = await client.words.add({ id: randomUUID(), form: 'lapse', sentence: 'After a long lapse, the habit came back.', meaning: 'a gap in time when something stops' })
+	await sql("update cards set due_at = now() - interval '1 second' where id = $1", [other.id])
+	const answerId = randomUUID()
+	const wrong = await client.review.answer({ answerId, cardId: other.id, mode: 'review', ask: 'word', response: { answer: 'lapses' }, confidence: 'sure' })
+	expect(wrong.correct).toBe(false)
+	expect((await client.review.override({ answerId })).correct).toBe(true)
+	expect((await sql<{ level: number }>('select level from cards where id = $1', [other.id]))[0]!.level).toBe(1)
+
+	// Only a word card takes a word's test.
+	const idea = await client.review.add({ id: randomUUID(), kind: 'idea', prompt: 'Why space practice?', answer: 'Effortful recall lasts.' })
+	expect(await code(client.review.answer({ answerId: randomUUID(), cardId: idea.id, mode: 'practice', ask: 'word', response: { answer: 'x' }, confidence: null }))).toBe('BAD_REQUEST')
+})
+
 test('Rewrite key ideas replaces ideas none of which is in use; once one is answered only questions can be rewritten, and never on Quick or without a key', async () => {
 	const { client, user } = await newMember()
 	await client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })

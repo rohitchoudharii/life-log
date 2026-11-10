@@ -234,7 +234,7 @@ export const normalizeOutput = (text: string) =>
 		.replace(/^\n+|\n+$/g, '')
 
 /** What an exactly checked answer shows: the right answer, and the learner's, as they read. */
-export type ExactReveal = { kind: 'number' | 'output'; expected: string; given: string | null }
+export type ExactReveal = { kind: 'number' | 'output' | 'word'; expected: string; given: string | null }
 
 export const questionTypes = {
 	short_answer: def({

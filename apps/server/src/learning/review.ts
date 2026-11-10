@@ -1,5 +1,5 @@
 import type { ReviewFilter, ReviewItem } from '@life-log-club/contract'
-import { defaultScheduler, isQuestionType, pickQuestion, toPrompt } from '@life-log-club/domain'
+import { defaultScheduler, isQuestionType, pickQuestion, toPrompt, type WordContent, wordPrompt, wordTestFor } from '@life-log-club/domain'
 import { and, desc, eq, inArray, isNotNull, isNull, lte, max, type SQL } from 'drizzle-orm'
 import type { Tx } from '../db/client'
 import { aiKeys, cards, questions, readings, reviewLog, sections } from '../db/schema'
@@ -14,6 +14,12 @@ const FILTERS: Record<ReviewFilter, SQL | undefined> = {
 	readings: isNotNull(cards.sectionId),
 	lessons: eq(cards.kind, 'lesson'),
 	words: eq(cards.kind, 'word'),
+}
+
+/** A word card's word, the form met, its sentence and its meaning. */
+export function wordOf(card: typeof cards.$inferSelect): WordContent {
+	const d = card.details as { word: string; form: string; sentence: string | null }
+	return { word: d.word, form: d.form, sentence: d.sentence, meaning: card.answer }
 }
 
 /** Cards due now that have started and are not removed, for one filter. */
@@ -87,6 +93,13 @@ export async function nextBatch(tx: Tx, limit: number, filter: ReviewFilter, fir
 			createdAt: card.createdAt,
 			answer: card.answer,
 			cue: card.prompt,
+		}
+		if (card.kind === 'word') {
+			const word = wordOf(card)
+			const test = wordTestFor(card.level, Boolean(word.sentence))
+			// The cloze is checked in code, so it needs no key; the meaning and a sentence of one's own need the judge.
+			if (!word.meaning || (!key && test !== 'word_cloze')) return { ...base, ask: { kind: 'self', prompt: card.prompt } }
+			return { ...base, ask: { kind: 'word', test, ...wordPrompt(test, word) } }
 		}
 		if (!key) return { ...base, ask: { kind: 'self', prompt: card.prompt } }
 		const choices = own

@@ -6,6 +6,7 @@ import {
 	EXPLAIN_KINDS,
 	GAP_BUCKETS,
 	MAX_WORD_CHARS,
+	WORD_TESTS,
 	Note,
 	PILLARS,
 	QUESTION_AMOUNTS,
@@ -74,6 +75,8 @@ export const Word = z.object({
 	sentence: z.string().nullable(),
 	meaning: z.string().nullable(),
 	defining: z.boolean(),
+	/** The test the word gets next in Review. */
+	test: z.enum(WORD_TESTS),
 	readingId: z.uuid().nullable(),
 	sectionId: z.uuid().nullable(),
 	readingTitle: z.string().nullable(),
@@ -152,10 +155,12 @@ const answerOf = {
 	/** The recall check the answer is part of. */
 	attemptId: z.uuid().optional(),
 }
-/** One answer: to a stored question, to the card's cue (written recall), or a self-rating. */
+/** One answer: to a stored question, to the card's cue (written recall), to a word's test, or a self-rating. */
 export const Answer = z.discriminatedUnion('ask', [
 	z.object({ ...answerOf, ask: z.literal('question'), questionId: z.uuid(), response: z.record(z.string(), z.unknown()), confidence: Confidence.nullable().default(null) }),
 	z.object({ ...answerOf, ask: z.literal('cue'), response: Written, confidence: Confidence.nullable().default(null) }),
+	/** A word's test at its level: fill the blank, say what it means, or use it. */
+	z.object({ ...answerOf, ask: z.literal('word'), response: Written, confidence: Confidence.nullable().default(null) }),
 	z.object({ ...answerOf, ask: z.literal('self'), rating: Rating }),
 ])
 export type Answer = z.infer<typeof Answer>
@@ -186,7 +191,9 @@ export const Reveal = z.object({
 		})
 		.optional(),
 	/** For a worked problem or predicted output: the right answer and the learner's, as typed. */
-	exact: z.object({ kind: z.enum(['number', 'output']), expected: z.string(), given: z.string().nullable() }).optional(),
+	exact: z.object({ kind: z.enum(['number', 'output', 'word']), expected: z.string(), given: z.string().nullable() }).optional(),
+	/** For a word's test: the word, and which test it was. `reference` is its meaning. */
+	word: z.object({ word: z.string(), test: z.enum(WORD_TESTS) }).optional(),
 	/** For an order question: the steps in the right order, the learner's order as indexes into them, and the share of pairs in order. */
 	order: z.object({ steps: z.array(z.string()), given: z.array(z.number()).nullable(), pairs: z.number() }).optional(),
 })
@@ -364,6 +371,8 @@ export const ReviewItem = z.object({
 			unit: z.string().nullable(),
 		}),
 		z.object({ kind: z.literal('cue'), prompt: z.string() }),
+		/** A word's test at its level, with its sentence (blanked for the cloze) and, for the cloze, a hint. */
+		z.object({ kind: z.literal('word'), test: z.enum(WORD_TESTS), prompt: z.string(), sentence: z.string().nullable(), hint: z.string().nullable() }),
 		z.object({ kind: z.literal('self'), prompt: z.string() }),
 	]),
 })

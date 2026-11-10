@@ -1,5 +1,5 @@
 import type { Word } from '@life-log-club/contract'
-import { defaultScheduler, formIn } from '@life-log-club/domain'
+import { defaultScheduler, formIn, wordTestFor } from '@life-log-club/domain'
 import { defineWordRequest, parseDefinition } from '@life-log-club/llm'
 import { ORPCError } from '@orpc/server'
 import { and, desc, eq, isNull, or, sql } from 'drizzle-orm'
@@ -29,6 +29,7 @@ export function toWord(card: CardRow, readingTitle: string | null, now = new Dat
 		sentence: d.sentence,
 		meaning,
 		defining: !meaning && now.getTime() - card.createdAt.getTime() < DEFINING_MS,
+		test: wordTestFor(card.level, Boolean(d.sentence)),
 		readingId: card.readingId,
 		sectionId: card.sectionId,
 		readingTitle,

@@ -209,7 +209,7 @@ export const reviewLog = pgTable(
 		answerId: uuid().unique(),
 		/** The question asked; null for cue recall and self-rated cards. */
 		questionId: uuid().references(() => questions.id, { onDelete: 'set null' }),
-		ask: text().$type<'question' | 'cue' | 'self'>().notNull().default('self'),
+		ask: text().$type<'question' | 'cue' | 'word' | 'self'>().notNull().default('self'),
 		/** `recall` right after reading, `review` from the queue, `practice` for a retry round (schedule unchanged). */
 		mode: text().$type<'recall' | 'review' | 'practice'>().notNull().default('review'),
 		rating: text().$type<Rating>().notNull(),
