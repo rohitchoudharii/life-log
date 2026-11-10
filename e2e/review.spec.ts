@@ -355,3 +355,93 @@ test('a finished reading follows its entry: removing it unfinishes, restoring fi
 	// Only Finished makes this entry.
 	expect(await code(client.entries.create({ id: randomUUID(), type: 'reading.finished', details: { readingId: reading.id, title: 'Peak' } }))).toBe('BAD_REQUEST')
 })
+
+/** A pasted reading with two sections, ready at once. */
+async function twoSections(client: Awaited<ReturnType<typeof newMember>>['client'], title = 'Peak') {
+	const reading = await client.readings.addText({
+		id: randomUUID(),
+		title,
+		text: '# The gold standard\n\nExperts see chunks where beginners see pieces.\n\n# Mental representations\n\nA representation lets you hold a whole pattern at once.',
+	})
+	const { contents } = await client.readings.get({ id: reading.id })
+	return { reading, sections: contents }
+}
+
+test('a saved idea uses the member’s words and question, else the quote and a fallback cue, and is due in 1 day', async () => {
+	const { client, user } = await newMember()
+	const { reading, sections } = await twoSections(client)
+	const [first, second] = sections
+	const save = (quote: string, more: { prompt?: string; answer?: string; sectionId?: string } = {}) =>
+		client.review.add({ id: randomUUID(), kind: 'idea', readingId: reading.id, sectionId: first!.id, quote, ...more })
+
+	// Without a key or a question: the quote is the answer, and the cue names where it came from.
+	const plain = await save('Experts see chunks\n where beginners see pieces.')
+	expect(plain).toMatchObject({
+		kind: 'idea',
+		readingId: reading.id,
+		sectionId: first!.id,
+		quote: 'Experts see chunks where beginners see pieces.',
+		answer: 'Experts see chunks where beginners see pieces.',
+		prompt: `From Peak, ${first!.title}: what did you save here?`,
+	})
+	expect(daysUntil(plain.dueAt)).toBe(1)
+	expect((await client.review.due({})).total).toBe(0)
+
+	// The member's own words and question are used as they are.
+	const own = await save('A representation lets you hold a whole pattern at once.', {
+		sectionId: second!.id,
+		answer: 'Experts hold the whole board in mind.',
+		prompt: 'Why can a grandmaster recall a game at a glance?',
+	})
+	expect(own).toMatchObject({ answer: 'Experts hold the whole board in mind.', prompt: 'Why can a grandmaster recall a game at a glance?', sectionId: second!.id })
+
+	// The same quote again, with other spacing, returns the first card.
+	expect((await save(' Experts see chunks where beginners  see pieces. ')).id).toBe(plain.id)
+	expect(await sql("select id from cards where user_id = $1 and kind = 'idea'", [user.id])).toHaveLength(2)
+	expect(await sql("select 1 from ai_calls where user_id = $1 and purpose = 'write-cue'", [user.id])).toHaveLength(0)
+
+	// Too long, or not from a reading, or not an idea: refused.
+	const tooLong = await save('word '.repeat(201)).catch((e: unknown) => e)
+	expect(tooLong).toBeInstanceOf(ORPCError)
+	expect(JSON.stringify((tooLong as ORPCError<string, unknown>).data)).toContain('Pick one idea, not a page.')
+	expect(await code(client.review.add({ id: randomUUID(), kind: 'idea', quote: 'A quote with no reading.' }))).toBe('BAD_REQUEST')
+	expect(await code(client.review.add({ id: randomUUID(), kind: 'lesson', readingId: reading.id, sectionId: first!.id, quote: 'Q' }))).toBe('BAD_REQUEST')
+	expect(await code(client.review.add({ id: randomUUID(), kind: 'idea', prompt: 'Only a question?' }))).toBe('BAD_REQUEST')
+
+	// On Ideas, newest first, with where each came from; a removed reading takes its ideas with it.
+	const listed = await client.review.list({ origin: 'member', kind: 'idea' })
+	expect(listed.map((c) => [c.id, c.readingTitle, c.sectionTitle])).toEqual([
+		[own.id, 'Peak', second!.title],
+		[plain.id, 'Peak', first!.title],
+	])
+	await client.readings.remove({ id: reading.id })
+	expect(await client.review.list({ origin: 'member' })).toEqual([])
+})
+
+test('a saved idea can be edited, removed and restored, and only by its member; lessons stay with their entry', async () => {
+	const a = await newMember('A')
+	const b = await newMember('B')
+	const { reading, sections } = await twoSections(a.client)
+	const idea = await a.client.review.add({ id: randomUUID(), kind: 'idea', readingId: reading.id, sectionId: sections[0]!.id, quote: 'Experts see chunks.' })
+
+	const edited = await a.client.review.update({ id: idea.id, prompt: 'What do experts see?', answer: 'Chunks, not pieces.' })
+	expect(edited).toMatchObject({ prompt: 'What do experts see?', answer: 'Chunks, not pieces.', dueAt: idea.dueAt })
+	await a.client.review.remove({ id: idea.id })
+	expect(await a.client.review.list({ readingId: reading.id })).toEqual([])
+	expect(await code(a.client.review.update({ id: idea.id, prompt: 'Gone?' }))).toBe('NOT_FOUND')
+	expect((await a.client.review.restore({ id: idea.id })).prompt).toBe('What do experts see?')
+	expect(await a.client.review.list({ readingId: reading.id })).toHaveLength(1)
+
+	// Another member can't save into this reading, or touch the idea.
+	expect(await code(b.client.review.add({ id: randomUUID(), kind: 'idea', readingId: reading.id, sectionId: sections[0]!.id, quote: 'Mine now.' }))).toBe('NOT_FOUND')
+	expect(await code(b.client.review.update({ id: idea.id, prompt: 'Changed?' }))).toBe('NOT_FOUND')
+	expect(await code(b.client.review.remove({ id: idea.id }))).toBe('NOT_FOUND')
+	expect(await b.client.review.list({})).toEqual([])
+	// A section of another reading is not this reading's.
+	const other = await twoSections(a.client, 'Moonwalking')
+	expect(await code(a.client.review.add({ id: randomUUID(), kind: 'idea', readingId: reading.id, sectionId: other.sections[0]!.id, quote: 'Q.' }))).toBe('NOT_FOUND')
+	// A lesson's card is edited through its entry, not here.
+	const lesson = await a.client.review.add({ id: randomUUID(), kind: 'lesson', prompt: 'Salary talks?', answer: 'Anchor high.' })
+	expect(await code(a.client.review.update({ id: lesson.id, answer: 'Changed.' }))).toBe('NOT_FOUND')
+	expect(await code(a.client.review.remove({ id: lesson.id }))).toBe('NOT_FOUND')
+})

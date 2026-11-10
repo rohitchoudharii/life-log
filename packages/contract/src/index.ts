@@ -37,9 +37,28 @@ export const Card = z.object({
 	prompt: z.string(),
 	answer: z.string(),
 	entryId: z.uuid().nullable(),
+	/** For ideas from a reading: where they came from, and the passage they rest on. */
+	readingId: z.uuid().nullable(),
+	sectionId: z.uuid().nullable(),
+	quote: z.string().nullable(),
 	dueAt: z.date(),
 })
 export type Card = z.infer<typeof Card>
+
+/** The longest passage a saved idea can quote. */
+export const MAX_QUOTE_CHARS = 1000
+
+/**
+ * A card on the Ideas page: with the titles of the reading and section it came from, and the
+ * block of the section its quote starts in, to open the reader there.
+ */
+export const SavedCard = Card.extend({
+	readingTitle: z.string().nullable(),
+	sectionTitle: z.string().nullable(),
+	block: z.int().nullable(),
+	createdAt: z.date(),
+})
+export type SavedCard = z.infer<typeof SavedCard>
 
 export const AiKey = z.object({ provider: z.enum(['anthropic', 'openai']), model: z.string(), last4: z.string() })
 export type AiKey = z.infer<typeof AiKey>
@@ -454,18 +473,46 @@ export const contract = {
 		restore: oc.input(EntryId).output(Entry),
 	},
 	review: {
-		/** Adds an idea or a lesson to spaced review. It is due at once. The client picks the id. */
+		/**
+		 * Adds an idea or a lesson to spaced review. It is due at once. The client picks the id.
+		 *
+		 * An idea saved from a reading gives its `quote`, with the `readingId` and `sectionId` it
+		 * came from and the `block` of the section the quote starts in. Then the answer is the
+		 * member's own words, else the quote; the cue is their question, else one the AI writes
+		 * when they have a key, else "From Title, Section: what did you save here?". Saving is a
+		 * study event, so the card is first due in 1 day. Saving a quote already saved from the
+		 * same reading returns that card instead, so the id that comes back can differ.
+		 */
 		add: oc
 			.input(
-				z.object({
-					id: z.uuid(),
-					kind: z.enum(['idea', 'lesson']),
-					prompt: z.string().trim().min(1).max(1000),
-					answer: z.string().trim().min(1).max(5000),
-					entryId: z.uuid().optional(),
-				}),
+				z
+					.object({
+						id: z.uuid(),
+						kind: z.enum(['idea', 'lesson']),
+						prompt: z.string().trim().min(1).max(1000).optional(),
+						answer: z.string().trim().min(1).max(5000).optional(),
+						entryId: z.uuid().optional(),
+						readingId: z.uuid().optional(),
+						sectionId: z.uuid().optional(),
+						block: z.int().min(0).optional(),
+						quote: z.string().trim().min(1).max(MAX_QUOTE_CHARS, 'Pick one idea, not a page.').optional(),
+					})
+					.refine((i) => (i.quote ? i.readingId && i.sectionId && i.kind === 'idea' : i.prompt && i.answer), {
+						message: 'Give a question and its answer, or a quote from a reading.',
+					}),
 			)
 			.output(Card),
+		/** Edits an idea the member saved: its cue (`prompt`) or its answer. The schedule stays. */
+		update: oc
+			.input(z.object({ id: z.uuid(), prompt: z.string().trim().min(1).max(1000).optional(), answer: z.string().trim().min(1).max(5000).optional() }))
+			.output(Card),
+		/** Hides an idea the member saved, and its reviews; `restore` brings it back (undo). */
+		remove: oc.input(z.object({ id: z.uuid() })).output(Ok),
+		restore: oc.input(z.object({ id: z.uuid() })).output(Card),
+		/** The member's cards, newest first, for the Ideas page. Cards of removed readings are left out. */
+		list: oc
+			.input(z.object({ readingId: z.uuid().optional(), origin: z.enum(['ai', 'member']).optional(), kind: z.enum(['idea', 'lesson', 'word']).optional() }))
+			.output(z.array(SavedCard)),
 		/**
 		 * Cards due now, oldest first, how many are due in total, and about how many minutes
 		 * they take (the member's median answer time, times the count).

@@ -19,8 +19,8 @@ export function lessonCueRequest(model: string, lesson: string): ChatRequest {
 	return { model, system: SYSTEM, user: `<lesson>\n${lesson}\n</lesson>`, json: true, maxTokens: 100, timeoutMs: 30_000 }
 }
 
-/** The cue in a reply to `lessonCueRequest`, or null when there is none. */
-export function parseLessonCue(reply: string): string | null {
+/** The cue in a reply to `lessonCueRequest` or `ideaCueRequest`, or null when there is none. */
+export function parseCue(reply: string): string | null {
 	const parsed = jsonIn(reply) as { cue?: unknown } | null
 	return typeof parsed?.cue === 'string' && parsed.cue.trim() ? parsed.cue.trim() : null
 }

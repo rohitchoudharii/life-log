@@ -84,6 +84,9 @@ export function Mind() {
 					<Link to="/mind/progress" className="rounded-xl border border-world-line px-4 py-2.5 text-sm font-medium transition hover:bg-world-card">
 						Progress
 					</Link>
+					<Link to="/mind/ideas" className="rounded-xl border border-world-line px-4 py-2.5 text-sm font-medium transition hover:bg-world-card">
+						Ideas
+					</Link>
 					<LogButton type="lesson">Log a lesson</LogButton>
 				</div>
 			</Hero>

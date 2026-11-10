@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { defaultScheduler, lintCue } from '@life-log-club/domain'
-import { lessonCueRequest, parseLessonCue } from '@life-log-club/llm'
+import { lessonCueRequest, parseCue } from '@life-log-club/llm'
 import { and, eq } from 'drizzle-orm'
 import { asUser, type Tx } from '../db/client'
 import { aiKeys, cards, type entries } from '../db/schema'
@@ -65,7 +65,7 @@ export async function writeLessonCue({ userId, entryId }: CueJob) {
 	const [card] = await asUser(userId, (tx) => tx.select().from(cards).where(eq(cards.entryId, entryId)))
 	if (!card) return
 	const reply = await callAi(userId, 'lesson-cue', (model) => lessonCueRequest(model, card.answer))
-	const cue = reply && parseLessonCue(reply)
+	const cue = reply && parseCue(reply)
 	if (!cue || lintCue(cue, card.answer).length) return
 	await asUser(userId, (tx) => tx.update(cards).set({ prompt: cue }).where(and(eq(cards.id, card.id), eq(cards.prompt, card.prompt))))
 }

@@ -1,11 +1,12 @@
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from '@tanstack/react-router'
-import { StrictMode } from 'react'
+import { StrictMode, useMemo } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BookPage } from './books'
 import { Devices } from './pages/devices'
 import { Settings } from './pages/settings'
 import { Home } from './pages/home'
+import { Ideas } from './pages/ideas'
 import { Progress } from './pages/progress'
 import { Reader } from './pages/reader'
 import { Recall } from './pages/recall'
@@ -37,9 +38,16 @@ const mindRoute = createRoute({ getParentRoute: () => appRoute, path: '/mind', c
 const readerRoute = createRoute({
 	getParentRoute: () => appRoute,
 	path: '/mind/read/$readingId',
+	// `section` and `block`: a place to open at instead of where the member stopped, such as a saved idea's passage.
+	validateSearch: (search: Record<string, unknown>): { section?: string; block?: number } => ({
+		...(typeof search.section === 'string' && { section: search.section }),
+		...(typeof search.block === 'number' && Number.isInteger(search.block) && search.block >= 0 && { block: search.block }),
+	}),
 	component: function ReaderPage() {
 		const { readingId } = readerRoute.useParams()
-		return <Reader key={readingId} readingId={readingId} />
+		const { section, block } = readerRoute.useSearch()
+		const at = useMemo(() => (section ? { sectionId: section, block: block ?? 0 } : undefined), [section, block])
+		return <Reader key={`${readingId}:${section ?? ''}:${block ?? ''}`} readingId={readingId} at={at} />
 	},
 })
 const recallRoute = createRoute({
@@ -61,6 +69,7 @@ const reviewRoute = createRoute({
 	},
 })
 const progressRoute = createRoute({ getParentRoute: () => appRoute, path: '/mind/progress', component: Progress })
+const ideasRoute = createRoute({ getParentRoute: () => appRoute, path: '/mind/ideas', component: Ideas })
 const bookRoute = createRoute({
 	getParentRoute: () => appRoute,
 	path: '/mind/book/$bookId',
@@ -74,7 +83,7 @@ const heartRoute = createRoute({ getParentRoute: () => appRoute, path: '/heart',
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: '/settings', component: Settings })
 
 const router = createRouter({
-	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, mindRoute, readerRoute, recallRoute, reviewRoute, progressRoute, bookRoute, bodyRoute, heartRoute, devicesRoute, settingsRoute])]),
+	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, mindRoute, readerRoute, recallRoute, reviewRoute, progressRoute, ideasRoute, bookRoute, bodyRoute, heartRoute, devicesRoute, settingsRoute])]),
 })
 
 declare module '@tanstack/react-router' {

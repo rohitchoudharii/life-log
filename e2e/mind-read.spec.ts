@@ -948,3 +948,74 @@ test('Finish by sets a pace on the tile; Finished logs the reading as a mileston
 	await expect(page.getByTestId('reading').filter({ hasText: 'Peak' })).toBeVisible()
 	await expect(page.getByTestId('mind-due')).toHaveText('0')
 })
+
+/** The member's saved ideas from a reading, with what the reader and Ideas page show of them. */
+const savedIdeas = (readingId: string) =>
+	sql<{ id: string; section_id: string; quote: string; answer: string; prompt: string; due_at: Date; started_at: Date | null; state: { step: number | null } }>(
+		"select id, section_id, quote, answer, prompt, due_at, started_at, state from cards where reading_id = $1 and origin = 'member' and kind = 'idea' and deleted_at is null",
+		[readingId],
+	)
+const longWords = (text: string) => text.toLowerCase().match(/[a-z]{4,}/g) ?? []
+
+test('Save idea turns a selected passage into a card due in 1 day, listed on Ideas under its reading; with a key, AI writes its cue', async ({ page }, testInfo) => {
+	const { readingId, ids } = await openWithKey(page)
+	const paragraph = page.locator('article [data-block] p').first()
+	const quote = (await paragraph.innerText()).replace(/\s+/g, ' ').trim()
+
+	// A passage too long for one idea says so, and offers nothing to save.
+	await page.locator('article').evaluate((article) => document.getSelection()!.selectAllChildren(article))
+	await expect(page.getByRole('status').filter({ hasText: 'Pick one idea, not a page.' })).toBeVisible()
+	await expect(page.getByRole('button', { name: 'Save idea' })).toHaveCount(0)
+
+	// Selecting one paragraph offers Save idea; the card shows the quote, and Enter saves it.
+	await paragraph.click({ clickCount: 3 })
+	await expect(page.getByRole('button', { name: 'Save idea' })).toBeVisible()
+	await proof(page, testInfo, 'selection')
+	await page.getByRole('button', { name: 'Save idea' }).click()
+	const dialog = page.getByRole('dialog', { name: 'Save idea' })
+	await expect(dialog.getByText(quote)).toBeVisible()
+	await proof(page, testInfo, 'save-idea')
+	await dialog.getByLabel('In your words (optional)').press('Enter')
+	await expect(page.getByRole('status').filter({ hasText: 'Idea saved. It comes back tomorrow.' })).toBeVisible()
+
+	const [card] = await savedIdeas(readingId)
+	expect(card).toMatchObject({ section_id: ids[0], quote, answer: quote, state: expect.objectContaining({ step: 1 }) })
+	expect(card!.started_at).not.toBeNull()
+	expect(Math.abs(minutesUntil(card!.due_at) - DAY_MINUTES)).toBeLessThanOrEqual(1)
+	// The fallback cue gives way to one the AI writes, which doesn't give the quote's words away.
+	await expect.poll(async () => (await savedIdeas(readingId))[0]!.prompt, { timeout: 10_000 }).toBe('What did you want to keep from this part?')
+	const quoteWords = new Set(longWords(quote))
+	expect(longWords('What did you want to keep from this part?').filter((w) => quoteWords.has(w))).toEqual([])
+
+	// Saving the same passage again opens the first card, to edit, instead of a second one.
+	await paragraph.click({ clickCount: 3 })
+	await page.getByRole('button', { name: 'Save idea' }).click()
+	const again = page.getByRole('dialog', { name: 'You saved this idea already' })
+	await expect(again.getByLabel('Question to ask yourself (optional)')).toHaveValue('What did you want to keep from this part?')
+	await again.getByLabel('In your words (optional)').fill('The engine runs one job at a time.')
+	await again.getByRole('button', { name: 'Save' }).click()
+	await expect(page.getByRole('status').filter({ hasText: 'Idea updated.' })).toBeVisible()
+	expect(await savedIdeas(readingId)).toEqual([expect.objectContaining({ id: card!.id, answer: 'The engine runs one job at a time.' })])
+
+	// On Ideas: the idea under its reading, due tomorrow, linking back to its passage.
+	await page.goto('/mind')
+	await page.getByRole('link', { name: 'Ideas', exact: true }).click()
+	const title = await sql<{ title: string }>('select title from readings where id = $1', [readingId]).then((r) => r[0]!.title)
+	const group = page.getByRole('region', { name: title })
+	const idea = group.getByTestId('saved-idea')
+	await expect(idea).toHaveCount(1)
+	await expect(idea.getByText(quote)).toBeVisible()
+	await expect(idea.getByText('In your words: The engine runs one job at a time.')).toBeVisible()
+	await expect(idea.getByTestId('idea-due')).toHaveText('Back tomorrow')
+	await proof(page, testInfo, 'ideas')
+	await idea.getByRole('link', { name: 'Open passage' }).click()
+	await expect(page).toHaveURL(new RegExp(`/mind/read/${readingId}\\?section=${ids[0]}`))
+	await expect(page.locator(`article[data-section="${ids[0]}"]`)).toBeVisible()
+
+	// Remove takes it off Ideas; Undo brings it back.
+	await page.goBack()
+	await idea.getByRole('button', { name: 'Remove' }).click()
+	await expect(idea).toHaveCount(0)
+	await page.getByRole('button', { name: 'Undo' }).click()
+	await expect(idea).toHaveCount(1)
+})

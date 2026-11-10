@@ -1,10 +1,12 @@
 import { defaultScheduler, isQuestionType, questionTypes } from '@life-log-club/domain'
 import { ORPCError } from '@orpc/server'
-import { and, asc, count, eq, gt, isNotNull, isNull } from 'drizzle-orm'
-import { asUser } from '../db/client'
-import { cards, entries, questions } from '../db/schema'
+import { and, asc, count, desc, eq, gt, isNotNull, isNull } from 'drizzle-orm'
+import { asUser, type Tx } from '../db/client'
+import { cards, entries, questions, readings, sections } from '../db/schema'
+import { enqueueIdeaCue } from '../jobs'
 import { answerCard, overrideAnswer, reportQuestion } from '../learning/answer'
 import { dueNow, minutesFor, nextBatch } from '../learning/review'
+import { saveIdea } from '../learning/saved-ideas'
 import { authed } from '../orpc'
 
 const toCard = (c: typeof cards.$inferSelect) => ({
@@ -13,12 +15,34 @@ const toCard = (c: typeof cards.$inferSelect) => ({
 	prompt: c.prompt,
 	answer: c.answer,
 	entryId: c.entryId,
+	readingId: c.readingId,
+	sectionId: c.sectionId,
+	quote: c.quote,
 	dueAt: c.dueAt,
 })
 
+/** Only ideas the member saved are theirs to edit or remove here; lessons go with their entry. */
+const savedIdea = (id: string) => and(eq(cards.id, id), eq(cards.kind, 'idea'), eq(cards.origin, 'member'))
+const notFound = () => new ORPCError('NOT_FOUND', { message: 'That idea does not exist. It may have been removed.' })
+
+async function liveSavedIdea(tx: Tx, id: string) {
+	const [card] = await tx.select().from(cards).where(and(savedIdea(id), isNull(cards.deletedAt)))
+	if (!card) throw notFound()
+	return card
+}
+
 export const reviewRoutes = {
-	add: authed.review.add.handler(({ input, context }) =>
-		asUser(context.user.id, async (tx) => {
+	add: authed.review.add.handler(async ({ input, context }) => {
+		const { readingId, sectionId, quote } = input
+		if (quote && readingId && sectionId) {
+			const { card, needsCue } = await asUser(context.user.id, (tx) => saveIdea(tx, context.user.id, { ...input, readingId, sectionId, quote }))
+			if (needsCue) await enqueueIdeaCue({ userId: context.user.id, cardId: card.id })
+			return toCard(card)
+		}
+		const { prompt, answer } = input
+		// The contract asks for both when there is no quote.
+		if (!prompt || !answer) throw new ORPCError('BAD_REQUEST', { message: 'Give a question and its answer.' })
+		return asUser(context.user.id, async (tx) => {
 			// A foreign key alone would accept another member's entry id, because constraint
 			// checks skip row-level security. Looking it up here only finds this member's own.
 			if (input.entryId) {
@@ -34,8 +58,8 @@ export const reviewRoutes = {
 					id: input.id,
 					userId: context.user.id,
 					kind: input.kind,
-					prompt: input.prompt,
-					answer: input.answer,
+					prompt,
+					answer,
 					entryId: input.entryId ?? null,
 					state: defaultScheduler.initial(),
 					// A card added by hand is recalled from now on, so it starts at once.
@@ -47,6 +71,56 @@ export const reviewRoutes = {
 			const [existing] = await tx.select().from(cards).where(eq(cards.id, input.id))
 			if (!existing) throw new ORPCError('CONFLICT', { message: 'That card id is taken. Try again.' })
 			return toCard(existing)
+		})
+	}),
+
+	update: authed.review.update.handler(({ input, context }) =>
+		asUser(context.user.id, async (tx) => {
+			const card = await liveSavedIdea(tx, input.id)
+			const set = { ...(input.prompt && { prompt: input.prompt }), ...(input.answer && { answer: input.answer }) }
+			if (!Object.keys(set).length) return toCard(card)
+			const [updated] = await tx.update(cards).set(set).where(eq(cards.id, card.id)).returning()
+			return toCard(updated!)
+		}),
+	),
+
+	remove: authed.review.remove.handler(({ input, context }) =>
+		asUser(context.user.id, async (tx) => {
+			const card = await liveSavedIdea(tx, input.id)
+			await tx.update(cards).set({ deletedAt: new Date() }).where(eq(cards.id, card.id))
+			return { ok: true as const }
+		}),
+	),
+
+	restore: authed.review.restore.handler(({ input, context }) =>
+		asUser(context.user.id, async (tx) => {
+			const [card] = await tx.update(cards).set({ deletedAt: null }).where(savedIdea(input.id)).returning()
+			if (!card) throw notFound()
+			return toCard(card)
+		}),
+	),
+
+	list: authed.review.list.handler(({ input, context }) =>
+		asUser(context.user.id, async (tx) => {
+			const rows = await tx
+				.select({ card: cards, readingTitle: readings.title, sectionTitle: sections.title })
+				.from(cards)
+				.leftJoin(readings, eq(readings.id, cards.readingId))
+				.leftJoin(sections, eq(sections.id, cards.sectionId))
+				.where(
+					and(
+						isNull(cards.deletedAt),
+						isNull(readings.deletedAt),
+						input.readingId ? eq(cards.readingId, input.readingId) : undefined,
+						input.origin ? eq(cards.origin, input.origin) : undefined,
+						input.kind ? eq(cards.kind, input.kind) : undefined,
+					),
+				)
+				.orderBy(desc(cards.createdAt), desc(cards.id))
+			return rows.map(({ card, readingTitle, sectionTitle }) => {
+				const block = (card.details as { block?: unknown } | null)?.block
+				return { ...toCard(card), readingTitle, sectionTitle, block: typeof block === 'number' ? block : null, createdAt: card.createdAt }
+			})
 		}),
 	),
 

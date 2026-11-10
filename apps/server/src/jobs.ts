@@ -7,6 +7,7 @@ import { env } from './env'
 import { addChapterHeadings, importReading } from './import/reading'
 import { type CueJob, writeLessonCue } from './learning/lessons'
 import { type GradeJob, gradeAttempt } from './learning/recall'
+import { type IdeaCueJob, writeIdeaCue } from './learning/saved-ideas'
 import { type WriteJob, writeKeyIdeas } from './learning/write-section'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -105,6 +106,11 @@ const CUE = 'lesson-cue'
 /** Queues the writing of a cue for a lesson logged without one. */
 export const enqueueLessonCue = (job: CueJob) => boss.send(CUE, job, { singletonKey: job.entryId })
 
+const IDEA_CUE = 'write-cue'
+
+/** Queues the writing of a cue for an idea saved from a reading without a question. */
+export const enqueueIdeaCue = (job: IdeaCueJob) => boss.send(IDEA_CUE, job, { singletonKey: job.cardId })
+
 /**
  * Queues again the member's sections that wait in one of `statuses`: after they add a key
  * (`needs_key`) or raise the budget (`paused`).
@@ -165,6 +171,11 @@ export async function startJobs() {
 	if (!(await boss.getQueue(CUE))) await boss.createQueue(CUE, { policy: 'stately', retryLimit: 1, retryDelay: 30, expireInSeconds: 5 * 60 })
 	await boss.work(CUE, { localConcurrency: 4 }, async ([job]: Job<CueJob>[]) => {
 		if (job) await writeLessonCue(job.data)
+	})
+	// Like a lesson's, a saved idea keeps its fallback cue when this fails.
+	if (!(await boss.getQueue(IDEA_CUE))) await boss.createQueue(IDEA_CUE, { policy: 'stately', retryLimit: 1, retryDelay: 30, expireInSeconds: 5 * 60 })
+	await boss.work(IDEA_CUE, { localConcurrency: 4 }, async ([job]: Job<IdeaCueJob>[]) => {
+		if (job) await writeIdeaCue(job.data)
 	})
 	// Readings left importing by a stop before their job was queued. The singleton key keeps a
 	// reading whose job is still queued from getting a second one.

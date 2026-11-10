@@ -5,6 +5,7 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { FinishCard, useFinish } from '../finish'
 import { importingText } from '../readings'
+import { SaveIdea } from '../save-idea'
 import { client, errorMessage, orpc } from '../rpc'
 
 type NoteMarks = { notes: Map<string, Note>; open: (note: Note) => void }
@@ -317,7 +318,12 @@ function SectionView({
 				? "Heading added by AI. The text is the author's."
 				: null
 	return (
-		<article data-section={id} className="grid gap-4 leading-relaxed" style={{ fontSize: size }}>
+		<article
+			data-section={id}
+			data-pending={section.data.headingsPending ? '' : undefined}
+			className="grid gap-4 leading-relaxed"
+			style={{ fontSize: size }}
+		>
 			<header>
 				<h2 className="text-[1.35em] font-semibold tracking-tight">{section.data.title}</h2>
 				{note && <p className={`font-sans text-xs text-world-muted ${section.data.headingsPending ? 'animate-pulse' : ''}`}>{note}</p>}
@@ -427,8 +433,11 @@ const sizeLetter = (s: keyof typeof SIZES) => (
 	</span>
 )
 
-/** One reading: its contents, and one section at a time. */
-export function Reader({ readingId }: { readingId: string }) {
+/**
+ * One reading: its contents, and one section at a time. It opens where the member stopped, or at
+ * `at` when given, such as the passage of a saved idea.
+ */
+export function Reader({ readingId, at: openAt }: { readingId: string; at?: ReadingPosition }) {
 	const navigate = useNavigate()
 	const reading = useQuery({
 		...orpc.readings.get.queryOptions({ input: { id: readingId } }),
@@ -459,12 +468,12 @@ export function Reader({ readingId }: { readingId: string }) {
 		const data = reading.data
 		if (placed.current || data?.status !== 'ready' || !reading.isFetchedAfterMount) return
 		placed.current = true
-		const at = data.position
+		const at = (openAt && data.contents.some((s) => s.id === openAt.sectionId) ? openAt : null) ?? data.position
 		const i = at ? data.contents.findIndex((s) => s.id === at.sectionId) : -1
 		if (i < 0) return
 		setCurrent(i)
 		setStart(at)
-	}, [reading.data, reading.isFetchedAfterMount])
+	}, [reading.data, reading.isFetchedAfterMount, openAt])
 
 	// Saves the place 2 seconds after scrolling stops. Two tabs open: the last save wins.
 	useEffect(() => {
@@ -543,6 +552,7 @@ export function Reader({ readingId }: { readingId: string }) {
 
 	return (
 		<div className="grid gap-8 xl:grid-cols-[17rem_minmax(0,1fr)] xl:gap-12">
+			<SaveIdea readingId={r.id} />
 			<aside className="hidden border-r border-world-line xl:block">
 				<div className="sticky top-20 grid max-h-[calc(100dvh-6.5rem)] grid-rows-[auto_minmax(0,1fr)] gap-2 pr-3">
 					<p className="flex items-baseline justify-between px-2 font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">
