@@ -3,6 +3,7 @@ import {
 	CONFIDENCES,
 	EntryData,
 	EntryText,
+	EXPLAIN_KINDS,
 	GAP_BUCKETS,
 	Note,
 	PILLARS,
@@ -59,6 +60,9 @@ export type Card = z.infer<typeof Card>
 
 /** The longest passage a saved idea can quote. */
 export const MAX_QUOTE_CHARS = 1000
+
+/** The longest passage Explain takes: a few paragraphs. */
+export const MAX_EXPLAIN_CHARS = 4000
 
 /**
  * A card on the Ideas page: with the titles of the reading and section it came from, and the
@@ -681,6 +685,20 @@ export const contract = {
 		get: oc.input(EntryId).output(ReadingWithContents),
 		/** One section's text. */
 		section: oc.input(EntryId).output(Section),
+		/**
+		 * Explains a passage the member selected, grounded in its section, with their own AI key:
+		 * from first principles, as an analogy, or as a worked example. `quote` is the sentence
+		 * of the section it relies on, only when it is really there. Nothing is stored.
+		 */
+		explain: oc
+			.input(
+				z.object({
+					sectionId: z.uuid(),
+					passage: z.string().trim().min(1, 'Select some text to explain.').max(MAX_EXPLAIN_CHARS, 'Select a shorter passage: a few paragraphs at most.'),
+					kind: z.enum(EXPLAIN_KINDS).default('explain'),
+				}),
+			)
+			.output(z.object({ text: z.string(), code: z.string().nullable(), quote: z.string().nullable() })),
 		/** Hides the reading; `restore` brings it back (undo). Removed readings are deleted for good after 30 days. */
 		remove: oc.input(EntryId).output(Ok),
 		restore: oc.input(EntryId).output(Reading),

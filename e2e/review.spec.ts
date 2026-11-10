@@ -545,6 +545,38 @@ test('an order question is shown shuffled, graded in code with partial credit by
 	expect(await code(client.review.checklist({ cardId: card.id, questionId: question!.id }))).toBe('BAD_REQUEST')
 })
 
+test('Explain needs a key, explains only the member’s own sections, takes a few paragraphs at most, and says so when the AI fails', async () => {
+	const a = await newMember('A')
+	const b = await newMember('B')
+	const text = 'Spaced practice beats cramming because effortful recall strengthens memory traces. Sleep after study moves new memories into lasting storage overnight.'
+	const reading = await a.client.readings.addText({ id: randomUUID(), title: 'Habits', text: `# Learning\n\n${text}` })
+	const [section] = (await a.client.readings.get({ id: reading.id })).contents
+	const explain = (client: typeof a.client, passage: string, kind?: 'explain' | 'analogy' | 'example') => client.readings.explain({ sectionId: section!.id, passage, kind })
+	const passage = 'Sleep after study moves new memories into lasting storage overnight.'
+
+	const message = async (call: Promise<unknown>) => call.then(() => null, (e: { message: string }) => e.message)
+	expect(await message(explain(a.client, passage))).toBe('Add your own AI key in Settings to have passages explained.')
+	await a.client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })
+	expect(await explain(a.client, passage)).toEqual({
+		text: `From first principles: "${passage}" holds because each part rests on the cause underneath it. Start from that cause and the rest follows.`,
+		code: null,
+		quote: 'Spaced practice beats cramming because effortful recall strengthens memory traces.',
+	})
+	expect((await explain(a.client, passage, 'example')).code).toBe('let gap = 1\nconsole.log(gap * 2)')
+
+	// Another member can't have it explained, even with a key.
+	await b.client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })
+	expect(await code(explain(b.client, passage))).toBe('NOT_FOUND')
+	expect(await code(explain(a.client, 'x'.repeat(4001)))).toBe('BAD_REQUEST')
+	// The AI failing says so, and costs the member nothing but the try.
+	expect(await message(explain(a.client, 'EXPLAIN_FAILS on this passage.'))).toBe('The explanation couldn’t be written just now. Try again in a moment.')
+	expect(await sql("select purpose, ok from ai_calls where user_id = $1 order by id", [a.user.id])).toEqual([
+		{ purpose: 'explain-passage', ok: true },
+		{ purpose: 'explain-passage', ok: true },
+		{ purpose: 'explain-passage', ok: false },
+	])
+})
+
 test('Rewrite key ideas replaces ideas none of which is in use; once one is answered only questions can be rewritten, and never on Quick or without a key', async () => {
 	const { client, user } = await newMember()
 	await client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })

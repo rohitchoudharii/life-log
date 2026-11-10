@@ -1322,3 +1322,61 @@ test('Save idea turns a selected passage into a card due in 1 day, listed on Ide
 	await page.getByRole('button', { name: 'Undo' }).click()
 	await expect(idea).toHaveCount(1)
 })
+
+test('Explain on a selected passage explains it from first principles over the reader, then as an analogy or an example, and Save idea keeps it', async ({ page }, testInfo) => {
+	const { readingId, ids } = await openWithKey(page)
+	const paragraph = page.locator('article [data-block] p').first()
+	const quote = (await paragraph.innerText()).replace(/\s+/g, ' ').trim()
+	const explainCalls = () =>
+		sql<{ n: number }>("select count(*)::int as n from ai_calls where purpose = 'explain-passage' and user_id = (select user_id from readings where id = $1)", [readingId]).then(
+			(r) => r[0]!.n,
+		)
+
+	// The bar under a selection offers both.
+	await paragraph.click({ clickCount: 3 })
+	const bar = page.getByRole('toolbar', { name: 'Selection' })
+	await expect(bar.getByRole('button')).toHaveText(['Save idea', 'Explain'])
+	await proof(page, testInfo, 'selection-bar')
+
+	// From first principles at once, resting on a sentence of the section.
+	await bar.getByRole('button', { name: 'Explain' }).click()
+	const dialog = page.getByRole('dialog', { name: 'Explain' })
+	await expect(dialog.getByText(quote, { exact: true })).toBeVisible()
+	const explanation = dialog.getByTestId('explanation')
+	await expect(explanation).toContainText(`From first principles: "${quote}" holds`)
+	await expect(explanation).toContainText('From the text: “')
+	await expect(dialog.getByRole('button', { name: 'From first principles' })).toHaveAttribute('aria-pressed', 'true')
+	await proof(page, testInfo, 'explain')
+
+	// Another way in: an analogy, then a worked example with code.
+	await dialog.getByRole('button', { name: 'Analogy' }).click()
+	await expect(explanation).toContainText('Think of a kitchen')
+	await expect(explanation).toContainText('The analogy breaks down')
+	await dialog.getByRole('button', { name: 'Example' }).click()
+	await expect(explanation.locator('pre')).toHaveText('let gap = 1\nconsole.log(gap * 2)')
+	// The pointer resting on the pressed pill draws it faded in a full-page capture.
+	await page.mouse.move(0, 0)
+	await proof(page, testInfo, 'explain-example')
+	// Back to the first explanation: shown again without another AI call.
+	await dialog.getByRole('button', { name: 'From first principles' }).click()
+	await expect(explanation).toContainText('From first principles')
+	expect(await explainCalls()).toBe(3)
+
+	// Save idea from the explanation opens the idea form for the same passage.
+	await dialog.getByRole('button', { name: 'Save idea' }).click()
+	await expect(page.getByRole('dialog', { name: 'Explain' })).toHaveCount(0)
+	const save = page.getByRole('dialog', { name: 'Save idea' })
+	await expect(save.getByText(quote)).toBeVisible()
+	await save.getByLabel('In your words (optional)').fill('Each part rests on the cause underneath it.')
+	await save.getByRole('button', { name: 'Save' }).click()
+	await expect(page.getByRole('status').filter({ hasText: 'Idea saved. It comes back tomorrow.' })).toBeVisible()
+	expect(await savedIdeas(readingId)).toEqual([expect.objectContaining({ section_id: ids[0], quote, answer: 'Each part rests on the cause underneath it.' })])
+
+	// Esc closes Explain and keeps the place in the reading.
+	await paragraph.click({ clickCount: 3 })
+	await bar.getByRole('button', { name: 'Explain' }).click()
+	await expect(explanation).toContainText('From first principles')
+	await page.keyboard.press('Escape')
+	await expect(page.getByRole('dialog', { name: 'Explain' })).toHaveCount(0)
+	await expect(paragraph).toBeVisible()
+})

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { explainRequest, parseExplanation } from './explain'
 import { parseJudgeVerdict } from './judge'
 import { parseRecallVerdict } from './recall'
 import { type Complete, MAX_IDEAS, writeQuestions, writeSection } from './write-section'
@@ -235,5 +236,26 @@ describe('parseJudgeVerdict', () => {
 		)
 		expect(wrong).toMatchObject({ score: 1, marks: [{ quote: 'Memory is a tape.', right: false }] })
 		expect(parseJudgeVerdict('no json here', input)).toBeNull()
+	})
+})
+
+describe('parseExplanation', () => {
+	const section = 'Scores are divided by the square root of the key size. This keeps softmax from saturating.'
+	it('keeps a quote only when it really is in the section, and code only when there is some', () => {
+		const reply = (extra: Record<string, unknown>) => JSON.stringify({ text: ' Large scores push softmax to one winner. ', ...extra })
+		expect(parseExplanation(reply({ quote: 'this keeps  softmax from saturating.', code: '' }), section)).toEqual({
+			text: 'Large scores push softmax to one winner.',
+			code: null,
+			quote: 'this keeps  softmax from saturating.',
+		})
+		expect(parseExplanation(reply({ quote: 'Scaling makes training stable.', code: 'print(1)\n' }), section)).toEqual({ text: 'Large scores push softmax to one winner.', code: 'print(1)', quote: null })
+		expect(parseExplanation('{"text": ""}', section)).toBeNull()
+		expect(parseExplanation('Sorry.', section)).toBeNull()
+	})
+
+	it('asks for the kind of help the learner picked', () => {
+		const input = { section, passage: 'This keeps softmax from saturating.', kind: 'analogy' } as const
+		expect(explainRequest('m', input).user).toMatch(/one analogy from everyday life/)
+		expect(explainRequest('m', { ...input, kind: 'explain' }).user).toMatch(/from first principles/)
 	})
 })

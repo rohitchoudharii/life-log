@@ -1,7 +1,8 @@
-import { MAX_QUOTE_CHARS, type SavedCard } from '@life-log-club/contract'
+import { MAX_EXPLAIN_CHARS, MAX_QUOTE_CHARS, type SavedCard } from '@life-log-club/contract'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { ExplainDialog } from './explain'
 import { client, errorMessage, orpc } from './rpc'
 import { useToast } from './toast'
 
@@ -138,12 +139,14 @@ function IdeaDialog({
 }
 
 /**
- * Save idea, under text selected in the reader. It opens the idea form; a quote saved before
- * opens that idea instead, to edit. A selection too long for one idea says so instead.
+ * The bar under text selected in the reader: Save idea and Explain. Save idea opens the idea form;
+ * a quote saved before opens that idea instead, to edit. Explain explains the passage over the
+ * reader. A selection too long for either says so instead.
  */
 export function SaveIdea({ readingId }: { readingId: string }) {
 	const [picked, setPicked] = useState<Picked | null>(null)
 	const [open, setOpen] = useState<{ picked: Picked; saved: SavedCard | undefined } | null>(null)
+	const [explaining, setExplaining] = useState<Picked | null>(null)
 	// Asked when the form opens, so a cue the AI wrote since the save shows in it. Without an
 	// answer the form opens as new, and the server still returns the first card.
 	const openForm = async (p: Picked) => {
@@ -164,32 +167,58 @@ export function SaveIdea({ readingId }: { readingId: string }) {
 		}
 	}, [])
 
-	const tooLong = picked && picked.quote.length > MAX_QUOTE_CHARS
+	// One idea fits a card; a few paragraphs can still be explained.
+	const canSave = picked && picked.quote.length <= MAX_QUOTE_CHARS
+	const canExplain = picked && picked.quote.length <= MAX_EXPLAIN_CHARS
+	const barButton = 'px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/10 active:scale-[0.97]'
+	// Keeps the selection while a button is pressed.
+	const keepSelection = { onPointerDown: (e: React.PointerEvent) => e.preventDefault(), onMouseDown: (e: React.MouseEvent) => e.preventDefault() }
 	return (
 		<>
 			{picked &&
 				!open &&
+				!explaining &&
 				createPortal(
 					<div className="absolute z-40 font-sans" style={{ top: picked.top, left: Math.max(8, Math.min(picked.left, window.innerWidth - 220)) }}>
-						{tooLong ? (
+						{!canExplain ? (
 							<p role="status" className="rounded-xl bg-navy px-3 py-2 text-sm text-white shadow-lg">
 								Pick one idea, not a page.
 							</p>
 						) : (
-							<button
-								type="button"
-								// Keeps the selection while the button is pressed.
-								onPointerDown={(e) => e.preventDefault()}
-								onMouseDown={(e) => e.preventDefault()}
-								onClick={() => void openForm(picked)}
-								className="rounded-xl bg-navy px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:bg-navy/90 active:scale-[0.97]"
-							>
-								Save idea
-							</button>
+							<div role="toolbar" aria-label="Selection" className="flex divide-x divide-white/20 overflow-hidden rounded-xl bg-navy shadow-lg">
+								{canSave ? (
+									<button type="button" {...keepSelection} onClick={() => void openForm(picked)} className={barButton}>
+										Save idea
+									</button>
+								) : (
+									<p role="status" className="px-3 py-2 text-sm text-white">
+										Pick one idea, not a page.
+									</p>
+								)}
+								<button type="button" {...keepSelection} onClick={() => setExplaining(picked)} className={barButton}>
+									Explain
+								</button>
+							</div>
 						)}
 					</div>,
 					document.body,
 				)}
+			{explaining && (
+				<ExplainDialog
+					sectionId={explaining.sectionId}
+					passage={explaining.quote}
+					onSaveIdea={
+						explaining.quote.length <= MAX_QUOTE_CHARS
+							? () => {
+									const p = explaining
+									setExplaining(null)
+									void openForm(p)
+								}
+							: undefined
+					}
+					onClose={() => setExplaining(null)}
+				/>
+			)}
 			{open && (
 				<IdeaDialog
 					picked={open.picked}

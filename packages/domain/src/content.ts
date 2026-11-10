@@ -256,3 +256,7 @@ export type WriteStatus = (typeof WRITE_STATUSES)[number]
 /** Where a recall check stands: see `recall_attempts.status`. */
 export const RECALL_STATUSES = ['open', 'waiting', 'grading', 'graded', 'self', 'failed'] as const
 export type RecallStatus = (typeof RECALL_STATUSES)[number]
+
+/** What kind of help Explain gives on a selected passage: from first principles, an analogy, or a worked example. */
+export const EXPLAIN_KINDS = ['explain', 'analogy', 'example'] as const
+export type ExplainKind = (typeof EXPLAIN_KINDS)[number]

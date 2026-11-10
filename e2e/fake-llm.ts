@@ -141,7 +141,22 @@ function judgeAnswer(user: string) {
 	return { points: marks, misconception: null, feedback, marks: [] }
 }
 
+/**
+ * For "Task: explain-passage": an explanation of the kind asked for, about the selected passage,
+ * resting on the section's first sentence. A worked example comes with code.
+ */
+function explainPassage(user: string) {
+	const passage = user.split('<passage>\n')[1]?.split('\n</passage>')[0] ?? ''
+	const quote = sentences(user.split('<section>\n')[1]?.split('\n</section>')[0] ?? '')[0] ?? ''
+	if (user.includes('one analogy from everyday life'))
+		return { text: `Think of a kitchen: the cook and the stove each do their part. That is how "${passage}" works. The analogy breaks down because a kitchen has no rules written down.`, quote }
+	if (user.includes('one concrete example'))
+		return { text: 'Here is the idea at work, step by step. The first line sets a value, the second uses it.', code: 'let gap = 1\nconsole.log(gap * 2)', quote }
+	return { text: `From first principles: "${passage}" holds because each part rests on the cause underneath it. Start from that cause and the rest follows.`, quote }
+}
+
 function answer(system: string, user: string) {
+	if (system.startsWith('Task: explain-passage')) return JSON.stringify(explainPassage(user))
 	if (system.startsWith('Task: judge-answer')) return JSON.stringify(judgeAnswer(user))
 	if (system.startsWith('Task: grade-recall')) return JSON.stringify(gradeRecall(user))
 	if (system.startsWith('Task: headings')) return JSON.stringify(headings(user))
@@ -164,6 +179,8 @@ const server = createServer(async (req, res) => {
 		const body = await readJson(req)
 		// Writing takes a moment, as it does for real, so a waiting member sees the waiting line.
 		if (body.system.startsWith('Task: write-section')) await new Promise((r) => setTimeout(r, 1500))
+		// A test makes Explain fail by selecting this.
+		if (body.system.startsWith('Task: explain-passage') && body.messages[0].content.includes('<passage>\nEXPLAIN_FAILS')) return json(500, { error: { message: 'overloaded' } })
 		// A test makes the judge fail by writing this in its answer.
 		if (body.system.startsWith('Task: judge-answer') && body.messages[0].content.includes('JUDGE_FAILS')) return json(500, { error: { message: 'overloaded' } })
 		const text = answer(body.system, body.messages[0].content)

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { ORPCError } from '@orpc/server'
 import { and, asc, desc, eq, inArray, isNull, or, type SQL, sql } from 'drizzle-orm'
+import { blockText } from '@life-log-club/domain'
+import { explainRequest, parseExplanation } from '@life-log-club/llm'
 import { asUser, type Tx } from '../db/client'
 import { aiKeys, bookChapters, books, cards, media, readingFiles, readings, readingTime, sections } from '../db/schema'
 import { bookKind } from '../import/book'
@@ -9,12 +11,15 @@ import { ExtractError } from '../import/extract'
 import { readPaste } from '../import/paste'
 import { NOT_A_BOOK, NOT_A_LINK, normaliseUrl, sectionRow } from '../import/reading'
 import { enqueueChapterHeadings, enqueueImport, enqueueWriteSection } from '../jobs'
+import { callAi } from '../learning/ai'
 import { finishReading, milestoneOf, unfinishReading } from '../learning/finish'
 import { ideasInUse } from '../learning/write-section'
 import { addSampleReading } from '../seed/sample-reading'
 import { putInBook } from './books'
 import { toEntry } from './entries'
 import { authed } from '../orpc'
+
+const NOT_EXPLAINED = 'The explanation couldn’t be written just now. Try again in a moment.'
 
 // Written out in full: inside a subquery Drizzle leaves column names unqualified, and `id` would
 // then mean the section's own id.
@@ -392,6 +397,30 @@ export const readingsRoutes = {
 		const headingsPending = section.headingsPending && Boolean(key)
 		if (headingsPending) await enqueueChapterHeadings({ userId, readingId: section.readingId, chapter })
 		return { ...out, headingsPending }
+	}),
+
+	explain: authed.readings.explain.handler(async ({ input, context }) => {
+		const userId = context.user.id
+		const [section] = await asUser(userId, (tx) =>
+			tx
+				.select({ blocks: sections.blocks })
+				.from(sections)
+				.innerJoin(readings, eq(readings.id, sections.readingId))
+				.where(and(eq(sections.id, input.sectionId), isNull(readings.deletedAt))),
+		)
+		if (!section) throw new ORPCError('NOT_FOUND', { message: 'That section does not exist. It may have been removed.' })
+		const text = section.blocks.map(blockText).filter(Boolean).join('\n\n')
+		// Asked for by the member, who is waiting, so like Recall it does not stop at the monthly budget.
+		let reply: string | null
+		try {
+			reply = await callAi(userId, 'explain-passage', (model) => explainRequest(model, { section: text, passage: input.passage, kind: input.kind }))
+		} catch {
+			throw new ORPCError('SERVICE_UNAVAILABLE', { message: NOT_EXPLAINED })
+		}
+		if (reply === null) throw new ORPCError('BAD_REQUEST', { message: 'Add your own AI key in Settings to have passages explained.' })
+		const explanation = parseExplanation(reply, text)
+		if (!explanation) throw new ORPCError('SERVICE_UNAVAILABLE', { message: NOT_EXPLAINED })
+		return explanation
 	}),
 
 	remove: authed.readings.remove.handler(({ input, context }) =>
