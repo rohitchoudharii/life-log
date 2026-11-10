@@ -2,7 +2,7 @@
 
 <img src="apps/mobile/assets/logo.png" alt="Life Log Club logo: a swallow in flight" width="240" />
 
-Life Log Club makes sure you don't forget what life teaches you, and lets you look back at how far you've come. See [product_vision.md](product_vision.md) for the whole product.
+Life Log Club makes sure you don't forget what life teaches you, and lets you look back at how far you've come. See [product_vision.md](product_vision.md) for the whole product. [docs/guide.md](docs/guide.md) walks through every member flow, with diagrams.
 
 ## Layout
 
@@ -62,7 +62,7 @@ Paste a link into **Add a reading** on Mind. The reading shows at once as "Impor
 - The server fetches only public web pages. It refuses private and local addresses, checked again on every redirect and when it connects, and pages over 5 MB.
 - The same link added twice is one reading, and so are two links to the same page.
 - A page behind a sign-in fails with a message. The Chrome extension saves those (below).
-- **Add a file** (or drop one on Mind) adds an EPUB or PDF of up to 25 MB. The file is kept, its images are stored as WebP and shown only to the member who added it, and it is read in a worker thread so a large book can't stall the server. DRM-protected books and scanned PDFs are refused with a message. A link to a PDF is read the same way.
+- **Add a file** (or drop one on Mind) adds an EPUB or PDF of up to 25 MB. The file is kept, its images are stored as WebP and shown only to the member who added it, and it is read in a worker thread so a large book can't stall the server. DRM-protected books are refused with a message. A scanned PDF with no text is read with OCR (Tesseract, English, on the server), and the card counts its pages as they are read; scans over 400 pages are refused with a message to split them. A link to a PDF is read the same way.
 - A book is split by its own outline: the EPUB table of contents or the PDF bookmarks, up to three levels, with a part page kept as the parent of its chapters. A PDF without bookmarks is split at its headings, and one with neither reads as an article. Front and back matter is recognised from the book's EPUB semantics, then by title (`import/matter.ts`): the cover, copyright, contents, index and similar pages are left out, and a bibliography is kept to read as a reference, with no recall.
 - A book's footnotes and endnotes open in a popup from their marker in the text, and are never part of the text a section is recalled from. In an EPUB, a note link is one the book marks as a note, or a short superscript label that points at a footnote, an aside or a notes file. In a PDF, it is a small raised number with a footnote of the same number in the small lines at the foot of its page.
 - A link to the contents page of a book with one page per chapter adds the whole book (`import/web-book.ts`). It knows the lists that mdBook, Sphinx and O'Reilly's HTMLBook write, and a list a site labels as its contents. Each chapter page becomes a section, fetched one at a time with a pause between them, in batches of 20, and the card counts the pages as they come. Life Log Club obeys the site's robots.txt and refuses a book longer than 200 pages. A page that can't be added is kept as a short reference section that says why and links to it. **Open original** opens the page a section came from.
