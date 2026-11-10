@@ -1,3 +1,4 @@
+import { schedulerFor } from '@life-log-club/domain'
 import { preferences } from '../db/schema'
 import type { Tx } from '../db/client'
 
@@ -20,4 +21,10 @@ export async function updatePreferences(tx: Tx, userId: string, change: Partial<
 		.set({ ...change, updatedAt: new Date() })
 		.returning()
 	return row!
+}
+
+/** The scheduler for the member's answers: their target recall, and their own FSRS parameters once tuned. */
+export async function schedulerOf(tx: Tx, userId: string) {
+	const { desiredRetention, fsrsWeights } = await preferencesOf(tx, userId)
+	return schedulerFor(desiredRetention, fsrsWeights)
 }

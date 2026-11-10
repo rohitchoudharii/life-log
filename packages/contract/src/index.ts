@@ -958,6 +958,19 @@ export const contract = {
 		get: oc.output(Preferences),
 		/** Changes the preferences given and returns them all. */
 		update: oc.input(Preferences.partial()).output(Preferences),
+		/**
+		 * Where tuning the schedule to the member stands: answers in Recall and Review so far, the
+		 * number needed, whether their own FSRS parameters are in use, and the last monthly try.
+		 * `improvement` is how much better the kept parameters predicted held-out answers (0 to 1).
+		 */
+		tuning: oc.output(
+			z.object({
+				reviews: z.int(),
+				needed: z.int(),
+				tuned: z.boolean(),
+				last: z.object({ at: z.date(), kept: z.boolean(), improvement: z.number() }).nullable(),
+			}),
+		),
 	},
 	/** The member's vocabulary: words met while reading or added by hand, reviewed with everything else. */
 	words: {

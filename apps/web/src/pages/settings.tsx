@@ -240,8 +240,29 @@ function ReviewTarget() {
 				</div>
 				<p className="text-sm text-ink/60">Higher means more reviews.</p>
 			</fieldset>
+			<Tuning />
 			<ErrorText>{save.error && errorMessage(save.error)}</ErrorText>
 		</div>
+	)
+}
+
+const day = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+
+/** One quiet line on tuning the schedule to the member's memory: how far off it is, or how it went. */
+function Tuning() {
+	const tuning = useQuery(orpc.preferences.tuning.queryOptions())
+	const t = tuning.data
+	if (!t) return null
+	let line: string
+	if (t.tuned && t.last?.kept) line = `Tuned to your own memory on ${day.format(t.last.at)}: it predicts your recall ${Math.max(1, Math.round(t.last.improvement * 100))}% better than before.`
+	else if (t.tuned) line = `Tuned to your own memory. The last check, on ${day.format(t.last!.at)}, found nothing better, so it stays as it is.`
+	else if (t.last) line = `Checked on ${day.format(t.last.at)}: the standard settings still fit your reviews best. It checks again each month.`
+	else if (t.reviews >= t.needed) line = 'You have enough answers: the schedule tunes itself to your memory at the start of next month.'
+	else line = `After ${t.needed.toLocaleString('en-GB')} answers (you have ${t.reviews.toLocaleString('en-GB')}), the schedule tunes itself to your memory each month.`
+	return (
+		<p className="text-sm text-ink/60" data-testid="tuning">
+			{line}
+		</p>
 	)
 }
 

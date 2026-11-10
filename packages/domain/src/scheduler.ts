@@ -39,6 +39,9 @@ const GRADE: Record<Rating, 1 | 2 | 3 | 4> = { again: 1, hard: 2, good: 3, easy:
 /** The FSRS model version the gaps come from, written into `review_log.scheduler` with the rules. */
 export const FSRS_MODEL = 'FSRS-6'
 
+/** The FSRS-6 parameters every member starts with, until tuning finds better ones from their own reviews. */
+export const FSRS_DEFAULT_WEIGHTS: readonly number[] = FSRS6_DEFAULT_WEIGHTS
+
 /**
  * Fixed steps of 1, 2 and 3 days, then gaps from FSRS at the member's target recall
  * (`desiredRetention`), capped at `maxIntervalDays`. FSRS updates the card's memory on every
@@ -56,9 +59,10 @@ export function stepsThenFsrs({
 	maxIntervalDays = 365,
 	fuzz = true,
 	steps = [1, 2, 3],
-}: { desiredRetention?: number; maxIntervalDays?: number; fuzz?: boolean; steps?: number[] } = {}): Scheduler<SchedulerState> {
+	weights,
+}: { desiredRetention?: number; maxIntervalDays?: number; fuzz?: boolean; steps?: number[]; weights?: readonly number[] | null } = {}): Scheduler<SchedulerState> {
 	// Short-term stability is for reviews minutes apart, which only the 10-minute retry is.
-	const fsrs = new FSRS6Algorithm([...FSRS6_DEFAULT_WEIGHTS], false, FSRS6_MODEL_BOUNDS)
+	const fsrs = new FSRS6Algorithm([...(weights ?? FSRS6_DEFAULT_WEIGHTS)], false, FSRS6_MODEL_BOUNDS)
 	const elapsedDays = (state: SchedulerState, now: Date) =>
 		state.lastReviewAt ? Math.max(0, Math.floor((now.getTime() - Date.parse(state.lastReviewAt)) / DAY)) : 0
 	const after = (now: Date, ms: number) => new Date(now.getTime() + ms)
@@ -72,7 +76,8 @@ export function stepsThenFsrs({
 	}
 
 	return {
-		id: `steps-fsrs-v1:${FSRS_MODEL}`,
+		// Tuned parameters are named in the log, so answers scheduled with them can be told apart.
+		id: `steps-fsrs-v1:${FSRS_MODEL}${weights ? ':own' : ''}`,
 		initial: () => ({ step: 0, relearning: null, reps: 0, lapses: 0, memory: null, lastReviewAt: null }),
 		retrievability(state, now) {
 			if (!state.memory || !state.lastReviewAt) return null
@@ -110,14 +115,15 @@ export function stepsThenFsrs({
 
 export const defaultScheduler = stepsThenFsrs()
 
-const byTarget = new Map<number, Scheduler>([[0.9, defaultScheduler]])
+const byTarget = new Map<string, Scheduler>([['0.9:', defaultScheduler]])
 /**
- * The scheduler for a member's target recall. Only the FSRS gaps depend on it, so its id and its
- * predicted recall are the same as `defaultScheduler`'s.
+ * The scheduler for a member's target recall and, once tuning has found them, their own FSRS
+ * parameters. The target changes only the FSRS gaps; own parameters also change predicted recall.
  */
-export function schedulerFor(desiredRetention: number): Scheduler {
-	let scheduler = byTarget.get(desiredRetention)
-	if (!scheduler) byTarget.set(desiredRetention, (scheduler = stepsThenFsrs({ desiredRetention })))
+export function schedulerFor(desiredRetention: number, weights?: readonly number[] | null): Scheduler {
+	const key = `${desiredRetention}:${weights?.join(',') ?? ''}`
+	let scheduler = byTarget.get(key)
+	if (!scheduler) byTarget.set(key, (scheduler = stepsThenFsrs({ desiredRetention, weights })))
 	return scheduler
 }
 

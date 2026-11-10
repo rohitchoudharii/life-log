@@ -16,7 +16,6 @@ import {
 	type IdeaProgress,
 	type Judge,
 	type PointStatus,
-	schedulerFor,
 	withConfidence,
 } from '@life-log-club/domain'
 import { judgeRequest, parseJudgeVerdict } from '@life-log-club/llm'
@@ -26,7 +25,7 @@ import { ZodError } from 'zod'
 import { asUser, type Tx } from '../db/client'
 import { cards, questions, recallAttempts, reviewLog } from '../db/schema'
 import { callAi } from './ai'
-import { preferencesOf } from './preferences'
+import { schedulerOf } from './preferences'
 import { wordOf } from './review'
 
 const NOT_CHECKED = 'Your answer couldn’t be checked just now. Try again in a moment.'
@@ -156,8 +155,8 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
 		checkWhen(locked!, input.mode, now)
 		let dueAt = locked!.dueAt
 		const prev = { state: locked!.state, level: locked!.level, dueAt: locked!.dueAt.toISOString() }
+		const scheduler = await schedulerOf(tx, userId)
 		if (input.mode !== 'practice') {
-			const scheduler = schedulerFor((await preferencesOf(tx, userId)).desiredRetention)
 			const next = answerIdea({ state: locked!.state, level: locked!.level, dueAt: locked!.dueAt }, grade, now, scheduler)
 			dueAt = next.dueAt
 			await tx
@@ -182,8 +181,8 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
 			gradedBy,
 			prev,
 			// The rules that made this decision, and their chance of recall just before it.
-			scheduler: defaultScheduler.id,
-			predictedRecall: defaultScheduler.retrievability(locked!.state, now),
+			scheduler: scheduler.id,
+			predictedRecall: scheduler.retrievability(locked!.state, now),
 			reviewedAt: now,
 			nextDueAt: dueAt,
 		})
@@ -198,13 +197,13 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
  */
 async function replayFrom(tx: Tx, from: typeof reviewLog.$inferSelect) {
 	// An answer from before the current scheduler kept a state it can't work from.
-	if (!from.prev || from.scheduler !== defaultScheduler.id) throw new ORPCError('BAD_REQUEST', { message: 'This answer is too old to change.' })
+	if (!from.prev || !from.scheduler.startsWith(defaultScheduler.id)) throw new ORPCError('BAD_REQUEST', { message: 'This answer is too old to change.' })
 	const rows = await tx
 		.select()
 		.from(reviewLog)
 		.where(and(eq(reviewLog.cardId, from.cardId), gte(reviewLog.id, from.id)))
 		.orderBy(asc(reviewLog.id))
-	const scheduler = schedulerFor((await preferencesOf(tx, from.userId)).desiredRetention)
+	const scheduler = await schedulerOf(tx, from.userId)
 	let progress: IdeaProgress = { ...from.prev, dueAt: new Date(from.prev.dueAt) }
 	for (const row of rows) {
 		if (row.mode === 'practice') continue

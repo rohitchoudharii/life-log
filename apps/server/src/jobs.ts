@@ -10,6 +10,7 @@ import { type GradeJob, gradeAttempt } from './learning/recall'
 import { type IdeaCueJob, writeIdeaCue } from './learning/saved-ideas'
 import { type DefineWordJob, defineWord } from './learning/words'
 import { type TopUpJob, topUpQuestions } from './learning/top-up'
+import { membersToTune, tuneMember } from './learning/tune'
 import { type WriteJob, writeKeyIdeas } from './learning/write-section'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -127,6 +128,8 @@ const IDEA_CUE = 'write-cue'
 export const enqueueIdeaCue = (job: IdeaCueJob) => boss.send(IDEA_CUE, job, { singletonKey: job.cardId })
 
 const DEFINE_WORD = 'define-word'
+const TUNE = 'tune-schedule'
+const TUNE_ALL = 'tune-all'
 
 /** Queues the defining of a word added without a meaning. */
 export const enqueueDefineWord = (job: DefineWordJob) => boss.send(DEFINE_WORD, job, { singletonKey: job.cardId })
@@ -208,6 +211,16 @@ export async function startJobs() {
 	if (!(await boss.getQueue(IDEA_CUE))) await boss.createQueue(IDEA_CUE, { policy: 'stately', retryLimit: 1, retryDelay: 30, expireInSeconds: 5 * 60 })
 	await boss.work(IDEA_CUE, { localConcurrency: 4 }, async ([job]: Job<IdeaCueJob>[]) => {
 		if (job) await writeIdeaCue(job.data)
+	})
+	// Once a month, each member with 1,000 answers or more gets their schedule tuned to their own memory.
+	if (!(await boss.getQueue(TUNE))) await boss.createQueue(TUNE, { policy: 'stately', retryLimit: 1, retryDelay: 600, expireInSeconds: 15 * 60 })
+	await boss.work(TUNE, { localConcurrency: 1 }, async ([job]: Job<{ userId: string }>[]) => {
+		if (job) await tuneMember(job.data.userId)
+	})
+	if (!(await boss.getQueue(TUNE_ALL))) await boss.createQueue(TUNE_ALL)
+	await boss.schedule(TUNE_ALL, '41 4 1 * *')
+	await boss.work(TUNE_ALL, async () => {
+		await Promise.all((await membersToTune()).map((userId) => boss.send(TUNE, { userId }, { singletonKey: userId })))
 	})
 	// A word that can't be defined asks the member for its meaning, so one retry is enough.
 	if (!(await boss.getQueue(DEFINE_WORD))) await boss.createQueue(DEFINE_WORD, { policy: 'stately', retryLimit: 1, retryDelay: 30, expireInSeconds: 5 * 60 })

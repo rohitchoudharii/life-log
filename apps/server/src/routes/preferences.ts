@@ -2,6 +2,7 @@ import { asUser } from '../db/client'
 import { requeueWaiting } from '../jobs'
 import { withinBudget } from '../learning/ai'
 import { type Preferences, preferencesOf, updatePreferences } from '../learning/preferences'
+import { tuningOf } from '../learning/tune'
 import { authed } from '../orpc'
 
 const shown = ({ aiMonthlyBudgetUsd, desiredRetention, guessFirst, questionAmount, questionStyle, qualityCheck }: Preferences) => ({
@@ -21,4 +22,5 @@ export const preferencesRoutes = {
 		if (input.aiMonthlyBudgetUsd !== undefined && (await withinBudget(userId))) await requeueWaiting(userId, ['paused'])
 		return shown(prefs)
 	}),
+	tuning: authed.preferences.tuning.handler(({ context }) => tuningOf(context.user.id)),
 }

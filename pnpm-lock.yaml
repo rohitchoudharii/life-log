@@ -245,6 +245,9 @@ importers:
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
+      '@open-spaced-repetition/binding':
+        specifier: ^0.6.0
+        version: 0.6.0
       '@orpc/server':
         specifier: ^1.16.2
         version: 1.16.2(@opentelemetry/api@1.10.0)
@@ -400,8 +403,17 @@ packages:
   '@drizzle-team/brocli@0.10.2':
     resolution: {integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==}
 
+  '@emnapi/core@2.0.0-beta.2':
+    resolution: {integrity: sha512-MzCVoWtcg4Pm2B3je5mMvYMvj3MmBKw+fU7vbsJc9/iT8ip6/eYIHo/Dsm/mr+wsHB6SEyJDuxB09Yy6r/8+4A==}
+
   '@emnapi/runtime@1.11.3':
     resolution: {integrity: sha512-Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA==}
+
+  '@emnapi/runtime@2.0.0-beta.2':
+    resolution: {integrity: sha512-JcrSPzPvZuNZvJqPTF9Fw25LbOJ8avzFVlaf2grmH4Cku0oGP47tRgqPZadcfj3YoZMHkFVnCYFbQM8I+i5QEw==}
+
+  '@emnapi/wasi-threads@2.2.0':
+    resolution: {integrity: sha512-JP7OYH38Q7+pyTAe14raZHLQIK7BDKbdwji+Xi3pcd/6QkJYQH3SX4wu6EplGrGJWRepoNzedfm0G3B9Z4e9Rw==}
 
   '@esbuild-kit/core-utils@3.3.2':
     resolution: {integrity: sha512-sPRAnw9CdSsRmEtnsl2WXWdyquogVpB3yZ3dgwJfe8zrOzTsV7cJvmwrKVa+0ma5BoiGJ+BoqkMvawbayKUsqQ==}
@@ -1118,6 +1130,83 @@ packages:
     resolution: {integrity: sha512-xglYA6q3XO5P3BNJYxVZ1IV7DLVjp1Py6nwag88YntrS+3vKHyYcMqXVS4ZztJmwz2uGvz1FWhI/4LgbR5uQDA==}
     engines: {node: '>= 10'}
 
+  '@napi-rs/wasm-runtime@1.2.6':
+    resolution: {integrity: sha512-mRyDmEw9/fCDXCGfL1sbgIw/GUK0PVxRW4YwgPN61F3LQ+fSyoBFarJVzgGyhF6kRzEQZ0FejDqm4WLXSeqQmw==}
+    engines: {node: ^20.19.0 || ^22.13.0 || >=23.5.0}
+    peerDependencies:
+      '@emnapi/core': ^1.7.1 || 2.0.0-beta.2
+      '@emnapi/runtime': ^1.7.1 || 2.0.0-beta.2
+
+  '@open-spaced-repetition/binding-android-arm64@0.6.0':
+    resolution: {integrity: sha512-SA0Mf8ymUhYup6aWjHpeBSADph7x44zO2hcn4OCdWlg3K8OQaNV37fOcgLdIUVY251XrvHaN/spARd5vPSx/Tg==}
+    engines: {node: '>=24'}
+    cpu: [arm64]
+    os: [android]
+
+  '@open-spaced-repetition/binding-darwin-arm64@0.6.0':
+    resolution: {integrity: sha512-AAXdtI+syVY4Kv/tKomUC/rxXUpq55u7GDiB/YZOEruILFUFJsOyZm2rCsvibuc6xUGsuMwyUxQ3NID9NJU9jA==}
+    engines: {node: '>=24'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@open-spaced-repetition/binding-darwin-x64@0.6.0':
+    resolution: {integrity: sha512-LUGApFKlFHcFC3voeoqsX9jYdqv+s+T/Nrtl+P7/VF7W5e/Dq1MFhb+3+NW1k9n3wSCPoCpxI34CiuATtzf03g==}
+    engines: {node: '>=24'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@open-spaced-repetition/binding-linux-arm64-gnu@0.6.0':
+    resolution: {integrity: sha512-anPHiDqEsCxWo6iCgXuvyDQ3mffau7JC/YUaakoXRL9DzWI7Jx11PSXHhSfNPdl6ge5VR32++FRnHw2hLjb+xQ==}
+    engines: {node: '>=24'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@open-spaced-repetition/binding-linux-arm64-musl@0.6.0':
+    resolution: {integrity: sha512-MQMDe6LdiJRvXItJRXskdw1Twnsy7cq26zFSaIK0pYeuIDu//n/rqV+Ub/jhMvh4j67FH6loYbINmK9cV4fuaQ==}
+    engines: {node: '>=24'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@open-spaced-repetition/binding-linux-x64-gnu@0.6.0':
+    resolution: {integrity: sha512-vQZBFbqwv7f7ihH+ISREU1rRzXVKFXy4Fy28YJewpYlvt61M5PmQrDzGngP0z0r3KtcfDR8BGn47MMmV0V1bZQ==}
+    engines: {node: '>=24'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@open-spaced-repetition/binding-linux-x64-musl@0.6.0':
+    resolution: {integrity: sha512-jIOpMIjUY7T8q1JCQDacSDwZKHN2cM656UQDF7IQ0V15uRTUIQUrvNIYPs4PH6lKRd0TQWH7MIfZFOH28xR2UQ==}
+    engines: {node: '>=24'}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@open-spaced-repetition/binding-wasm32-wasi@0.6.0':
+    resolution: {integrity: sha512-F5+i/I5PSEUQvd5XrCr7nQBlBETZS3cJuQ7Iw7uE5JpZV9d/Ro8Y59BhHW6d4sek2QT68tX/QOGwJ7JpL2C08g==}
+    engines: {node: '>=24'}
+
+  '@open-spaced-repetition/binding-wasm32-wasip1@0.6.0':
+    resolution: {integrity: sha512-Pi+QOUODNOlTxRIQ8sKJokRYlc5bx+2GTKaxsjNk2QZ8cdbR+oMc5+mlL9E36X9b/cOipz3xI95/1XbJSPqUAA==}
+    engines: {node: '>=24'}
+
+  '@open-spaced-repetition/binding-win32-arm64-msvc@0.6.0':
+    resolution: {integrity: sha512-LMhgGz9eip0GgYZzOkN/T9PZgbZGyQ/qb4G0ZeyhT+36UqZ0khQGlSBtyiGFUj1t51/ziZbsVe9Y6Kpdj+Lqiw==}
+    engines: {node: '>=24'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@open-spaced-repetition/binding-win32-x64-msvc@0.6.0':
+    resolution: {integrity: sha512-5XV2BE70iFl39M0FLPfA83Q5qij5SSNSOIG2fUO2RF57uZeYxEmP2ba3nySUMCn3HdVxZMYr25LLeDIHiAFD3g==}
+    engines: {node: '>=24'}
+    cpu: [x64]
+    os: [win32]
+
+  '@open-spaced-repetition/binding@0.6.0':
+    resolution: {integrity: sha512-aByDwIRYBW0dlqiQJXSKDb7Z4WOWsQjvA4XJ3nCni/MkCTjLE0eiDISVqyF0mYAojoulX3ZWe47K5GOomuAj1w==}
+    engines: {node: '>=24'}
+
   '@open-spaced-repetition/srs-kit@1.0.0':
     resolution: {integrity: sha512-f++JAMpRw7Yh1U4JcHzTtVknJ1bYKz/4yejsus6TRl+ueGJpvexNBrOoqaeUWCgH/e1j046oiqjzy4Nf4RW/vw==}
     engines: {node: '>=20.0.0'}
@@ -1425,6 +1514,9 @@ packages:
   '@topcli/prompts@4.0.0':
     resolution: {integrity: sha512-kkKYPb4k/6kRdnESt77B5vJrrYnYHIYczwv0P1c+tfN/IWEx3KZeKEHoUq7sImIyBEXWdA2uakIroD9pmRJziQ==}
     engines: {node: '>=22.0.0'}
+
+  '@tybys/wasm-util@0.10.4':
+    resolution: {integrity: sha512-W3c4gRigFS0T/Ma4qIYF3GDAc5AQdHb1yL5znJT1Zv1YaD9Kitx656wBjvr19qbiosmZT8lWDM5BEMynUqX65A==}
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -2517,7 +2609,23 @@ snapshots:
 
   '@drizzle-team/brocli@0.10.2': {}
 
+  '@emnapi/core@2.0.0-beta.2':
+    dependencies:
+      '@emnapi/wasi-threads': 2.2.0
+      tslib: 2.9.1
+    optional: true
+
   '@emnapi/runtime@1.11.3':
+    dependencies:
+      tslib: 2.9.1
+    optional: true
+
+  '@emnapi/runtime@2.0.0-beta.2':
+    dependencies:
+      tslib: 2.9.1
+    optional: true
+
+  '@emnapi/wasi-threads@2.2.0':
     dependencies:
       tslib: 2.9.1
     optional: true
@@ -2933,6 +3041,68 @@ snapshots:
       '@napi-rs/canvas-win32-x64-msvc': 0.1.100
     optional: true
 
+  '@napi-rs/wasm-runtime@1.2.6(@emnapi/core@2.0.0-beta.2)(@emnapi/runtime@2.0.0-beta.2)':
+    dependencies:
+      '@emnapi/core': 2.0.0-beta.2
+      '@emnapi/runtime': 2.0.0-beta.2
+      '@tybys/wasm-util': 0.10.4
+    optional: true
+
+  '@open-spaced-repetition/binding-android-arm64@0.6.0':
+    optional: true
+
+  '@open-spaced-repetition/binding-darwin-arm64@0.6.0':
+    optional: true
+
+  '@open-spaced-repetition/binding-darwin-x64@0.6.0':
+    optional: true
+
+  '@open-spaced-repetition/binding-linux-arm64-gnu@0.6.0':
+    optional: true
+
+  '@open-spaced-repetition/binding-linux-arm64-musl@0.6.0':
+    optional: true
+
+  '@open-spaced-repetition/binding-linux-x64-gnu@0.6.0':
+    optional: true
+
+  '@open-spaced-repetition/binding-linux-x64-musl@0.6.0':
+    optional: true
+
+  '@open-spaced-repetition/binding-wasm32-wasi@0.6.0':
+    dependencies:
+      '@emnapi/core': 2.0.0-beta.2
+      '@emnapi/runtime': 2.0.0-beta.2
+      '@napi-rs/wasm-runtime': 1.2.6(@emnapi/core@2.0.0-beta.2)(@emnapi/runtime@2.0.0-beta.2)
+    optional: true
+
+  '@open-spaced-repetition/binding-wasm32-wasip1@0.6.0':
+    dependencies:
+      '@emnapi/core': 2.0.0-beta.2
+      '@emnapi/runtime': 2.0.0-beta.2
+      '@napi-rs/wasm-runtime': 1.2.6(@emnapi/core@2.0.0-beta.2)(@emnapi/runtime@2.0.0-beta.2)
+    optional: true
+
+  '@open-spaced-repetition/binding-win32-arm64-msvc@0.6.0':
+    optional: true
+
+  '@open-spaced-repetition/binding-win32-x64-msvc@0.6.0':
+    optional: true
+
+  '@open-spaced-repetition/binding@0.6.0':
+    optionalDependencies:
+      '@open-spaced-repetition/binding-android-arm64': 0.6.0
+      '@open-spaced-repetition/binding-darwin-arm64': 0.6.0
+      '@open-spaced-repetition/binding-darwin-x64': 0.6.0
+      '@open-spaced-repetition/binding-linux-arm64-gnu': 0.6.0
+      '@open-spaced-repetition/binding-linux-arm64-musl': 0.6.0
+      '@open-spaced-repetition/binding-linux-x64-gnu': 0.6.0
+      '@open-spaced-repetition/binding-linux-x64-musl': 0.6.0
+      '@open-spaced-repetition/binding-wasm32-wasi': 0.6.0
+      '@open-spaced-repetition/binding-wasm32-wasip1': 0.6.0
+      '@open-spaced-repetition/binding-win32-arm64-msvc': 0.6.0
+      '@open-spaced-repetition/binding-win32-x64-msvc': 0.6.0
+
   '@open-spaced-repetition/srs-kit@1.0.0': {}
 
   '@opentelemetry/api@1.10.0': {}
@@ -3194,6 +3364,11 @@ snapshots:
   '@tanstack/store@0.11.2': {}
 
   '@topcli/prompts@4.0.0': {}
+
+  '@tybys/wasm-util@0.10.4':
+    dependencies:
+      tslib: 2.9.1
+    optional: true
 
   '@types/chai@5.2.3':
     dependencies:

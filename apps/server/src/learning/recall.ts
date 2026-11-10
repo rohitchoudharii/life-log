@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { answerIdea, isQuestionType, levelIndex, orderForTest, type PointStatus, type QuestionType, type RecallStatus, schedulerFor, toPrompt } from '@life-log-club/domain'
+import { answerIdea, isQuestionType, levelIndex, orderForTest, type PointStatus, type QuestionType, type RecallStatus, toPrompt } from '@life-log-club/domain'
 import { gradeRecallRequest, parseRecallVerdict } from '@life-log-club/llm'
 import { and, asc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 import { decrypt, encrypt } from '../crypto'
 import { asUser, type Tx } from '../db/client'
 import { aiKeys, cards, questions, type RecallItem, readings, recallAttempts, reviewLog, sections } from '../db/schema'
 import { callAi } from './ai'
-import { preferencesOf } from './preferences'
+import { schedulerOf } from './preferences'
 
 export type GradeJob = { userId: string; attemptId: string }
 
@@ -91,7 +91,7 @@ const MARK_RATING = { covered: 'good', vague: 'hard', missing: 'again' } as cons
 async function startFromMarks(tx: Tx, attempt: typeof recallAttempts.$inferSelect, marks: { cardId: string; status: PointStatus }[], gradedBy: 'ai' | 'code' | 'self') {
 	if (!marks.length) return
 	const now = new Date()
-	const scheduler = schedulerFor((await preferencesOf(tx, attempt.userId)).desiredRetention)
+	const scheduler = await schedulerOf(tx, attempt.userId)
 	const rows = await tx.select().from(cards).where(inArray(cards.id, marks.map((m) => m.cardId))).for('update')
 	for (const { cardId, status } of marks) {
 		const card = rows.find((c) => c.id === cardId)

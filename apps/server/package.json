@@ -23,6 +23,7 @@
     "@life-log-club/domain": "workspace:*",
     "@life-log-club/llm": "workspace:*",
     "@mozilla/readability": "^0.6.0",
+    "@open-spaced-repetition/binding": "^0.6.0",
     "@orpc/server": "^1.16.2",
     "drizzle-orm": "^0.45.4",
     "fflate": "^0.8.3",

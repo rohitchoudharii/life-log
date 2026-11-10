@@ -6,6 +6,7 @@ import {
 	customType,
 	bigint,
 	boolean,
+	doublePrecision,
 	date,
 	index,
 	integer,
@@ -541,6 +542,8 @@ export const preferences = pgTable(
 		/** Background AI work pauses once this month's estimated spend reaches it. */
 		aiMonthlyBudgetUsd: numeric({ precision: 8, scale: 2, mode: 'number' }).notNull().default(5),
 		reviewBatch: integer().notNull().default(20),
+		/** The member's own FSRS-6 parameters, once tuning found ones that fit their reviews better; null uses the defaults. */
+		fsrsWeights: doublePrecision().array(),
 		/** When the sample reading was added, so it is added once and never comes back after removal. */
 		sampleAddedAt: timestamp({ withTimezone: true }),
 		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -555,6 +558,31 @@ export type RecallItem = { cardId: string; questionId: string | null }
  * One recall check: the member's brain dump after reading one or more sections, and how it
  * covered their key ideas. The dump can be personal, so it is stored encrypted.
  */
+/**
+ * One monthly tuning of a member's FSRS parameters: fitted on their older reviews and checked on the
+ * newest ones they were not fitted on. `kept` when the new parameters predicted those better.
+ */
+export const schedulerFits = pgTable(
+	'scheduler_fits',
+	{
+		id: bigint({ mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		/** Answers it learned from, in Recall and Review. */
+		reviews: integer().notNull(),
+		/** Answers held out to check the fit on. */
+		heldOut: integer().notNull(),
+		weights: doublePrecision().array().notNull(),
+		/** Log loss on the held-out answers: of the parameters in use, and of the new ones. Lower is better. */
+		currentLogLoss: doublePrecision().notNull(),
+		newLogLoss: doublePrecision().notNull(),
+		kept: boolean().notNull(),
+		at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index().on(t.userId, t.at.desc()), ownRows(t.userId)],
+)
+
 /** A skill the member practises, such as piano or public speaking. Practice sessions are `practice` entries. */
 export const skills = pgTable(
 	'skills',

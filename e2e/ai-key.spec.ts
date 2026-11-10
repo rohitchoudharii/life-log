@@ -99,4 +99,21 @@ test('Settings → Review sets how well to remember with one click, 90% at first
 	await expect(target.getByRole('radio', { name: '95%' })).toBeChecked()
 	await expect(target.getByRole('radio', { name: '90%' })).not.toBeChecked()
 	await proof(page, testInfo, 'settings-review-target-95')
+
+	// Tuning to the member's own memory waits for 1,000 answers, and says so.
+	const tuning = page.getByTestId('tuning')
+	await expect(tuning).toHaveText('After 1,000 answers (you have 0), the schedule tunes itself to your memory each month.')
+	await proof(page, testInfo, 'settings-tuning-waiting')
+	// After a monthly fit that predicted held-out answers 12% better, the line says when and by how much.
+	await sql(
+		`with u as (select id from users where email = $1)
+		insert into scheduler_fits (user_id, reviews, held_out, weights, current_log_loss, new_log_loss, kept) select id, 1040, 260, $2, 0.5, 0.44, true from u`,
+		[email, Array(21).fill(0.5)],
+	)
+	await sql('update preferences set fsrs_weights = $2 where user_id = (select id from users where email = $1)', [email, Array(21).fill(0.5)])
+	await page.reload()
+	const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+	await expect(tuning).toHaveText(`Tuned to your own memory on ${today}: it predicts your recall 12% better than before.`)
+	await tuning.scrollIntoViewIfNeeded()
+	await proof(page, testInfo, 'settings-tuned')
 })

@@ -74,6 +74,22 @@ test('the member’s review target sets the gap from FSRS: a higher target bring
 	expect(await code(client.preferences.update({ desiredRetention: 0.99 }))).toBe('BAD_REQUEST')
 })
 
+test('once tuning keeps a member’s own FSRS parameters, their next answers are scheduled with them and logged as such', async () => {
+	const { client, user } = await newMember()
+	const add = () => client.review.add({ id: randomUUID(), kind: 'idea', prompt: 'Why space practice?', answer: 'Forgetting makes recall work harder.' })
+	const [a, b] = [await add(), await add()]
+	await graduate(a.id, 30, 30, 0)
+	await graduate(b.id, 30, 30, 0)
+	const before = daysUntil((await client.review.answer(rate(a.id, 'good'))).dueAt)
+	// A member whose memory grows more with each right answer than the defaults expect.
+	const own = [0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 2.6, 0.1666, 0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542]
+	await sql('update preferences set fsrs_weights = $2 where user_id = $1', [user.id, own])
+	const after = daysUntil((await client.review.answer(rate(b.id, 'good'))).dueAt)
+	expect(after).toBeGreaterThan(before * 1.5)
+	expect(await sql('select scheduler from review_log where user_id = $1 order by id', [user.id])).toEqual([{ scheduler: 'steps-fsrs-v1:FSRS-6' }, { scheduler: 'steps-fsrs-v1:FSRS-6:own' }])
+	expect(await client.preferences.tuning()).toEqual({ reviews: 2, needed: 1000, tuned: true, last: null })
+})
+
 test('Review serves the idea most likely forgotten first, not the one due longest', async () => {
 	const { client } = await newMember()
 	const add = (prompt: string) => client.review.add({ id: randomUUID(), kind: 'idea', prompt, answer: 'An answer.' })
