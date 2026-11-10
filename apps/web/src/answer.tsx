@@ -91,16 +91,16 @@ export function GuessFirstSwitch({ className = '' }: { className?: string }) {
 	)
 }
 
-const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
+const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
 
 /**
- * One question or cue: written, a choice of options, a number with its working, or the output of
- * a piece of code. The confidence buttons are the submit, so
- * saying how sure you are costs no click; I don't know is an honest miss. The answer id is picked
- * once, so a retry of the same answer counts once. With `keys`, 1 to 3 pick the confidence once
- * the box is left, and A to D pick an option. With `selfCheck` (no AI key), the learner then ticks
- * the model answer's points they made, and a written answer is graded from the ticks; a choice, a
- * number and an output are always checked against their key.
+ * One question or cue: written, a choice of options, steps to put in order, a number with its
+ * working, or the output of a piece of code. The confidence buttons are the submit, so saying how
+ * sure you are costs no click; I don't know is an honest miss. The answer id is picked once, so a
+ * retry of the same answer counts once. With `keys`, 1 to 3 pick the confidence once the box is
+ * left, and letters pick an option or place the next step. With `selfCheck` (no AI key), the
+ * learner then ticks the model answer's points they made, and a written answer is graded from the
+ * ticks; a choice, an order, a number and an output are always checked against their key.
  */
 export function QuestionForm({
 	item,
@@ -124,24 +124,30 @@ export function QuestionForm({
 	const [text, setText] = useState('')
 	const [working, setWorking] = useState('')
 	const [picked, setPicked] = useState<number | null>(null)
+	// An order question: positions in the shown list, in the order the member tapped them.
+	const [order, setOrder] = useState<number[]>([])
 	const [guess, setGuess] = useState('')
 	const [guessed, setGuessed] = useState(false)
 	const [checking, setChecking] = useState<{ confidence: Confidence } | null>(null)
 	const { options } = item
 	// A worked problem is answered with a number, a predicted output with exactly what the code prints.
-	const form = item.type === 'worked_problem' ? 'number' : item.type === 'predict_output' ? 'output' : options ? 'choice' : 'written'
+	const form =
+		item.type === 'worked_problem' ? 'number' : item.type === 'predict_output' ? 'output' : item.type === 'order_steps' ? 'order' : options ? 'choice' : 'written'
 	const exact = form === 'number' || form === 'output'
 	const guessFirst = useGuessFirst().on
 	// With Guess first, the options wait behind the member's own few words.
-	const hidden = Boolean(options) && guessFirst && !guessed
-	const given = options ? (picked === null ? '' : options[picked]!) : text
+	const hidden = form === 'choice' && guessFirst && !guessed
+	const given = form === 'order' ? order.map((i) => options![i]!).join(' → ') : options ? (picked === null ? '' : options[picked]!) : text
+	const place = (i: number) => setOrder((o) => (o.includes(i) ? o : [...o, i]))
 	const send = useMutation({
 		mutationFn: (choice: { confidence: Confidence | null; skipped?: boolean; made?: boolean[] }) => {
 			const base = { answerId, cardId: item.cardId, mode, attemptId }
 			if (item.questionId) {
 				const response = choice.skipped
 					? { skipped: true }
-					: form === 'choice'
+					: form === 'order'
+						? { order }
+						: form === 'choice'
 						? { choice: picked, ...(guessed && guess.trim() && { guess: guess.trim() }) }
 						: form === 'number'
 							? { value: text.trim(), ...(working.trim() && { working: working.trim() }) }
@@ -158,7 +164,7 @@ export function QuestionForm({
 	})
 	// A number the check can't read is a slip of format, not of knowledge, so it is caught before it counts.
 	const unreadable = form === 'number' && text.trim() !== '' && parseNumber(text) === null
-	const empty = options ? picked === null : !text.trim() || unreadable
+	const empty = form === 'order' ? order.length !== options!.length : options ? picked === null : !text.trim() || unreadable
 	const pick = (confidence: Confidence) => {
 		if (empty || send.isPending) return
 		if (selfCheck && !options && !exact) setChecking({ confidence })
@@ -167,7 +173,7 @@ export function QuestionForm({
 	useAnswerKeys(
 		{
 			...Object.fromEntries(CONFIDENCE.map((c) => [c.key, () => pick(c.value)])),
-			...Object.fromEntries((hidden ? [] : (options ?? [])).map((_, i) => [LETTERS[i]!.toLowerCase(), () => setPicked(i)])),
+			...Object.fromEntries((hidden ? [] : (options ?? [])).map((_, i) => [LETTERS[i]!.toLowerCase(), () => (form === 'order' ? place(i) : setPicked(i))])),
 		},
 		keys && !checking,
 	)
@@ -207,6 +213,55 @@ export function QuestionForm({
 							I don’t know
 						</button>
 					</div>
+				</div>
+			) : form === 'order' ? (
+				<div className="grid gap-3">
+					<p className="font-sans text-sm text-world-muted">Tap the steps from first to last. Tap a placed step to take it back.</p>
+					{order.length > 0 && (
+						<ol aria-label="Your order" className="grid gap-2">
+							{order.map((i, k) => (
+								<li key={i}>
+									<button
+										type="button"
+										aria-label={`Take back: ${options![i]}`}
+										onClick={() => setOrder((o) => o.filter((x) => x !== i))}
+										className="flex w-full items-start gap-3 rounded-2xl border border-world-accent bg-world-card p-3 text-left text-lg leading-snug"
+									>
+										<span aria-hidden className="mt-0.5 w-5 shrink-0 font-sans text-sm font-semibold text-world-accent">
+											{k + 1}
+										</span>
+										<span>{options![i]}</span>
+									</button>
+								</li>
+							))}
+						</ol>
+					)}
+					{order.length < options!.length && (
+						<div role="group" aria-label="Steps to place" className="grid gap-2">
+							{options!.map((step, i) =>
+								order.includes(i) ? null : (
+									<button
+										key={i}
+										type="button"
+										onClick={() => place(i)}
+										className="flex items-start gap-3 rounded-2xl border border-dashed border-world-line bg-world-card/60 p-3 text-left text-lg leading-snug transition hover:border-world-accent"
+									>
+										<span aria-hidden className="mt-0.5 w-5 shrink-0 font-sans text-sm font-semibold text-world-muted">
+											{LETTERS[i]}
+										</span>
+										<span>{step}</span>
+									</button>
+								),
+							)}
+						</div>
+					)}
+					{order.length > 0 && (
+						<div>
+							<button type="button" className={quiet} onClick={() => setOrder([])}>
+								Start over
+							</button>
+						</div>
+					)}
 				</div>
 			) : options ? (
 				<div role="radiogroup" aria-label="Options" className="grid gap-2">
@@ -410,6 +465,14 @@ const POINT = { covered: 'Made', vague: 'Vague', missing: 'Missed' } as const
  * model answer and the quote. With `answerId`, a written answer marked wrong offers Count it as
  * right, once.
  */
+/** How many pairs of steps the learner put in the right relative order, out of all pairs. */
+function pairsCount({ steps, pairs }: { steps: string[]; pairs: number }) {
+	const total = (steps.length * (steps.length - 1)) / 2
+	return { right: Math.round(pairs * total), total }
+}
+
+const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`
+
 export function RevealTile({
 	result: initial,
 	given,
@@ -433,16 +496,48 @@ export function RevealTile({
 	const { reveal } = result
 	// A cue's one point is the model answer itself; the verdict already says whether it was made.
 	const points = reveal.points.length === 1 && reveal.points[0]!.point === reveal.reference ? [] : reveal.points
-	const { choice, exact } = reveal
-	const answered = choice ? choice.picked !== null : exact ? exact.given !== null : given !== null
+	const { choice, exact, order } = reveal
+	const answered = choice ? choice.picked !== null : exact ? exact.given !== null : order ? order.given !== null : given !== null
+	// Partial credit by pairs: most pairs in order is close, and says so.
+	const pairs = order && order.given ? pairsCount(order) : null
 	// Output is compared line by line, so it reads in the code's own type.
 	const mono = exact?.kind === 'output' ? 'font-mono text-sm' : ''
-	const verdict = result.overridden ? 'Counted as right' : result.correct ? 'Right' : !answered ? 'Not answered' : 'Not quite'
+	const verdict = result.overridden
+		? 'Counted as right'
+		: result.correct
+			? 'Right'
+			: !answered
+				? 'Not answered'
+				: pairs && pairs.right / pairs.total >= 0.8
+					? 'Nearly'
+					: 'Not quite'
 	return (
 		<div className="grid gap-3 rounded-2xl border border-world-line bg-world-card p-4" data-testid="result">
 			<p className={`font-sans text-sm font-semibold ${result.correct ? 'text-path' : 'text-red'}`}>{verdict}</p>
 			{prompt && <p className="text-lg leading-snug">{prompt}</p>}
-			{given !== null && !choice && !exact && <p className="whitespace-pre-wrap text-world-muted">You wrote: {given}</p>}
+			{order && (
+				<div className="grid gap-2">
+					{pairs && !result.correct && (
+						<p className="font-sans text-sm text-world-muted">
+							{pairs.right} of {pairs.total} pairs of steps in the right order
+						</p>
+					)}
+					<p className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">Right order</p>
+					<ol className="grid gap-2" aria-label="Right order">
+						{order.steps.map((step, i) => {
+							const mine = order.given ? order.given.indexOf(i) : -1
+							return (
+								<li key={i} className={`flex items-start gap-3 rounded-xl border p-3 ${mine < 0 || mine === i ? 'border-world-line' : 'border-red'}`}>
+									<span className="mt-0.5 w-5 shrink-0 font-sans text-sm font-semibold text-world-muted">{i + 1}</span>
+									<span className="grow">{step}</span>
+									{mine >= 0 && mine !== i && <span className="shrink-0 font-sans text-xs font-semibold text-red">You put it {ordinal(mine + 1)}</span>}
+								</li>
+							)
+						})}
+					</ol>
+				</div>
+			)}
+			{given !== null && !choice && !exact && !order && <p className="whitespace-pre-wrap text-world-muted">You wrote: {given}</p>}
 			{exact && (
 				<dl className="grid gap-2 sm:grid-cols-2">
 					<div className="grid gap-1 rounded-xl border border-path p-3">
@@ -491,14 +586,14 @@ export function RevealTile({
 			)}
 			{reveal.reference && (
 				<p>
-					<span className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">{choice ? 'Why ' : exact?.kind === 'number' ? 'Worked solution ' : exact ? 'Why it prints that ' : 'Model answer '}</span>
+					<span className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">{choice ? 'Why ' : order ? 'Why this order ' : exact?.kind === 'number' ? 'Worked solution ' : exact ? 'Why it prints that ' : 'Model answer '}</span>
 					{reveal.reference}
 				</p>
 			)}
 			{reveal.quote && <p className="text-sm text-world-muted italic">From the text: “{reveal.quote}”</p>}
 			{showDue && <p className="font-sans text-xs text-world-muted">{backIn(result.dueAt)}</p>}
 			{/* A choice is checked against its key, so there is nothing to count again; a wrong key is reported instead. */}
-			{answerId && given !== null && !choice && !result.correct && (
+			{answerId && given !== null && !choice && !order && !result.correct && (
 				<div>
 					<button type="button" className={quiet} disabled={override.isPending} onClick={() => override.mutate(answerId)}>
 						Count it as right

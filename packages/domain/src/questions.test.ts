@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { answerIdea, pickQuestion } from './ideas'
-import { type Grade, gradeResponse, normalizeOutput, orderForTest, parseNumber, parseQuestionContent, scoreRubric, shuffleMcq, toPrompt, withConfidence } from './questions'
+import { type Grade, gradeResponse, normalizeOutput, orderForTest, parseNumber, parseQuestionContent, scoreRubric, shuffleMcq, shuffleSteps, toPrompt, withConfidence } from './questions'
 import { stepsThenFsrs } from './scheduler'
 
 // Ported from the previous app (packages/core/src/core.test.ts at 4051df5^).
@@ -123,6 +123,38 @@ describe('exact question types', () => {
 			return { score: 3, feedback: 'Close.', points: ['covered', 'vague'] }
 		})
 		expect(graded).toMatchObject({ correct: true, rating: 'good' })
+	})
+})
+
+// Ported from the previous app (packages/core/src/core.test.ts at 4051df5^).
+describe('order_steps', () => {
+	const noJudge = async () => {
+		throw new Error('judge must not be called')
+	}
+	const os = { prompt: 'Order the steps of a request.', steps: ['A', 'B', 'C', 'D'], shown: [2, 0, 3, 1], explanation: 'Each step needs the one before.' }
+
+	it('shows steps shuffled and grades the order the learner gives against the right one, with partial credit by pairs', async () => {
+		expect(toPrompt('order_steps', os).prompt).toEqual({ prompt: os.prompt, code: undefined, options: ['C', 'A', 'D', 'B'] })
+		// Shown positions 1, 3, 0, 2 are A, B, C, D.
+		expect(await gradeResponse('order_steps', os, { order: [1, 3, 0, 2] }, noJudge)).toMatchObject({
+			correct: true,
+			rating: 'good',
+			reveal: { reference: 'Each step needs the one before.', order: { steps: ['A', 'B', 'C', 'D'], given: [0, 1, 2, 3], pairs: 1 } },
+		})
+		// As shown, C A D B: 3 of 6 pairs in order.
+		expect(await gradeResponse('order_steps', os, { order: [0, 1, 2, 3] }, noJudge)).toMatchObject({ correct: false, rating: 'again', reveal: { order: { given: [2, 0, 3, 1], pairs: 0.5 } } })
+		// One neighbouring pair swapped out of six pairs is close, but not right.
+		expect(await gradeResponse('order_steps', os, { order: [3, 1, 0, 2] }, noJudge)).toMatchObject({ correct: false, rating: 'hard', reveal: { order: { given: [1, 0, 2, 3] } } })
+		expect(await gradeResponse('order_steps', os, { skipped: true }, noJudge)).toMatchObject({ correct: false, rating: 'again', reveal: { order: { given: null } } })
+		await expect(gradeResponse('order_steps', os, { order: [1, 1, 0, 2] }, noJudge)).rejects.toThrow()
+		await expect(gradeResponse('order_steps', os, { order: [1, 3, 0] }, noJudge)).rejects.toThrow()
+	})
+
+	it('never shows the steps already in order, and shows an old question without an order reversed', () => {
+		for (let k = 0; k < 20; k++) expect(shuffleSteps({ steps: ['a', 'b', 'c'] }).shown).not.toEqual([0, 1, 2])
+		// A random source that leaves every step in place is moved on by one.
+		expect(shuffleSteps({ steps: ['a', 'b', 'c', 'd'] }, () => 0.999).shown).toEqual([1, 2, 3, 0])
+		expect(toPrompt('order_steps', { prompt: 'P', steps: ['a', 'b', 'c'] }).prompt).toMatchObject({ options: ['c', 'b', 'a'] })
 	})
 })
 

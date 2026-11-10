@@ -174,6 +174,41 @@ export type McqContent = z.infer<typeof mcqContent>
 export type ChoiceReveal = { options: string[]; right: number; picked: number | null; whyWrong: string[]; guess: string | null }
 
 /**
+ * What an order question shows: the steps in the right order, the learner's order as indexes into
+ * them (null for I don't know), and the share of step pairs they put in the right relative order.
+ */
+export type OrderReveal = { steps: string[]; given: number[] | null; pairs: number }
+
+const isPermutation = (xs: number[], n: number) => xs.length === n && new Set(xs).size === n && xs.every((x) => Number.isInteger(x) && x >= 0 && x < n)
+
+/** The share of step pairs in the right relative order, for an order given as right positions: 1 is fully right. */
+export function pairsInOrder(order: number[]) {
+	let right = 0
+	let total = 0
+	for (let i = 0; i < order.length; i++)
+		for (let j = i + 1; j < order.length; j++) {
+			total++
+			if (order[i]! < order[j]!) right++
+		}
+	return total ? right / total : 1
+}
+
+type OrderSteps = { steps: string[]; shown?: number[] }
+/** A question stored before its order was set is shown reversed, never in the right order. */
+const shownOrder = (c: OrderSteps) => c.shown ?? c.steps.map((_, i) => c.steps.length - 1 - i)
+
+/** Picks the order steps are shown in: shuffled, and never already right. */
+export function shuffleSteps<C extends OrderSteps>(c: C, random = Math.random): C & { shown: number[] } {
+	const order = c.steps.map((_, i) => i)
+	for (let i = order.length - 1; i > 0; i--) {
+		const j = Math.floor(random() * (i + 1))
+		;[order[i], order[j]] = [order[j]!, order[i]!]
+	}
+	if (order.every((x, i) => x === i)) order.push(order.shift()!)
+	return { ...c, shown: order }
+}
+
+/**
  * Reads the number at the start of an answer, so "12.5 ms", "1,024", "-3e-4" and "3/4" all work;
  * whatever follows the number, such as a unit, is ignored. Returns null when the answer does not
  * start with a number.
@@ -285,6 +320,36 @@ export const questionTypes = {
 			const given = 'skipped' in r ? null : r.output
 			const correct = given !== null && normalizeOutput(given) === normalizeOutput(c.output)
 			return { rating: correct ? 'good' : 'again', correct, reveal: { reference: c.explanation || null, exact: { kind: 'output', expected: c.output, given } satisfies ExactReveal } }
+		},
+	}),
+	/**
+	 * Steps of a process, shown shuffled, to be put in order. Partial credit by pairs: one pair
+	 * swapped in a long list is close (hard), but still not right.
+	 */
+	order_steps: def({
+		content: z
+			.object({
+				...stem,
+				/** In the right order. */
+				steps: z.array(z.string().min(1)).min(3).max(8),
+				/** The order they are shown in, as indexes into `steps`; set when the question is stored. */
+				shown: z.array(z.int()).optional(),
+				explanation: z.string().default(''),
+			})
+			.refine((c) => !c.shown || isPermutation(c.shown, c.steps.length), 'shown is not an order of the steps'),
+		/** Positions in the shown list, in the order the learner put them. */
+		response: z.union([z.object({ order: z.array(z.int().min(0)).max(8) }), z.object({ skipped: z.literal(true) })]),
+		showsChoices: true,
+		toPrompt: (c) => ({ prompt: c.prompt, code: c.code, options: shownOrder(c).map((i) => c.steps[i]!) }),
+		async grade(c, r) {
+			if ('skipped' in r) return { rating: 'again', correct: false, reveal: { reference: c.explanation || null, order: { steps: c.steps, given: null, pairs: 0 } satisfies OrderReveal } }
+			const shown = shownOrder(c)
+			if (!isPermutation(r.order, shown.length))
+				throw new z.ZodError([{ code: 'custom', path: ['order'], message: 'Put every step in order once', input: r.order }])
+			const given = r.order.map((k) => shown[k]!)
+			const pairs = pairsInOrder(given)
+			const correct = pairs === 1
+			return { rating: correct ? 'good' : pairs >= 0.8 ? 'hard' : 'again', correct, reveal: { reference: c.explanation || null, order: { steps: c.steps, given, pairs } satisfies OrderReveal } }
 		},
 	}),
 	/** A flawed claim or piece of code: the learner says what is wrong and why. Judged like a written answer. */

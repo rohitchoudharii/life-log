@@ -158,6 +158,8 @@ export const Reveal = z.object({
 		.optional(),
 	/** For a worked problem or predicted output: the right answer and the learner's, as typed. */
 	exact: z.object({ kind: z.enum(['number', 'output']), expected: z.string(), given: z.string().nullable() }).optional(),
+	/** For an order question: the steps in the right order, the learner's order as indexes into them, and the share of pairs in order. */
+	order: z.object({ steps: z.array(z.string()), given: z.array(z.number()).nullable(), pairs: z.number() }).optional(),
 })
 export type Reveal = z.infer<typeof Reveal>
 export const AnswerResult = z.object({
@@ -178,7 +180,7 @@ export const AskItem = z.object({
 	prompt: z.string(),
 	/** Code the question is about, shown as code. */
 	code: z.string().nullable(),
-	/** A multiple-choice question's options, in the order shown; null for a written one. */
+	/** A multiple-choice question's options, or an order question's steps, in the order shown; null for a written one. */
 	options: z.array(z.string()).nullable(),
 	/** The question's type, which says how it is answered; null for a cue, which is written. */
 	type: z.string().nullable(),
@@ -327,7 +329,7 @@ export const ReviewItem = z.object({
 			type: z.string(),
 			prompt: z.string(),
 			code: z.string().nullable(),
-			/** A multiple-choice question's options; null for a written one. */
+			/** A multiple-choice question's options, or an order question's steps, in the order shown; null for a written one. */
 			options: z.array(z.string()).nullable(),
 			/** A worked problem's unit, shown by the answer box; null otherwise. */
 			unit: z.string().nullable(),

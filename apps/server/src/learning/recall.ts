@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { answerIdea, isQuestionType, levelIndex, orderForTest, type PointStatus, type QuestionType, type RecallStatus, schedulerFor } from '@life-log-club/domain'
+import { answerIdea, isQuestionType, levelIndex, orderForTest, type PointStatus, type QuestionType, type RecallStatus, schedulerFor, toPrompt } from '@life-log-club/domain'
 import { gradeRecallRequest, parseRecallVerdict } from '@life-log-club/llm'
 import { and, asc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 import { decrypt, encrypt } from '../crypto'
@@ -212,12 +212,11 @@ export async function selfMark(tx: Tx, attemptId: string, marks: { cardId: strin
 	return true
 }
 
-const promptOf = (content: Record<string, unknown>) => ({
-	prompt: typeof content.prompt === 'string' ? content.prompt : '',
-	code: typeof content.code === 'string' ? content.code : null,
-	options: Array.isArray(content.options) ? content.options.map(String) : null,
-	unit: typeof content.unit === 'string' && content.unit ? content.unit : null,
-})
+/** What a question shows before it is answered, from its type: options for a choice, steps (shuffled) for an order. */
+const promptOf = (type: QuestionType, content: unknown) => {
+	const shown = toPrompt(type, content).prompt as { prompt: string; code?: string; options?: string[]; unit?: string }
+	return { prompt: shown.prompt, code: shown.code ?? null, options: shown.options ?? null, unit: shown.unit || null }
+}
 
 /**
  * An attempt as the member sees it. Once graded: the questions to ask, then, once every one is
@@ -269,7 +268,7 @@ export async function attemptView(tx: Tx, attemptId: string) {
 	const ask = (cardId: string, questionId: string | null, mode: 'recall' | 'practice') => {
 		const q = questionId ? qs.find((x) => x.id === questionId) : undefined
 		const card = rows.find((c) => c.id === cardId)
-		const { prompt, code, options, unit } = q ? promptOf(q.content) : { prompt: card?.prompt ?? '', code: null, options: null, unit: null }
+		const { prompt, code, options, unit } = q ? promptOf(q.type as QuestionType, q.content) : { prompt: card?.prompt ?? '', code: null, options: null, unit: null }
 		return { cardId, questionId: q ? questionId : null, prompt, code, options, type: q?.type ?? null, unit, answered: Boolean(answerOf(cardId, mode)) }
 	}
 	const items = asked.map((i) => ask(i.cardId, i.questionId, 'recall'))

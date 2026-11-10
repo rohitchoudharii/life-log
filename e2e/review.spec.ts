@@ -515,6 +515,36 @@ test('a worked problem and a predicted output are checked in code without a key,
 	expect(last!.graded_by).toBe('ai')
 })
 
+test('an order question is shown shuffled, graded in code with partial credit by pairs, and cannot be counted as right', async () => {
+	const { client, user } = await newMember()
+	const card = await client.review.add({ id: randomUUID(), kind: 'idea', prompt: 'How does a spaced self-test go?', answer: 'Gap, recall, check, mark.' })
+	const steps = ['Wait a day', 'Recall without notes', 'Check against the text', 'Mark what was missed']
+	const content = { prompt: 'Put a spaced self-test in order.', steps, shown: [2, 0, 3, 1], explanation: 'Recall needs a gap before it and a check after it.' }
+	const [question] = await sql<{ id: string }>("insert into questions (user_id, card_id, type, level, content) values ($1, $2, 'order_steps', 'explain', $3) returning id", [user.id, card.id, content])
+	await sql("update cards set started_at = now(), due_at = now() - interval '1 second' where id = $1", [card.id])
+	// Asked with its steps in the stored shuffled order (Review asks questions when the member has a key).
+	await client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })
+	const [item] = (await client.review.next({})).items
+	expect(item!.ask).toEqual({ kind: 'question', questionId: question!.id, type: 'order_steps', prompt: content.prompt, code: null, options: ['Check against the text', 'Wait a day', 'Mark what was missed', 'Recall without notes'], unit: null })
+	const answer = (response: Record<string, unknown>) =>
+		client.review.answer({ answerId: randomUUID(), cardId: card.id, mode: 'practice', ask: 'question', questionId: question!.id, response, confidence: 'sure' })
+
+	// Positions in the shown list: 1, 3, 0, 2 is the right order.
+	expect(await answer({ order: [1, 3, 0, 2] })).toMatchObject({ correct: true, rating: 'good', reveal: { reference: content.explanation, order: { steps, given: [0, 1, 2, 3], pairs: 1 } } })
+	// One neighbouring pair swapped: close, so hard, but not right.
+	expect(await answer({ order: [3, 1, 0, 2] })).toMatchObject({ correct: false, rating: 'hard', reveal: { order: { given: [1, 0, 2, 3] } } })
+	expect(await answer({ order: [0, 1, 2, 3] })).toMatchObject({ correct: false, rating: 'again' })
+	expect((await answer({ skipped: true })).reveal.order).toEqual({ steps, given: null, pairs: 0 })
+	// Every step, once each.
+	expect(await code(answer({ order: [1, 1, 0, 2] }))).toBe('BAD_REQUEST')
+	expect(await code(answer({ order: [1, 3, 0] }))).toBe('BAD_REQUEST')
+	expect(await sql('select graded_by from review_log where card_id = $1', [card.id])).toEqual(Array(4).fill({ graded_by: 'code' }))
+
+	const [log] = await sql<{ answer_id: string }>("select answer_id from review_log where card_id = $1 and rating = 'again' order by id limit 1", [card.id])
+	expect(await code(client.review.override({ answerId: log!.answer_id }))).toBe('BAD_REQUEST')
+	expect(await code(client.review.checklist({ cardId: card.id, questionId: question!.id }))).toBe('BAD_REQUEST')
+})
+
 test('Rewrite key ideas replaces ideas none of which is in use; once one is answered only questions can be rewritten, and never on Quick or without a key', async () => {
 	const { client, user } = await newMember()
 	await client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })

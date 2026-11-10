@@ -45,7 +45,7 @@ const mcqOn = (k: number, quote: string) => ({
 
 /** Key ideas from the first sentences of each section; multiple choice when the member asks for choice only. */
 function writeSection(system: string, user: string) {
-	const choice = system.includes('Every question is mcq.')
+	const choice = system.includes('Only these types, picked from the content: mcq, order_steps.')
 	const ideas = sectionsIn(user).flatMap(({ n, text }) =>
 		sentences(text)
 			.slice(0, 3)
@@ -85,7 +85,7 @@ function rewriteQuestions(system: string, user: string) {
 	const list = JSON.parse(user.slice(user.lastIndexOf('\n[') + 1)) as { id: number; idea: string }[]
 	return {
 		questions: list.map(({ id, idea }) => {
-			if (system.includes('Every question is mcq.')) return { id, ...mcqOn(id, idea) }
+			if (system.includes('Only these types, picked from the content: mcq, order_steps.')) return { id, ...mcqOn(id, idea) }
 			const words = idea.split(/\s+/)
 			const half = Math.ceil(words.length / 2)
 			return {

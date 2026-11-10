@@ -700,6 +700,71 @@ test('A worked problem and a predicted output in Review: a number box with its u
 	expect(await sql('select graded_by, correct from review_log where card_id = $1', [other!.id])).toEqual([{ graded_by: 'code', correct: true }])
 })
 
+test('Order the steps in Review: tap them first to last, take one back or start over, then see the right order with where each step went, Nearly for a close order', async ({ page }, testInfo) => {
+	const { readingId, ids } = await openWithKey(page)
+	await stay(page)
+	await expect.poll(() => writeStatus(ids[0]!), { timeout: 15_000 }).toBe('ready')
+	const [idea, other] = await ideasOf(ids[0]!)
+	await sql('update questions set retired_at = now() where card_id in ($1, $2)', [idea!.id, other!.id])
+	const steps = ['Wait a day or more', 'Recall it without notes', 'Check it against the text', 'Mark what you missed']
+	const add = (cardId: string, prompt: string) =>
+		sql("insert into questions (user_id, card_id, type, level, content) select user_id, $2, 'order_steps', 'explain', $3 from readings where id = $1", [
+			readingId,
+			cardId,
+			{ prompt, steps, shown: [2, 0, 3, 1], explanation: 'Recall needs a gap before it to be effortful, and a check after it to fix what slipped.' },
+		])
+	await add(idea!.id, 'Put a spaced self-test in order.')
+	await add(other!.id, 'Put a spaced self-test of a new chapter in order.')
+	await sql("update cards set started_at = now(), level = 1, due_at = now() - interval '2 seconds' where id = $1", [idea!.id])
+	await sql("update cards set started_at = now(), level = 1, due_at = now() - interval '1 second' where id = $1", [other!.id])
+
+	// The steps show shuffled; no typed guess first, the steps are the question.
+	await page.goto('/mind/review')
+	await expect(page.getByTestId('question')).toHaveText('Put a spaced self-test in order.')
+	const toPlace = page.getByRole('group', { name: 'Steps to place' })
+	await expect(toPlace.getByRole('button')).toHaveText(['ACheck it against the text', 'BWait a day or more', 'CMark what you missed', 'DRecall it without notes'])
+	await expect(page.getByLabel('Your answer in a few words')).toHaveCount(0)
+	const sure = page.getByRole('button', { name: 'Sure', exact: true })
+	await expect(sure).toBeDisabled()
+
+	// Tap to place; a placed step taps back; Start over clears the order.
+	await toPlace.getByRole('button', { name: 'Check it against the text' }).click()
+	await page.getByRole('button', { name: 'Take back: Check it against the text' }).click()
+	await expect(page.getByRole('list', { name: 'Your order' })).toHaveCount(0)
+	await toPlace.getByRole('button', { name: 'Wait a day or more' }).click()
+	await page.getByRole('button', { name: 'Start over' }).click()
+	await expect(toPlace.getByRole('button')).toHaveCount(4)
+	// Close but not right: the check and the recall swapped.
+	for (const step of ['Wait a day or more', 'Check it against the text', 'Recall it without notes']) await toPlace.getByRole('button', { name: step }).click()
+	await expect(sure).toBeDisabled()
+	await toPlace.getByRole('button', { name: 'Mark what you missed' }).click()
+	await expect(page.getByRole('list', { name: 'Your order' }).getByRole('listitem')).toHaveText(['1Wait a day or more', '2Check it against the text', '3Recall it without notes', '4Mark what you missed'])
+	await proof(page, testInfo, 'order-ask')
+	await sure.click()
+	const result = page.getByTestId('result')
+	await expect(result).toContainText('Nearly')
+	await expect(result).toContainText('5 of 6 pairs of steps in the right order')
+	const right = result.getByRole('list', { name: 'Right order' }).getByRole('listitem')
+	await expect(right.nth(1)).toContainText('Recall it without notes')
+	await expect(right.nth(1)).toContainText('You put it 3rd')
+	await expect(right.nth(2)).toContainText('You put it 2nd')
+	await expect(right.nth(0)).not.toContainText('You put it')
+	await expect(result).toContainText('Why this order')
+	await expect(result.getByRole('button', { name: 'Count it as right' })).toHaveCount(0)
+	await proof(page, testInfo, 'order-nearly')
+	expect(await sql('select graded_by, rating, correct from review_log where card_id = $1', [idea!.id])).toEqual([{ graded_by: 'code', rating: 'hard', correct: false }])
+	await page.getByRole('button', { name: 'Next' }).click()
+
+	// By keys: each step's letter places it (B, D, A, C is the right order), then 2 for Think so.
+	await expect(page.getByTestId('question')).toHaveText('Put a spaced self-test of a new chapter in order.')
+	for (const key of 'bdac') await page.keyboard.press(key)
+	await page.keyboard.press('2')
+	await expect(result).toContainText('Right')
+	await expect(result).not.toContainText('You put it')
+	await proof(page, testInfo, 'order-right')
+	expect(await sql('select rating, correct, confidence from review_log where card_id = $1', [other!.id])).toEqual([{ rating: 'good', correct: true, confidence: 'think_so' }])
+})
+
 test('Settings → Questions sets how many and which kinds; Rewrite questions writes new ones for the same ideas and keeps every answer and schedule', async ({ page }, testInfo) => {
 	const { readingId, ids } = await openWithKey(page)
 	await stay(page)

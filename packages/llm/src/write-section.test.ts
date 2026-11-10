@@ -160,6 +160,28 @@ describe('writeSection', () => {
 		expect(prompts[0]).toMatch(/Code in the section calls for predict_output or find_error; formulas, quantities or algorithms with numbers call for worked_problem/)
 	})
 
+	it('keeps an order question in Choice, stored with a shuffled order that is never already right, and drops one whose steps give their place away', async () => {
+		const steps = ['wait a day or more', 'try to recall without notes', 'check against the text', 'mark what was missed']
+		const order = (prompt: string, s: string[]) => ({ type: 'order_steps', level: 'explain', content: { prompt, steps: s, explanation: 'Recall needs a gap before it and a check after it.' } })
+		const { complete } = scripted({
+			'write-section': {
+				ideas: [
+					idea(1, { questions: [order('Put a spaced self-test in order.', steps)] }),
+					idea(2, { questions: [order('Put a spaced self-test for a new chapter in order.', ['First wait a day', ...steps.slice(1)])] }),
+				],
+			},
+		})
+		const written = await writeSection(complete, [section], { amount: 'standard', style: 'choice', qualityCheck: false })
+		const [kept] = written.ideas[0]!.questions
+		const content = kept!.content as { steps: string[]; shown: number[] }
+		expect(kept!.type).toBe('order_steps')
+		expect(content.steps).toEqual(steps)
+		expect([...content.shown].sort()).toEqual([0, 1, 2, 3])
+		expect(content.shown).not.toEqual([0, 1, 2, 3])
+		expect(written.ideas[1]!.questions).toEqual([])
+		expect(written.rejected.map((r) => r.reasons.join())).toEqual([expect.stringMatching(/gives away its position/)])
+	})
+
 	it('writes fresh questions on existing ideas for Rewrite, at the amount, and drops one like a question asked before', async () => {
 		const asked = 'Why would a student who waits 1 days before testing keep more?'
 		const { complete, calls } = scripted({

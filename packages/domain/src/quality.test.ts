@@ -47,6 +47,14 @@ describe('lintQuestion', () => {
 		expect(fe('What is wrong with the scaling?').join()).not.toMatch(/definition/)
 	})
 
+	it('rejects steps that give away their order, repeat, or are too few', () => {
+		const steps = (s: string[]) => lintQuestion({ type: 'order_steps', level: 'explain', content: { prompt: 'Put the request in order.', steps: s } }, source)
+		expect(steps(['DNS lookup', 'TCP handshake', 'TLS handshake', 'HTTP request'])).toEqual([])
+		expect(steps(['First, DNS lookup', 'TCP handshake', 'TLS handshake', 'HTTP request']).join()).toMatch(/position/)
+		expect(steps(['DNS lookup', 'TCP handshake', 'TCP handshake', 'HTTP request']).join()).toMatch(/repeated/)
+		expect(steps(['DNS lookup', 'TCP handshake', 'HTTP request']).join()).toMatch(/4 to 7 steps/)
+	})
+
 	it('treats reworded prompts with the same content words as duplicates, but not different questions', () => {
 		expect(isDuplicatePrompt('Why does softmax saturate for large scores?', 'For large scores, why does softmax saturate?')).toBe(true)
 		expect(isDuplicatePrompt('Why does softmax saturate for large scores?', 'How do multiple heads share the model dimension?')).toBe(false)

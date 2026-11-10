@@ -4,6 +4,7 @@ import {
 	type ChoiceReveal,
 	defaultScheduler,
 	type ExactReveal,
+	type OrderReveal,
 	type Grade,
 	gradeResponse,
 	gradeWritten,
@@ -53,6 +54,7 @@ function toReveal(reveal: Record<string, unknown>, quote: string | null): Reveal
 		quote,
 		...(reveal.choice ? { choice: reveal.choice as ChoiceReveal } : {}),
 		...(reveal.exact ? { exact: reveal.exact as ExactReveal } : {}),
+		...(reveal.order ? { order: reveal.order as OrderReveal } : {}),
 	}
 }
 
@@ -112,11 +114,11 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
 		gradedBy = 'self'
 	} else {
 		response = input.response
-		// I don't know, a choice, a number and an output are graded in code (a number's working by the
+		// I don't know, a choice, an order, a number and an output are graded in code (a number's working by the
 		// judge), the learner's own check of the points by them, the rest by the judge.
 		const r = input.response
 		gradedBy =
-			'skipped' in r || 'choice' in r || 'output' in r || ('value' in r && !r.working) ? 'code' : 'made' in r ? 'self' : 'ai'
+			'skipped' in r || 'choice' in r || 'order' in r || 'output' in r || ('value' in r && !r.working) ? 'code' : 'made' in r ? 'self' : 'ai'
 		try {
 			grade =
 				input.ask === 'cue'
@@ -217,8 +219,8 @@ export function overrideAnswer(userId: string, answerId: string): Promise<Answer
 		if (row.overriddenAt || row.correct) return resultOf(row)
 		if (row.ask === 'self') throw new ORPCError('BAD_REQUEST', { message: 'You rated this answer yourself, so there is nothing to change.' })
 		if (!row.response || 'skipped' in row.response) throw new ORPCError('BAD_REQUEST', { message: 'There is no answer to count. Next time, write what you remember.' })
-		if ('choice' in row.response)
-			throw new ORPCError('BAD_REQUEST', { message: 'A choice is checked against its answer key. If the key is wrong, report the question.' })
+		if ('choice' in row.response || 'order' in row.response)
+			throw new ORPCError('BAD_REQUEST', { message: 'A choice or an order is checked against its answer key. If the key is wrong, report the question.' })
 		const [updated] = await tx
 			.update(reviewLog)
 			.set({ rating: 'good', correct: true, overriddenAt: new Date() })
