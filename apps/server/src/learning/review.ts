@@ -96,7 +96,8 @@ export async function nextBatch(tx: Tx, limit: number, filter: ReviewFilter, fir
 		if (!picked || !isQuestionType(picked.type)) return { ...base, ask: { kind: 'cue', prompt: card.prompt } }
 		const { prompt } = toPrompt(picked.type, picked.content)
 		const options = 'options' in prompt ? prompt.options : null
-		return { ...base, ask: { kind: 'question', questionId: picked.id, type: picked.type, prompt: prompt.prompt, code: prompt.code ?? null, options } }
+		const unit = 'unit' in prompt ? prompt.unit || null : null
+		return { ...base, ask: { kind: 'question', questionId: picked.id, type: picked.type, prompt: prompt.prompt, code: prompt.code ?? null, options, unit } }
 	})
 	return { items, total: due.length, minutes: await minutesFor(tx, due.length) }
 }

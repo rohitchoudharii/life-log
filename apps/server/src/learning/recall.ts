@@ -216,6 +216,7 @@ const promptOf = (content: Record<string, unknown>) => ({
 	prompt: typeof content.prompt === 'string' ? content.prompt : '',
 	code: typeof content.code === 'string' ? content.code : null,
 	options: Array.isArray(content.options) ? content.options.map(String) : null,
+	unit: typeof content.unit === 'string' && content.unit ? content.unit : null,
 })
 
 /**
@@ -268,8 +269,8 @@ export async function attemptView(tx: Tx, attemptId: string) {
 	const ask = (cardId: string, questionId: string | null, mode: 'recall' | 'practice') => {
 		const q = questionId ? qs.find((x) => x.id === questionId) : undefined
 		const card = rows.find((c) => c.id === cardId)
-		const { prompt, code, options } = q ? promptOf(q.content) : { prompt: card?.prompt ?? '', code: null, options: null }
-		return { cardId, questionId: q ? questionId : null, prompt, code, options, answered: Boolean(answerOf(cardId, mode)) }
+		const { prompt, code, options, unit } = q ? promptOf(q.content) : { prompt: card?.prompt ?? '', code: null, options: null, unit: null }
+		return { cardId, questionId: q ? questionId : null, prompt, code, options, type: q?.type ?? null, unit, answered: Boolean(answerOf(cardId, mode)) }
 	}
 	const items = asked.map((i) => ask(i.cardId, i.questionId, 'recall'))
 	if (items.some((i) => !i.answered)) return { ...base, items }

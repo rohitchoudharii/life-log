@@ -3,6 +3,7 @@ import {
 	answerIdea,
 	type ChoiceReveal,
 	defaultScheduler,
+	type ExactReveal,
 	type Grade,
 	gradeResponse,
 	gradeWritten,
@@ -51,6 +52,7 @@ function toReveal(reveal: Record<string, unknown>, quote: string | null): Reveal
 		misconception: typeof reveal.misconception === 'string' ? reveal.misconception : null,
 		quote,
 		...(reveal.choice ? { choice: reveal.choice as ChoiceReveal } : {}),
+		...(reveal.exact ? { exact: reveal.exact as ExactReveal } : {}),
 	}
 }
 
@@ -110,8 +112,11 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
 		gradedBy = 'self'
 	} else {
 		response = input.response
-		// I don't know and a choice are graded in code, the learner's own check of the points by them, the rest by the judge.
-		gradedBy = 'skipped' in input.response || 'choice' in input.response ? 'code' : 'made' in input.response ? 'self' : 'ai'
+		// I don't know, a choice, a number and an output are graded in code (a number's working by the
+		// judge), the learner's own check of the points by them, the rest by the judge.
+		const r = input.response
+		gradedBy =
+			'skipped' in r || 'choice' in r || 'output' in r || ('value' in r && !r.working) ? 'code' : 'made' in r ? 'self' : 'ai'
 		try {
 			grade =
 				input.ask === 'cue'

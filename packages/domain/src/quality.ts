@@ -19,7 +19,8 @@ const BANNED_PROMPTS: [RegExp, string][] = [
 	[/in your own words/i, 'asks to restate the text ("in your own words")'],
 	[/^\s*(define|describe|summari[sz]e|list)\b/i, 'asks for a definition or summary instead of thinking'],
 	[/^\s*explain\s+(?!why\b|how\b|what\s+(would|happens|goes)\b)/i, 'asks to "explain X" instead of why or how'],
-	[/^\s*what\s+(is|are)\s+(a|an|the)?\s*[^,;?]{1,40}\?\s*$/i, 'asks "what is X", a definition'],
+	// "What is wrong with…" asks for a fault, not a definition.
+	[/^\s*what\s+(is|are)\s+(?!wrong\b|missing\b|the\s+(error|mistake|bug|flaw|problem)\b)(a|an|the)?\s*[^,;?]{1,40}\?\s*$/i, 'asks "what is X", a definition'],
 ]
 
 /** The longest run of the question's words that also appears, in order, in the text. */

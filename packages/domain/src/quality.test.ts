@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { isDuplicatePrompt, lintCue, lintQuestion, quoteInText } from './quality'
 
-// Ported from the previous app (packages/core/src/core.test.ts at 4051df5^), short answers and multiple choice.
+// Ported from the previous app (packages/core/src/core.test.ts at 4051df5^).
 describe('lintQuestion', () => {
 	const source = 'Scores come from query times key, scaled by the square root of the key size, so softmax does not saturate.'
 	const sa = (prompt: string, mustHave: string[], level = 'explain' as const) => lintQuestion({ type: 'short_answer', level, content: { prompt, mustHave } }, source)
@@ -25,6 +25,26 @@ describe('lintQuestion', () => {
 		expect(mcq(['Divide by √d_k', 'Multiply by d_k', 'None of the above', 'Add d_k']).join()).toMatch(/above/)
 		expect(mcq(['Divide by √d_k', 'Multiply by d_k', 'Add d_k', 'Square'], ['', '', '', '']).join()).toMatch(/reason/)
 		expect(mcq(['Divide by √d_k', 'Multiply by d_k', 'Add d_k']).join()).toMatch(/exactly 4/)
+	})
+
+	it('rejects code in the prompt and code copied from the text, and output or numbers that give the answer away', () => {
+		const code = 'for i in range(3):\n    total = total + i * i\nprint(total)'
+		const withCode = `The text runs this loop.\n\n${code}`
+		const po = (prompt: string, c: string, output = '5') => lintQuestion({ type: 'predict_output', level: 'apply', content: { prompt, code: c, output } }, withCode)
+		expect(po('What does it print if total starts at 0?', code.replace('3', '4'))).toEqual([])
+		expect(po('What does it print if total starts at 0?', code).join()).toMatch(/copies the text's own code/)
+		expect(po('What does `print(total)` show?', code.replace('3', '4')).join()).toMatch(/backticks/)
+		expect(po('What does it print if total starts at 0?', `${code.replace('3', '4')}  # 140`, '140').join()).toMatch(/gives the output away/)
+		const wp = (prompt: string, answer: number, tolerance: number, steps = ['a', 'b']) =>
+			lintQuestion({ type: 'worked_problem', level: 'apply', content: { prompt, answer, tolerance, steps } }, source)
+		expect(wp('A key size of 64 gives what scale factor?', 0.125, 0.001)).toEqual([])
+		expect(wp('What scale factor does a big key size give?', 0.125, 0.001).join()).toMatch(/its own numbers/)
+		expect(wp('A key size of 64 gives what scale factor?', 0.125, 0).join()).toMatch(/tolerance for rounding/)
+		expect(wp('A key size of 64 gives what scale factor?', 8, 0, ['a']).join()).toMatch(/2 key steps/)
+		const fe = (prompt: string, code?: string) => lintQuestion({ type: 'find_error', level: 'analyze', content: { prompt, code, mustHave: ['x', 'y'] } }, source)
+		expect(fe('What is wrong with this step?', 'scores = q @ k.T')).toEqual([])
+		expect(fe('What is wrong with the scaling?').join()).toMatch(/flawed code/)
+		expect(fe('What is wrong with the scaling?').join()).not.toMatch(/definition/)
 	})
 
 	it('treats reworded prompts with the same content words as duplicates, but not different questions', () => {

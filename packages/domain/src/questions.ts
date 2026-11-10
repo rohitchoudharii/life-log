@@ -173,6 +173,34 @@ export type McqContent = z.infer<typeof mcqContent>
  */
 export type ChoiceReveal = { options: string[]; right: number; picked: number | null; whyWrong: string[]; guess: string | null }
 
+/**
+ * Reads the number at the start of an answer, so "12.5 ms", "1,024", "-3e-4" and "3/4" all work;
+ * whatever follows the number, such as a unit, is ignored. Returns null when the answer does not
+ * start with a number.
+ */
+export function parseNumber(text: string): number | null {
+	const m = text
+		.replace(/(\d),(?=\d{3}\b)/g, '$1')
+		.trim()
+		.match(/^([-+−]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)(?:\s*\/\s*((?:\d+\.?\d*|\.\d+)))?/i)
+	if (!m) return null
+	let n = Number(m[1]!.replace('−', '-'))
+	if (m[2] !== undefined) n /= Number(m[2])
+	return Number.isFinite(n) ? n : null
+}
+
+/** Program output compared the way a person reads it: spacing within and around lines does not count. */
+export const normalizeOutput = (text: string) =>
+	text
+		.replace(/\r\n?/g, '\n')
+		.split('\n')
+		.map((l) => l.replace(/\s+/g, ' ').trim())
+		.join('\n')
+		.replace(/^\n+|\n+$/g, '')
+
+/** What an exactly checked answer shows: the right answer, and the learner's, as they read. */
+export type ExactReveal = { kind: 'number' | 'output'; expected: string; given: string | null }
+
 export const questionTypes = {
 	short_answer: def({
 		content: z.object(judged),
@@ -194,6 +222,77 @@ export const questionTypes = {
 			const choice: ChoiceReveal = { options: c.options, right: c.answerIndex, picked, whyWrong: c.options.map((_, i) => c.whyWrong[i] ?? ''), guess }
 			return { rating: correct ? 'good' : 'again', correct, reveal: { reference: c.explanation || c.options[c.answerIndex], choice } }
 		},
+	}),
+	/**
+	 * A problem with a numeric answer. The number decides whether it is right, within the
+	 * tolerance; the working, when given, is judged against the key steps to say where it went
+	 * wrong, and clean working on a right answer makes it easy.
+	 */
+	worked_problem: def({
+		content: z.object({
+			...stem,
+			answer: z.number().finite(),
+			/** How far from `answer` still counts as right, in the same unit. */
+			tolerance: z.number().min(0).default(0),
+			unit: z.string().default(''),
+			/** The worked solution, shown afterwards. */
+			solution: z.string().min(1),
+			/** The steps a correct working takes, used to grade the working. */
+			steps: z.array(z.string().min(1)).max(6).default([]),
+			misconceptions: z.array(z.string().min(1)).default([]),
+		}),
+		response: z.union([
+			z.object({ value: z.string().trim().min(1).max(200), working: z.string().trim().max(4000).optional() }),
+			z.object({ skipped: z.literal(true) }),
+		]),
+		toPrompt: ({ prompt, code, unit }) => ({ prompt, code, unit }),
+		async grade(c, r, judge) {
+			const expected = `${c.answer}${c.unit ? ` ${c.unit}` : ''}`
+			if ('skipped' in r) return { rating: 'again', correct: false, reveal: { reference: c.solution, exact: { kind: 'number', expected, given: null } satisfies ExactReveal } }
+			const given = parseNumber(r.value)
+			// A tiny relative margin absorbs floating-point rounding in the key itself.
+			const correct = given !== null && Math.abs(given - c.answer) <= Math.max(c.tolerance, Math.abs(c.answer) * 1e-9)
+			let verdict: JudgeVerdict | null = null
+			// The number decides; a judge that can't be reached only leaves the working unmarked.
+			if (r.working && c.steps.length)
+				verdict = await judge({
+					question: withCode(c),
+					reference: c.solution,
+					mustHave: c.steps,
+					misconceptions: c.misconceptions,
+					answer: `Final answer: ${r.value}\nWorking:\n${r.working}`,
+				}).catch(() => null)
+			return {
+				rating: correct ? (verdict?.score === 4 ? 'easy' : 'good') : 'again',
+				correct,
+				reveal: {
+					reference: c.solution,
+					exact: { kind: 'number', expected, given: r.value } satisfies ExactReveal,
+					feedback: verdict?.feedback ?? '',
+					mustHave: verdict ? c.steps : [],
+					points: verdict?.points,
+					misconception: verdict?.misconception ?? null,
+				},
+			}
+		},
+	}),
+	/** Code to run in the head: the learner writes what it prints. Spacing doesn't count; line breaks do. */
+	predict_output: def({
+		content: z.object({ prompt: z.string().min(1), code: z.string().min(1), output: z.string().min(1), explanation: z.string().default('') }),
+		response: z.union([z.object({ output: z.string().trim().min(1).max(4000) }), z.object({ skipped: z.literal(true) })]),
+		toPrompt: stemOf,
+		async grade(c, r) {
+			const given = 'skipped' in r ? null : r.output
+			const correct = given !== null && normalizeOutput(given) === normalizeOutput(c.output)
+			return { rating: correct ? 'good' : 'again', correct, reveal: { reference: c.explanation || null, exact: { kind: 'output', expected: c.output, given } satisfies ExactReveal } }
+		},
+	}),
+	/** A flawed claim or piece of code: the learner says what is wrong and why. Judged like a written answer. */
+	find_error: def({
+		content: z.object(judged),
+		response: writtenResponse,
+		toPrompt: stemOf,
+		grade: gradeWritten,
 	}),
 } satisfies Record<string, QuestionTypeDef<z.ZodType, z.ZodType, unknown>>
 
@@ -226,7 +325,8 @@ export function toPrompt(type: QuestionType, content: unknown): QuestionPrompt {
 /** Grades a response. Throws a ZodError when the response does not fit the type. */
 export function gradeResponse(type: QuestionType, content: unknown, response: unknown, judge: Judge): Promise<Grade> {
 	const t = questionTypes[type] as QuestionTypeDef<z.ZodType, z.ZodType, unknown>
-	return t.grade(content, t.response.parse(response), judge)
+	// Parsed again so a stored question always has its defaults, such as an empty list of misconceptions.
+	return t.grade(t.content.parse(content), t.response.parse(response), judge)
 }
 
 /** Models tend to put the right option first; shuffling in code removes that tell. */

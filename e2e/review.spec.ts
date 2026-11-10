@@ -248,7 +248,7 @@ test('Review asks a question not asked yet nearest the card’s level, then the 
 	const askOf = async () => (await a.client.review.next({})).items[0]!.ask
 	expect(await a.client.review.next({})).toMatchObject({ total: 1, minutes: 1, items: [{ cardId: card.id, kind: 'idea', source: null, cue: IDEA.prompt }] })
 	// Level 2 is apply.
-	expect(await askOf()).toEqual({ kind: 'question', questionId: apply, type: 'short_answer', prompt: 'At apply: why does spacing help?', code: null, options: null })
+	expect(await askOf()).toEqual({ kind: 'question', questionId: apply, type: 'short_answer', prompt: 'At apply: why does spacing help?', code: null, options: null, unit: null })
 	expect(await a.client.review.answer(written(card.id, apply!, RIGHT))).toMatchObject({ correct: true, rating: 'good' })
 	expect(await cardRow(card.id)).toMatchObject({ level: 3 })
 	await makeDue(card.id)
@@ -468,6 +468,51 @@ test('a multiple-choice answer is graded in code against its key, with no AI key
 	const [log] = await sql<{ answer_id: string }>('select answer_id from review_log where card_id = $1 and correct = false order by id limit 1', [card.id])
 	expect(await code(client.review.override({ answerId: log!.answer_id }))).toBe('BAD_REQUEST')
 	expect(await code(client.review.checklist({ cardId: card.id, questionId: question!.id }))).toBe('BAD_REQUEST')
+})
+
+test('a worked problem and a predicted output are checked in code without a key, can be counted as right, and the working is judged with a key', async () => {
+	const { client, user } = await newMember()
+	const card = await client.review.add({ id: randomUUID(), kind: 'idea', prompt: 'How do review gaps grow?', answer: 'Each gap is a multiple of the last.' })
+	const add = (type: string, content: Record<string, unknown>) =>
+		sql<{ id: string }>('insert into questions (user_id, card_id, type, level, content) values ($1, $2, $3, $4, $5) returning id', [user.id, card.id, type, 'apply', content]).then((r) => r[0]!.id)
+	const worked = await add('worked_problem', {
+		prompt: 'Gaps of 1, 3 and 9 days each triple. On which day is the next review?',
+		answer: 27,
+		unit: 'days',
+		tolerance: 0,
+		solution: 'The next gap is 18 days after day 9, so day 27.',
+		steps: ['triple the previous interval', 'add the interval to the previous review'],
+	})
+	const output = await add('predict_output', { prompt: 'What does this print?', code: 'for (const n of [1, 2]) console.log(n * 3)', output: '3\n6', explanation: 'Each number is tripled.' })
+	const answer = (questionId: string, response: Record<string, unknown>, c = client) =>
+		c.review.answer({ answerId: randomUUID(), cardId: card.id, mode: 'practice', ask: 'question', questionId, response, confidence: 'sure' })
+
+	// The number decides, in any common way of writing it, with the unit after it.
+	expect(await answer(worked, { value: '27 days' })).toMatchObject({ correct: true, rating: 'good', reveal: { exact: { kind: 'number', expected: '27 days', given: '27 days' } } })
+	const wrong = await answer(worked, { value: 'twenty-seven' })
+	expect(wrong).toMatchObject({ correct: false, rating: 'again', reveal: { reference: 'The next gap is 18 days after day 9, so day 27.', exact: { expected: '27 days', given: 'twenty-seven' } } })
+	expect((await answer(worked, { skipped: true })).reveal.exact).toEqual({ kind: 'number', expected: '27 days', given: null })
+	// Output: spacing does not count, line breaks do.
+	expect(await answer(output, { output: ' 3 \n6\n' })).toMatchObject({ correct: true, reveal: { exact: { kind: 'output', expected: '3\n6' } } })
+	expect((await answer(output, { output: '3 6' })).correct).toBe(false)
+	expect(await code(answer(output, { answer: '3 6' }))).toBe('BAD_REQUEST')
+	expect(await sql('select graded_by from review_log where card_id = $1', [card.id])).toEqual(Array(5).fill({ graded_by: 'code' }))
+	// Without a key, the working can't be judged; the number still decides.
+	expect(await answer(worked, { value: '27', working: 'triple the last gap, add it to day 9' })).toMatchObject({ correct: true, rating: 'good', reveal: { points: [] } })
+
+	// A right answer in a form the check did not expect can be counted as right.
+	const [log] = await sql<{ answer_id: string }>("select answer_id from review_log where card_id = $1 and response->>'value' = 'twenty-seven'", [card.id])
+	expect(await client.review.override({ answerId: log!.answer_id })).toMatchObject({ correct: true, overridden: true })
+	// No points to tick, so no checklist.
+	expect(await code(client.review.checklist({ cardId: card.id, questionId: worked }))).toBe('BAD_REQUEST')
+	expect(await code(client.review.checklist({ cardId: card.id, questionId: output }))).toBe('BAD_REQUEST')
+
+	// With a key, the working is judged against the key steps: clean working on a right answer is easy.
+	await client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })
+	const judged = await answer(worked, { value: '27', working: 'Triple the previous interval to get 18, then add the interval to the previous review on day 9.' })
+	expect(judged).toMatchObject({ correct: true, rating: 'easy', reveal: { points: [{ status: 'covered' }, { status: 'covered' }] } })
+	const [last] = await sql<{ graded_by: string }>('select graded_by from review_log where card_id = $1 order by id desc limit 1', [card.id])
+	expect(last!.graded_by).toBe('ai')
 })
 
 test('Rewrite key ideas replaces ideas none of which is in use; once one is answered only questions can be rewritten, and never on Quick or without a key', async () => {

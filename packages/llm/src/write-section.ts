@@ -16,7 +16,7 @@ import {
 import type { ChatRequest } from './providers'
 
 /** Bump when the prompt or the checks change, so stored questions record which rules made them. */
-export const WRITE_SECTION_PROMPT_VERSION = 'questions-v10'
+export const WRITE_SECTION_PROMPT_VERSION = 'questions-v11'
 /** The most key ideas one section keeps; the rest are offered to the member to add. */
 export const MAX_IDEAS = 20
 /** The guide given to the model: about one idea per this many words. Not a limit. */
@@ -27,14 +27,14 @@ export const QUESTIONS_PER_IDEA: Record<QuestionAmount, number> = { quick: 0, st
 /** The level of each question an idea gets, in order: explain first, then apply. */
 const LEVELS_FOR: Record<number, string> = { 0: '', 1: 'explain or apply', 2: 'one at explain and one at apply' }
 
-const WRITTEN: QuestionType[] = ['short_answer']
+const WRITTEN: QuestionType[] = ['short_answer', 'worked_problem', 'predict_output', 'find_error']
 const CHOICE: QuestionType[] = ['mcq']
 const ALLOWED: Record<QuestionStyle, QuestionType[]> = { mixed: [...WRITTEN, ...CHOICE], written: WRITTEN, choice: CHOICE }
 /** How the model picks the type of each question, for each style. */
 const MIX: Record<QuestionStyle, string> = {
 	mixed:
-		'Pick each type from the content. Mostly short_answer; about a quarter mcq, used only where the wrong options are genuinely tempting: real misconceptions someone who half-understood would pick.',
-	written: 'Every question is short_answer.',
+		'Pick each type from the content, using the type guide. Mostly written types; about a quarter mcq, used only where the wrong options are genuinely tempting: real misconceptions someone who half-understood would pick.',
+	written: `Only these types, picked from the content: ${WRITTEN.join(', ')}.`,
 	choice: 'Every question is mcq.',
 }
 
@@ -72,14 +72,23 @@ Questions, on each key idea, at the amount the section asks for:
 - Never put the answer, its key terms, or a sentence of the text in the question. Never ask "explain X", "what is X", "define", "describe", "summarize" or "in your own words". Ask why, how, what if, predict or compare.
 - Use new examples, so the answer can't be copied from memory of the page. Never invent facts.
 - Types: ${MIX[style]}
+- Pick each question's type from what the section teaches. Code in the section calls for predict_output or find_error; formulas, quantities or algorithms with numbers call for worked_problem. Use short_answer for why and how, and where no other type fits.
+- Code goes in "code", exactly as typed, never in "prompt". Write new code, not the section's own example.
 - short_answer: "mustHave" lists 2 to 4 points a complete answer must make, each a short claim. "reference" is a model answer of 2 to 4 sentences that explains from first principles: start from the cause or mechanism the text teaches and reason to the answer. "misconceptions" lists wrong beliefs a half-understanding learner might state.
 - mcq: exactly 4 options of similar length and style, one right. Each wrong option is a real misconception that someone who half-understood would pick. No "all/none of the above". "whyWrong" has one entry per option: why that option is wrong, and "" for the right one. "explanation" says why the right one is right, from first principles.
+- worked_problem: a problem with new numbers whose answer is one number. "answer" is that number; "unit" its unit, or ""; "tolerance" how far off still counts (0 for exact whole numbers, enough for rounding otherwise). "solution" works it out step by step; "steps" lists the 2 to 4 key steps a correct working takes. Work it out yourself before you write "answer".
+- predict_output: new code of at most 15 lines in "code" that exercises the idea; "output" is exactly what it prints, at most 8 short lines. Trace the code line by line before you write "output"; never put the output in a comment. "explanation" says why it prints that.
+- find_error: flawed code in "code", or a flawed claim in quotes in the prompt, with one mistake a half-understanding learner would make. The learner says what is wrong and why. "mustHave" names what is wrong and why it is wrong (or the fix); "reference" and "misconceptions" as for short_answer.
 
-Write in the language of the text. Write plain text: no Markdown, no backticks.
+Write in the language of the text. Write plain text: no Markdown, no backticks. Put code on its own lines, exactly as it would be typed.
 
 Reply with JSON only, no prose and no code fence:
 {"ideas": [{"section": 1, "rank": 1, "idea": "…", "cue": "…?", "quote": "…", "questions": [{"type": "short_answer", "level": "explain", "content": {"prompt": "…", "reference": "…", "mustHave": ["…", "…"], "misconceptions": ["…"]}}]}]}
-An mcq question: {"type": "mcq", "level": "apply", "content": {"prompt": "…", "options": ["…", "…", "…", "…"], "answerIndex": 0, "explanation": "…", "whyWrong": ["", "…", "…", "…"]}}`
+Other question shapes ("code" is optional except where the type needs it):
+{"type": "mcq", "level": "apply", "content": {"prompt": "…", "code": "…", "options": ["…", "…", "…", "…"], "answerIndex": 0, "explanation": "…", "whyWrong": ["", "…", "…", "…"]}}
+{"type": "worked_problem", "level": "apply", "content": {"prompt": "…", "answer": 0.25, "unit": "…", "tolerance": 0.005, "solution": "…", "steps": ["…", "…"], "misconceptions": ["…"]}}
+{"type": "predict_output", "level": "apply", "content": {"prompt": "…", "code": "…", "output": "…", "explanation": "…"}}
+{"type": "find_error", "level": "analyze", "content": {"prompt": "…", "code": "…", "reference": "…", "mustHave": ["…", "…"], "misconceptions": ["…"]}}`
 
 const rewriteRules = (style: QuestionStyle) => `Task: rewrite-questions
 ${rules(style).split('\n').slice(1).join('\n')}
@@ -98,6 +107,9 @@ Reject a question when any of these hold:
 - It can be answered by restating one sentence of the text, or the prompt gives it away.
 - Its "mustHave" points are not what it asks for, or its "reference" only states the conclusion without reasoning.
 - Multiple choice: the marked option is not the one right answer, another option is also defensible, or a wrong option is one nobody who read the text would pick.
+- Worked problem: work it out yourself; reject it when "answer" is wrong, the tolerance is wrong, or the problem has more than one reasonable answer.
+- Predicted output: trace the code yourself; reject it when "output" is not exactly what it prints, or the code does not run.
+- Find the error: reject it when the code or claim has no mistake, more than one, or the mistake is not what "mustHave" names.
 
 Reply with JSON only: {"checks": [{"id": 1, "verdict": "keep" | "reject", "problems": ["…"]}]}`
 

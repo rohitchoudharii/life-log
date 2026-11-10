@@ -1,4 +1,5 @@
 import type { AnswerResult, AskItem } from '@life-log-club/contract'
+import { parseNumber } from '@life-log-club/domain'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { quiet } from './books'
@@ -93,12 +94,13 @@ export function GuessFirstSwitch({ className = '' }: { className?: string }) {
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
 
 /**
- * One question or cue: written, or a choice of options. The confidence buttons are the submit, so
+ * One question or cue: written, a choice of options, a number with its working, or the output of
+ * a piece of code. The confidence buttons are the submit, so
  * saying how sure you are costs no click; I don't know is an honest miss. The answer id is picked
  * once, so a retry of the same answer counts once. With `keys`, 1 to 3 pick the confidence once
  * the box is left, and A to D pick an option. With `selfCheck` (no AI key), the learner then ticks
- * the model answer's points they made, and a written answer is graded from the ticks; a choice is
- * always graded against its key.
+ * the model answer's points they made, and a written answer is graded from the ticks; a choice, a
+ * number and an output are always checked against their key.
  */
 export function QuestionForm({
 	item,
@@ -109,7 +111,7 @@ export function QuestionForm({
 	onAnswered,
 	onError,
 }: {
-	item: Pick<AskItem, 'cardId' | 'questionId' | 'prompt' | 'code'> & { options?: string[] | null }
+	item: Pick<AskItem, 'cardId' | 'questionId' | 'prompt' | 'code'> & { options?: string[] | null; type?: string | null; unit?: string | null }
 	mode: 'recall' | 'review' | 'practice'
 	attemptId?: string
 	keys?: boolean
@@ -120,11 +122,15 @@ export function QuestionForm({
 }) {
 	const [answerId] = useState(() => crypto.randomUUID())
 	const [text, setText] = useState('')
+	const [working, setWorking] = useState('')
 	const [picked, setPicked] = useState<number | null>(null)
 	const [guess, setGuess] = useState('')
 	const [guessed, setGuessed] = useState(false)
 	const [checking, setChecking] = useState<{ confidence: Confidence } | null>(null)
 	const { options } = item
+	// A worked problem is answered with a number, a predicted output with exactly what the code prints.
+	const form = item.type === 'worked_problem' ? 'number' : item.type === 'predict_output' ? 'output' : options ? 'choice' : 'written'
+	const exact = form === 'number' || form === 'output'
 	const guessFirst = useGuessFirst().on
 	// With Guess first, the options wait behind the member's own few words.
 	const hidden = Boolean(options) && guessFirst && !guessed
@@ -135,9 +141,13 @@ export function QuestionForm({
 			if (item.questionId) {
 				const response = choice.skipped
 					? { skipped: true }
-					: options
+					: form === 'choice'
 						? { choice: picked, ...(guessed && guess.trim() && { guess: guess.trim() }) }
-						: { answer: text, ...(choice.made && { made: choice.made }) }
+						: form === 'number'
+							? { value: text.trim(), ...(working.trim() && { working: working.trim() }) }
+							: form === 'output'
+								? { output: text }
+								: { answer: text, ...(choice.made && { made: choice.made }) }
 				return client.review.answer({ ...base, ask: 'question', questionId: item.questionId, response, confidence: choice.confidence })
 			}
 			const response = choice.skipped ? { skipped: true as const } : { answer: text, ...(choice.made && { made: choice.made }) }
@@ -146,10 +156,12 @@ export function QuestionForm({
 		onSuccess: (result, choice) => onAnswered(result, { answerId, given: choice.skipped ? null : given, confidence: choice.confidence }),
 		onError: (error) => onError?.(error, given),
 	})
-	const empty = options ? picked === null : !text.trim()
+	// A number the check can't read is a slip of format, not of knowledge, so it is caught before it counts.
+	const unreadable = form === 'number' && text.trim() !== '' && parseNumber(text) === null
+	const empty = options ? picked === null : !text.trim() || unreadable
 	const pick = (confidence: Confidence) => {
 		if (empty || send.isPending) return
-		if (selfCheck && !options) setChecking({ confidence })
+		if (selfCheck && !options && !exact) setChecking({ confidence })
 		else send.mutate({ confidence })
 	}
 	useAnswerKeys(
@@ -215,6 +227,51 @@ export function QuestionForm({
 						</button>
 					))}
 				</div>
+			) : form === 'number' ? (
+				<div className="grid gap-3">
+					<label className="grid gap-1">
+						<span className="font-sans text-xs text-world-muted">Your answer, as a number</span>
+						<span className="flex items-center gap-2">
+							<input
+								aria-label="Your answer"
+								autoFocus
+								inputMode="decimal"
+								autoComplete="off"
+								maxLength={200}
+								value={text}
+								onChange={(e) => setText(e.target.value)}
+								className="w-48 rounded-2xl border border-world-line bg-world-card px-4 py-3 text-lg outline-none focus:border-world-accent"
+							/>
+							{item.unit && <span className="text-lg text-world-muted">{item.unit}</span>}
+						</span>
+						{unreadable && <span className="font-sans text-sm text-red">Write it as a number, such as 27 or 0.5.</span>}
+					</label>
+					<label className="grid gap-1">
+						<span className="font-sans text-xs text-world-muted">Your working (optional: it shows where a slip happened)</span>
+						<textarea
+							aria-label="Your working"
+							rows={3}
+							maxLength={4000}
+							value={working}
+							onChange={(e) => setWorking(e.target.value)}
+							className="w-full rounded-2xl border border-world-line bg-world-card p-4 leading-relaxed outline-none focus:border-world-accent"
+						/>
+					</label>
+				</div>
+			) : form === 'output' ? (
+				<label className="grid gap-1">
+					<span className="font-sans text-xs text-world-muted">Exactly what it prints, one line per line</span>
+					<textarea
+						aria-label="What it prints"
+						autoFocus
+						rows={4}
+						maxLength={4000}
+						spellCheck={false}
+						value={text}
+						onChange={(e) => setText(e.target.value)}
+						className="w-full rounded-2xl border border-world-line bg-world-card p-4 font-mono text-base leading-relaxed outline-none focus:border-world-accent"
+					/>
+				</label>
 			) : (
 				<textarea
 					aria-label="Your answer"
@@ -376,14 +433,30 @@ export function RevealTile({
 	const { reveal } = result
 	// A cue's one point is the model answer itself; the verdict already says whether it was made.
 	const points = reveal.points.length === 1 && reveal.points[0]!.point === reveal.reference ? [] : reveal.points
-	const { choice } = reveal
-	const answered = choice ? choice.picked !== null : given !== null
+	const { choice, exact } = reveal
+	const answered = choice ? choice.picked !== null : exact ? exact.given !== null : given !== null
+	// Output is compared line by line, so it reads in the code's own type.
+	const mono = exact?.kind === 'output' ? 'font-mono text-sm' : ''
 	const verdict = result.overridden ? 'Counted as right' : result.correct ? 'Right' : !answered ? 'Not answered' : 'Not quite'
 	return (
 		<div className="grid gap-3 rounded-2xl border border-world-line bg-world-card p-4" data-testid="result">
 			<p className={`font-sans text-sm font-semibold ${result.correct ? 'text-path' : 'text-red'}`}>{verdict}</p>
 			{prompt && <p className="text-lg leading-snug">{prompt}</p>}
-			{given !== null && !choice && <p className="whitespace-pre-wrap text-world-muted">You wrote: {given}</p>}
+			{given !== null && !choice && !exact && <p className="whitespace-pre-wrap text-world-muted">You wrote: {given}</p>}
+			{exact && (
+				<dl className="grid gap-2 sm:grid-cols-2">
+					<div className="grid gap-1 rounded-xl border border-path p-3">
+						<dt className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">Right answer</dt>
+						<dd className={`whitespace-pre-wrap ${mono}`}>{exact.expected}</dd>
+					</div>
+					{exact.given !== null && (
+						<div className={`grid gap-1 rounded-xl border p-3 ${result.correct ? 'border-path' : 'border-red'}`}>
+							<dt className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">You wrote</dt>
+							<dd className={`whitespace-pre-wrap ${mono}`}>{exact.given}</dd>
+						</div>
+					)}
+				</dl>
+			)}
 			{choice?.guess && <p className="whitespace-pre-wrap text-world-muted">You guessed: {choice.guess}</p>}
 			{choice && (
 				<ul className="grid gap-2" aria-label="Options">
@@ -418,7 +491,7 @@ export function RevealTile({
 			)}
 			{reveal.reference && (
 				<p>
-					<span className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">{choice ? 'Why ' : 'Model answer '}</span>
+					<span className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">{choice ? 'Why ' : exact?.kind === 'number' ? 'Worked solution ' : exact ? 'Why it prints that ' : 'Model answer '}</span>
 					{reveal.reference}
 				</p>
 			)}

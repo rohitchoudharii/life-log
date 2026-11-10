@@ -117,7 +117,47 @@ describe('writeSection', () => {
 
 		const onlyWritten = await writeSection(scripted(reply).complete, [section], { amount: 'standard', style: 'written', qualityCheck: false })
 		expect(onlyWritten.ideas[0]!.questions).toEqual([])
-		expect(onlyWritten.rejected.map((r) => r.reasons.join())).toContain('type must be one of short_answer')
+		expect(onlyWritten.rejected.map((r) => r.reasons.join())).toContain('type must be one of short_answer, worked_problem, predict_output, find_error')
+	})
+
+	it('keeps a worked problem, a predicted output and a find-the-error question in Written, and asks for them where the text has numbers or code', async () => {
+		const worked = {
+			type: 'worked_problem',
+			level: 'apply',
+			content: {
+				prompt: 'A learner reviews a card at 1, 3 and 9 days, each gap three times the last. On which day is the fourth review?',
+				answer: 27,
+				unit: 'days',
+				tolerance: 0,
+				solution: 'Each gap is three times the one before, so the next gap after day 9 is 18 days, which gives day 27.',
+				steps: ['multiply the last gap by three', 'add it to day 9'],
+			},
+		}
+		const output = {
+			type: 'predict_output',
+			level: 'apply',
+			content: { prompt: 'What does this print?', code: 'let gap = 1\nfor (let i = 0; i < 3; i++) gap *= 2\nconsole.log(gap)', output: '8', explanation: 'The gap doubles three times: 2, 4, then 8.' },
+		}
+		const error = {
+			type: 'find_error',
+			level: 'analyze',
+			content: {
+				prompt: 'A student says: "Rereading the chapter three times is as good as testing myself once." What is wrong with that claim?',
+				reference: 'Rereading feels fluent but asks for no retrieval, and the effort of retrieval is what makes memory last.',
+				mustHave: ['rereading involves no effortful retrieval', 'retrieval effort is what strengthens memory'],
+				misconceptions: ['more exposure is the same as practice'],
+			},
+		}
+		const prompts: string[] = []
+		const script = scripted({ 'write-section': { ideas: [idea(1, { questions: [worked] }), idea(2, { questions: [output] }), idea(3, { questions: [error] })] } })
+		const complete: Complete = (purpose, request) => {
+			prompts.push(request('m').system)
+			return script.complete(purpose, request)
+		}
+		const written = await writeSection(complete, [section], { amount: 'standard', style: 'written', qualityCheck: false })
+		expect(written.rejected).toEqual([])
+		expect(written.ideas.flatMap((i) => i.questions.map((q) => q.type))).toEqual(['worked_problem', 'predict_output', 'find_error'])
+		expect(prompts[0]).toMatch(/Code in the section calls for predict_output or find_error; formulas, quantities or algorithms with numbers call for worked_problem/)
 	})
 
 	it('writes fresh questions on existing ideas for Rewrite, at the amount, and drops one like a question asked before', async () => {

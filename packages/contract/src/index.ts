@@ -156,6 +156,8 @@ export const Reveal = z.object({
 			guess: z.string().nullable().optional(),
 		})
 		.optional(),
+	/** For a worked problem or predicted output: the right answer and the learner's, as typed. */
+	exact: z.object({ kind: z.enum(['number', 'output']), expected: z.string(), given: z.string().nullable() }).optional(),
 })
 export type Reveal = z.infer<typeof Reveal>
 export const AnswerResult = z.object({
@@ -178,6 +180,10 @@ export const AskItem = z.object({
 	code: z.string().nullable(),
 	/** A multiple-choice question's options, in the order shown; null for a written one. */
 	options: z.array(z.string()).nullable(),
+	/** The question's type, which says how it is answered; null for a cue, which is written. */
+	type: z.string().nullable(),
+	/** A worked problem's unit, shown by the answer box; null otherwise. */
+	unit: z.string().nullable(),
 	answered: z.boolean(),
 })
 export type AskItem = z.infer<typeof AskItem>
@@ -323,6 +329,8 @@ export const ReviewItem = z.object({
 			code: z.string().nullable(),
 			/** A multiple-choice question's options; null for a written one. */
 			options: z.array(z.string()).nullable(),
+			/** A worked problem's unit, shown by the answer box; null otherwise. */
+			unit: z.string().nullable(),
 		}),
 		z.object({ kind: z.literal('cue'), prompt: z.string() }),
 		z.object({ kind: z.literal('self'), prompt: z.string() }),

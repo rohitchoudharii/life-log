@@ -630,6 +630,76 @@ test('Multiple choice in Review: options stored shuffled, shown after a typed gu
 	await proof(page, testInfo, 'calibration-progress')
 })
 
+test('A worked problem and a predicted output in Review: a number box with its unit and optional working, a box for the output, the right answer beside the member’s', async ({ page }, testInfo) => {
+	const { readingId, ids } = await openWithKey(page)
+	await stay(page)
+	await expect.poll(() => writeStatus(ids[0]!), { timeout: 15_000 }).toBe('ready')
+	const [idea, other] = await ideasOf(ids[0]!)
+	// Swap the written questions for one of each exact kind, so the test knows what is asked.
+	await sql('update questions set retired_at = now() where card_id in ($1, $2)', [idea!.id, other!.id])
+	const add = (cardId: string, type: string, content: Record<string, unknown>) =>
+		sql("insert into questions (user_id, card_id, type, level, content) select user_id, $2, $3, 'apply', $4 from readings where id = $1", [readingId, cardId, type, content])
+	await add(idea!.id, 'worked_problem', {
+		prompt: 'Review gaps of 1, 3 and 9 days each triple. On which day is the next review?',
+		answer: 27,
+		unit: 'days',
+		tolerance: 0,
+		solution: 'Each gap is three times the last, so the gap after day 9 is 18 days, and 9 + 18 gives day 27.',
+		steps: ['triple the previous interval', 'add the interval to the previous review'],
+	})
+	await add(other!.id, 'predict_output', {
+		prompt: 'What does this print?',
+		code: 'let gap = 1\nfor (const day of [1, 2, 3]) {\n  gap = gap * 2\n  console.log(day, gap)\n}',
+		output: '1 2\n2 4\n3 8',
+		explanation: 'The gap doubles once a day, starting from 1, so it is 2, 4, then 8.',
+	})
+	await sql("update cards set started_at = now(), level = 1, due_at = now() - interval '2 seconds' where id = $1", [idea!.id])
+	await sql("update cards set started_at = now(), level = 1, due_at = now() - interval '1 second' where id = $1", [other!.id])
+
+	// A worked problem: the number in its own box, with its unit, and room for the working.
+	await page.goto('/mind/review')
+	await expect(page.getByTestId('question')).toHaveText('Review gaps of 1, 3 and 9 days each triple. On which day is the next review?')
+	await expect(page.getByText('days', { exact: true })).toBeVisible()
+	const answerBox = page.getByLabel('Your answer', { exact: true })
+	// A number in words is a slip of format, not of knowledge: it is caught before it counts.
+	await answerBox.fill('twenty-seven')
+	await expect(page.getByText('Write it as a number, such as 27 or 0.5.')).toBeVisible()
+	await expect(page.getByRole('button', { name: 'Sure', exact: true })).toBeDisabled()
+	await proof(page, testInfo, 'worked-unreadable')
+	// A slip in the last step: the working was right until the addition.
+	await answerBox.fill('28')
+	await expect(page.getByText('Write it as a number, such as 27 or 0.5.')).toHaveCount(0)
+	await page.getByLabel('Your working').fill('Triple the previous interval to get 18, then add the interval to the previous review on day 9: 9 + 18 = 28.')
+	await proof(page, testInfo, 'worked-ask')
+	await page.getByRole('button', { name: 'Sure', exact: true }).click()
+	const result = page.getByTestId('result')
+	// The right answer stands beside the member's, and the working is marked against the key steps.
+	await expect(result).toContainText('Not quite')
+	await expect(result.getByRole('definition').first()).toHaveText('27 days')
+	await expect(result.getByRole('definition').nth(1)).toHaveText('28')
+	await expect(result).toContainText('Worked solution')
+	await expect(result).toContainText('triple the previous interval')
+	await expect(result.getByRole('button', { name: 'Count it as right' })).toBeVisible()
+	await proof(page, testInfo, 'worked-wrong')
+	expect(await sql('select graded_by, correct, response from review_log where card_id = $1', [idea!.id])).toEqual([
+		{ graded_by: 'ai', correct: false, response: { value: '28', working: 'Triple the previous interval to get 18, then add the interval to the previous review on day 9: 9 + 18 = 28.' } },
+	])
+	await page.getByRole('button', { name: 'Next' }).click()
+
+	// A predicted output: the code, and a box for exactly what it prints. Spacing does not count.
+	await expect(page.getByTestId('question')).toHaveText('What does this print?')
+	await expect(page.getByText('console.log(day, gap)')).toBeVisible()
+	await page.getByLabel('What it prints').fill('1 2\n2  4\n3 8')
+	await proof(page, testInfo, 'output-ask')
+	await page.getByRole('button', { name: 'Think so' }).click()
+	await expect(result).toContainText('Right')
+	await expect(result).toContainText('Why it prints that')
+	await expect(result).toContainText('The gap doubles once a day')
+	await expect(result.getByRole('button', { name: 'Count it as right' })).toHaveCount(0)
+	await proof(page, testInfo, 'output-right')
+	expect(await sql('select graded_by, correct from review_log where card_id = $1', [other!.id])).toEqual([{ graded_by: 'code', correct: true }])
+})
+
 test('Settings → Questions sets how many and which kinds; Rewrite questions writes new ones for the same ideas and keeps every answer and schedule', async ({ page }, testInfo) => {
 	const { readingId, ids } = await openWithKey(page)
 	await stay(page)

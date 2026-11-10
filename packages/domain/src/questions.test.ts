@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { answerIdea, pickQuestion } from './ideas'
-import { type Grade, gradeResponse, orderForTest, parseQuestionContent, scoreRubric, shuffleMcq, toPrompt, withConfidence } from './questions'
+import { type Grade, gradeResponse, normalizeOutput, orderForTest, parseNumber, parseQuestionContent, scoreRubric, shuffleMcq, toPrompt, withConfidence } from './questions'
 import { stepsThenFsrs } from './scheduler'
 
 // Ported from the previous app (packages/core/src/core.test.ts at 4051df5^).
@@ -73,6 +73,56 @@ describe('multiple choice questions', () => {
 		// Confidence only lowers credit: a wrong answer stays a miss however it was rated.
 		expect(withConfidence(wrong, 'guessing')).toMatchObject({ correct: false, rating: 'again' })
 		expect(withConfidence(wrong, 'sure')).toMatchObject({ correct: false, rating: 'again' })
+	})
+})
+
+// Ported from the previous app (packages/core/src/core.test.ts at 4051df5^, "exact question types").
+describe('exact question types', () => {
+	const noJudge = async () => {
+		throw new Error('judge must not be called')
+	}
+
+	it('reads the number an answer starts with, ignoring units and thousands commas', () => {
+		expect(parseNumber('1,024 bytes')).toBe(1024)
+		expect(parseNumber('3/4')).toBe(0.75)
+		expect(parseNumber('-3e-4 s')).toBe(-0.0003)
+		expect(parseNumber('about 5')).toBeNull()
+	})
+
+	it('grades a worked problem by its number, within the tolerance, and judges the working only when given', async () => {
+		const wp = { prompt: 'A 4-head layer with d_model 512: what is d_k?', answer: 2.5, tolerance: 0.05, unit: 'ms', solution: 's', steps: ['a', 'b'], misconceptions: [] }
+		expect(toPrompt('worked_problem', wp)).toEqual({ type: 'worked_problem', prompt: { prompt: wp.prompt, code: undefined, unit: 'ms' } })
+		expect(await gradeResponse('worked_problem', wp, { value: '2.54 ms' }, noJudge)).toMatchObject({ correct: true, rating: 'good', reveal: { exact: { expected: '2.5 ms', given: '2.54 ms' } } })
+		expect(await gradeResponse('worked_problem', wp, { value: '2.56' }, noJudge)).toMatchObject({ correct: false, rating: 'again' })
+		expect(await gradeResponse('worked_problem', wp, { value: 'two and a half' }, noJudge)).toMatchObject({ correct: false, reveal: { exact: { given: 'two and a half' } } })
+		// A wrong number stays wrong however good the working; the working only explains where it went wrong.
+		const judged = await gradeResponse('worked_problem', wp, { value: '3', working: 'w' }, async (input) => {
+			expect(input.mustHave).toEqual(['a', 'b'])
+			return { score: 4, feedback: 'Step two slipped.', points: ['covered', 'covered'] }
+		})
+		expect(judged).toMatchObject({ correct: false, rating: 'again', reveal: { feedback: 'Step two slipped.' } })
+		// Clean working on a right number makes it easy; a judge that fails leaves the number to decide.
+		expect(await gradeResponse('worked_problem', wp, { value: '2.5', working: 'w' }, async () => ({ score: 4, feedback: '' }))).toMatchObject({ rating: 'easy' })
+		expect(await gradeResponse('worked_problem', wp, { value: '2.5', working: 'w' }, noJudge)).toMatchObject({ correct: true, rating: 'good' })
+		expect(await gradeResponse('worked_problem', wp, { skipped: true }, noJudge)).toMatchObject({ correct: false, rating: 'again', reveal: { exact: { given: null } } })
+	})
+
+	it('grades predicted output ignoring spacing, but not line breaks', async () => {
+		const po = { prompt: 'What does it print?', code: 'print(1, 2)\nprint(3)', output: '1 2\n3', explanation: '' }
+		expect(toPrompt('predict_output', po)).toEqual({ type: 'predict_output', prompt: { prompt: po.prompt, code: po.code } })
+		expect(await gradeResponse('predict_output', po, { output: '\n1  2 \r\n3\n' }, noJudge)).toMatchObject({ correct: true })
+		expect(await gradeResponse('predict_output', po, { output: '1 2 3' }, noJudge)).toMatchObject({ correct: false, reveal: { exact: { expected: '1 2\n3' } } })
+		expect(normalizeOutput('a\t b\n\n')).toBe('a b')
+	})
+
+	it('judges a found error like a written answer, against what is wrong and why', async () => {
+		const fe = { prompt: 'What is wrong with this loop?', code: 'for i in range(1, n): total += i', reference: 'It skips n.', mustHave: ['the range stops before n', 'so n is never added'], misconceptions: [] }
+		expect(toPrompt('find_error', fe)).toEqual({ type: 'find_error', prompt: { prompt: fe.prompt, code: fe.code } })
+		const graded = await gradeResponse('find_error', fe, { answer: 'range stops at n-1' }, async (input) => {
+			expect(input).toMatchObject({ question: `${fe.prompt}\n\n${fe.code}`, mustHave: fe.mustHave })
+			return { score: 3, feedback: 'Close.', points: ['covered', 'vague'] }
+		})
+		expect(graded).toMatchObject({ correct: true, rating: 'good' })
 	})
 })
 
