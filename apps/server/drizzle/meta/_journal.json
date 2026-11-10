@@ -148,6 +148,13 @@
       "when": 1794280911779,
       "tag": "0020_words",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794282964828,
+      "tag": "0021_teach_sessions",
+      "breakpoints": true
     }
   ]
 }

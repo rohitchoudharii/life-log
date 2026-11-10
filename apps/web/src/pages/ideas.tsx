@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { client, errorMessage, orpc } from '../rpc'
+import { TeachBack } from '../teach'
 import { useToast } from '../toast'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -120,6 +121,7 @@ function IdeaCard({ card }: { card: SavedCard }) {
 						Open passage
 					</Link>
 				)}
+				{!editing && <TeachBack cardId={card.id} className={small} />}
 				{!editing && (
 					<button type="button" className={small} onClick={() => setEditing(true)}>
 						Edit

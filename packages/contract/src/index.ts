@@ -5,6 +5,7 @@ import {
 	EntryText,
 	EXPLAIN_KINDS,
 	GAP_BUCKETS,
+	MAX_TEACH_CHARS,
 	MAX_WORD_CHARS,
 	WORD_TESTS,
 	Note,
@@ -88,6 +89,30 @@ export type Word = z.infer<typeof Word>
 /** A word the AI found worth learning in a section, offered in the reader to keep. */
 export const Suggestion = z.object({ word: z.string(), form: z.string(), sentence: z.string(), meaning: z.string() })
 export type Suggestion = z.infer<typeof Suggestion>
+
+/**
+ * A teach-back: the learner explains an idea to an AI student, who asks up to 3 follow-ups and
+ * then sums up. `topic` is the card's cue, what the learner teaches. `result` comes with the
+ * summing up, and only then the idea and its quote, to compare. `dueAt` is set when gaps brought
+ * the card back sooner.
+ */
+export const TeachSession = z.object({
+	id: z.uuid(),
+	cardId: z.uuid(),
+	topic: z.string(),
+	messages: z.array(z.object({ role: z.enum(['learner', 'student']), text: z.string() })),
+	result: z
+		.object({
+			gaps: z.array(z.string()),
+			strengths: z.array(z.string()),
+			summary: z.string(),
+			idea: z.string(),
+			quote: z.string().nullable(),
+			dueAt: z.date().nullable(),
+		})
+		.nullable(),
+})
+export type TeachSession = z.infer<typeof TeachSession>
 
 /** The longest passage Explain takes: a few paragraphs. */
 export const MAX_EXPLAIN_CHARS = 4000
@@ -918,6 +943,29 @@ export const contract = {
 		/** Takes a word out of the vocabulary and the review queue; `restore` brings it back (undo). */
 		remove: oc.input(z.object({ id: z.uuid() })).output(Ok),
 		restore: oc.input(z.object({ id: z.uuid() })).output(Word),
+	},
+	teach: {
+		/**
+		 * Starts teaching an idea back, with the member's own AI key. Only idea cards can be taught.
+		 * The client picks the id; starting again with it returns the same session.
+		 */
+		start: oc.input(z.object({ id: z.uuid(), cardId: z.uuid() })).output(TeachSession),
+		/**
+		 * The learner's next message, and the student's turn: a follow-up, or the summing up after the
+		 * third. `turn` counts the learner's earlier messages, so a retried request is not sent twice;
+		 * after a failed AI call, the same turn asks the student again. Gaps bring the card back within
+		 * 10 minutes, with its memory unchanged.
+		 */
+		reply: oc
+			.input(
+				z.object({
+					id: z.uuid(),
+					turn: z.int().min(0).max(3),
+					text: z.string().trim().min(1, 'Write your explanation first.').max(MAX_TEACH_CHARS, 'Keep it shorter: a few paragraphs at most.'),
+				}),
+			)
+			.output(TeachSession),
+		get: oc.input(z.object({ id: z.uuid() })).output(TeachSession),
 	},
 }
 

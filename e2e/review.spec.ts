@@ -675,6 +675,74 @@ test('a word is tested by its level: the blank twice, checked in code even witho
 	expect(await code(client.review.answer({ answerId: randomUUID(), cardId: idea.id, mode: 'practice', ask: 'word', response: { answer: 'x' }, confidence: null }))).toBe('BAD_REQUEST')
 })
 
+test('teaching an idea back: three follow-ups then a summing up in at most 4 calls, never giving the idea away; gaps bring the card back within 10 minutes', async () => {
+	const { client, user } = await newMember()
+	const idea = await client.review.add({ id: randomUUID(), kind: 'idea', prompt: 'Why does effortful recall help?', answer: 'Effortful recall strengthens memories more than rereading them.' })
+	const start = (cardId = idea.id, id: string = randomUUID()) => client.teach.start({ id, cardId })
+	expect(await code(start())).toBe('BAD_REQUEST')
+	await client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })
+	await sql("update cards set due_at = now() + interval '5 days' where id = $1", [idea.id])
+	const [before] = await sql<{ state: unknown }>('select state from cards where id = $1', [idea.id])
+
+	const session = await start()
+	expect(session).toEqual({ id: session.id, cardId: idea.id, topic: 'Why does effortful recall help?', messages: [], result: null })
+	expect(await start(idea.id, session.id)).toEqual(session)
+	const reply = (turn: number, text: string, id = session.id) => client.teach.reply({ id, turn, text })
+
+	// A question that would quote the idea is replaced; sending the same turn again changes nothing.
+	const first = await reply(0, 'LEAK You have to work to bring it back.')
+	expect(first.messages).toEqual([
+		{ role: 'learner', text: 'LEAK You have to work to bring it back.' },
+		{ role: 'student', text: 'Can you say more about why?' },
+	])
+	expect(await reply(0, 'LEAK You have to work to bring it back.')).toEqual(first)
+	expect((await reply(1, 'Because the work is the point.')).messages.at(-1)).toEqual({ role: 'student', text: 'What happens if someone skips that step?' })
+	expect((await reply(2, 'Then it fades.')).messages.at(-1)).toEqual({ role: 'student', text: 'Can you give me an example from your own life?' })
+	// An earlier turn sent again is already answered.
+	expect(await code(reply(1, 'Out of turn.'))).toBe('ok')
+	const done = await reply(3, 'Quizzing myself before a talk.')
+	expect(done.messages).toHaveLength(7)
+	expect(done.result).toMatchObject({
+		gaps: ['Effortful recall strengthens memories more than rereading them.'],
+		strengths: ['You answered every question in your own words.'],
+		idea: 'Effortful recall strengthens memories more than rereading them.',
+		quote: null,
+	})
+	expect(done.result!.dueAt!.getTime() - Date.now()).toBeLessThanOrEqual(10 * 60_000)
+	const [after] = await sql<{ state: unknown; due_at: Date }>('select state, due_at from cards where id = $1', [idea.id])
+	expect(after!.due_at).toEqual(done.result!.dueAt)
+	expect(after!.state).toEqual(before!.state)
+	// Finished: sending again returns it as it is, with no more calls, and a fifth turn is refused.
+	expect(await reply(3, 'Again.')).toEqual(done)
+	expect(await client.teach.get({ id: session.id })).toEqual(done)
+	expect(await code(reply(4, 'One more.'))).toBe('BAD_REQUEST')
+	expect(await sql("select count(*)::int as n from ai_calls where user_id = $1 and purpose = 'teach-back'", [user.id])).toEqual([{ n: 4 }])
+
+	// Taught well: no gaps, and the schedule does not move.
+	await sql("update cards set due_at = now() + interval '5 days' where id = $1", [idea.id])
+	const good = await start()
+	for (const [turn, text] of ['Effortful recall strengthens memories', 'More than rereading them', 'Memories fade', 'Exams'].entries()) await reply(turn, text, good.id)
+	const taught = await client.teach.get({ id: good.id })
+	expect(taught.result).toMatchObject({ gaps: [], dueAt: null })
+	const [still] = await sql<{ due_at: Date }>('select due_at from cards where id = $1', [idea.id])
+	expect(still!.due_at.getTime() - Date.now()).toBeGreaterThan(4 * 86_400_000)
+
+	// The student fails once: the explanation is kept, and the same turn asks again.
+	const shaky = await start()
+	expect(await code(reply(1, 'Skipping ahead.', shaky.id))).toBe('CONFLICT')
+	expect(await code(reply(0, 'It just works. TEACH_FAILS', shaky.id))).toBe('SERVICE_UNAVAILABLE')
+	expect((await client.teach.get({ id: shaky.id })).messages).toEqual([{ role: 'learner', text: 'It just works. TEACH_FAILS' }])
+	expect((await reply(0, 'It just works. TEACH_FAILS', shaky.id)).messages).toHaveLength(2)
+
+	// Only ideas, and only the member's own.
+	const { word } = await client.words.add({ id: randomUUID(), form: 'lapse', sentence: 'After a long lapse, the habit came back.', meaning: 'a gap in time' })
+	expect(await code(start(word.id))).toBe('BAD_REQUEST')
+	const other = await newMember('Asha')
+	await other.client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })
+	expect(await code(other.client.teach.get({ id: session.id }))).toBe('NOT_FOUND')
+	expect(await code(other.client.teach.start({ id: randomUUID(), cardId: idea.id }))).toBe('NOT_FOUND')
+})
+
 test('Rewrite key ideas replaces ideas none of which is in use; once one is answered only questions can be rewritten, and never on Quick or without a key', async () => {
 	const { client, user } = await newMember()
 	await client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })

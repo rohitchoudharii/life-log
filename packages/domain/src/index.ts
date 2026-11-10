@@ -5,6 +5,7 @@ export * from './progress'
 export * from './quality'
 export * from './questions'
 export * from './scheduler'
+export * from './teach'
 export * from './words'
 
 export const PILLARS = ['mind', 'body', 'heart', 'path'] as const

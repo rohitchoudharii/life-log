@@ -1,4 +1,4 @@
-import type { Block, Confidence, Note, PointStatus, QuestionLevel, Rating, RecallStatus, SchedulerState, SectionKind, Term, WriteStatus } from '@life-log-club/domain'
+import type { Block, Confidence, Note, PointStatus, QuestionLevel, Rating, RecallStatus, SchedulerState, SectionKind, TeachMessage, Term, WriteStatus } from '@life-log-club/domain'
 import type { Reveal } from '@life-log-club/contract'
 import { type AnyColumn, sql } from 'drizzle-orm'
 import {
@@ -555,6 +555,32 @@ export type RecallItem = { cardId: string; questionId: string | null }
  * One recall check: the member's brain dump after reading one or more sections, and how it
  * covered their key ideas. The dump can be personal, so it is stored encrypted.
  */
+/**
+ * A teach-back on one idea card: the learner explains it to an AI student, who asks up to 3
+ * follow-ups and then sums up the gaps and strengths.
+ */
+export const teachSessions = pgTable(
+	'teach_sessions',
+	{
+		/** Chosen by the client, so a retried start can't make a second session. */
+		id: uuid().primaryKey(),
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		cardId: uuid()
+			.notNull()
+			.references(() => cards.id, { onDelete: 'cascade' }),
+		messages: jsonb().$type<TeachMessage[]>().notNull().default([]),
+		/** The summing up; null while the session is open. */
+		result: jsonb().$type<{ gaps: string[]; strengths: string[]; summary: string }>(),
+		/** Set when gaps brought the card back sooner: its due time after that. */
+		dueAt: timestamp({ withTimezone: true }),
+		finishedAt: timestamp({ withTimezone: true }),
+		createdAt: createdAt(),
+	},
+	(t) => [index().on(t.cardId), ownRows(t.userId)],
+)
+
 export const recallAttempts = pgTable(
 	'recall_attempts',
 	{

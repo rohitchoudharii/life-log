@@ -167,7 +167,37 @@ function defineWord(user: string) {
 	return { word: form.toLowerCase(), meaning: `what "${form.toLowerCase()}" means here`, sentence: `She used ${form} in a sentence.` }
 }
 
+const FOLLOW_UPS = ['But why does that happen?', 'What happens if someone skips that step?', 'Can you give me an example from your own life?']
+
+/**
+ * For "Task: teach-back": the student's turn. While follow-ups are left it asks the next one in
+ * order; a learner message with LEAK makes it ask one that gives the idea away, which the app
+ * must replace. Then it sums up: the idea is a gap unless the learner's messages share most of
+ * its long words.
+ */
+function teachBack(user: string) {
+	const idea = user.split('<idea>\n')[1]?.split('\n</idea>')[0] ?? ''
+	const conversation = user.split('<conversation>\n')[1]?.split('\n</conversation>')[0] ?? ''
+	const learner = conversation.split('\n\n').filter((m) => m.startsWith('Learner: '))
+	const asked = conversation.split('\n\n').filter((m) => m.startsWith('Student: ')).length
+	if (!user.includes('no follow-up questions left')) {
+		if (learner.at(-1)?.includes('LEAK')) return { kind: 'question', text: `So you mean that ${idea}?` }
+		return { kind: 'question', text: FOLLOW_UPS[asked] }
+	}
+	const said = new Set(longWords(learner.join(' ')))
+	const words = longWords(idea)
+	const shared = words.filter((w) => said.has(w)).length
+	const gaps = shared >= Math.max(2, words.length * 0.6) ? [] : [idea]
+	return {
+		kind: 'done',
+		gaps,
+		strengths: ['You answered every question in your own words.'],
+		summary: gaps.length ? 'You kept going when asked, but the core of the idea was missing. Work on why it holds.' : 'You taught it clearly and completely.',
+	}
+}
+
 function answer(system: string, user: string) {
+	if (system.startsWith('Task: teach-back')) return JSON.stringify(teachBack(user))
 	if (system.startsWith('Task: define-word')) return JSON.stringify(defineWord(user))
 	if (system.startsWith('Task: explain-passage')) return JSON.stringify(explainPassage(user))
 	if (system.startsWith('Task: judge-answer')) return JSON.stringify(judgeAnswer(user))
@@ -180,6 +210,8 @@ function answer(system: string, user: string) {
 	if (system.startsWith('Task: write-cue')) return JSON.stringify({ cue: 'What did you want to keep from this part?' })
 	return '{}'
 }
+
+const failedOnce = new Set<string>()
 
 const server = createServer(async (req, res) => {
 	const json = (status: number, body: unknown) => {
@@ -194,6 +226,11 @@ const server = createServer(async (req, res) => {
 		if (body.system.startsWith('Task: write-section')) await new Promise((r) => setTimeout(r, 1500))
 		// A test makes Explain fail by selecting this.
 		if (body.system.startsWith('Task: explain-passage') && body.messages[0].content.includes('<passage>\nEXPLAIN_FAILS')) return json(500, { error: { message: 'overloaded' } })
+		// A test makes the student fail once by ending its explanation with this; asking again works.
+		if (body.system.startsWith('Task: teach-back') && body.messages[0].content.includes('TEACH_FAILS\n</conversation>') && !failedOnce.has(body.messages[0].content)) {
+			failedOnce.add(body.messages[0].content)
+			return json(500, { error: { message: 'overloaded' } })
+		}
 		// A test makes the judge fail by writing this in its answer.
 		if (body.system.startsWith('Task: judge-answer') && body.messages[0].content.includes('JUDGE_FAILS')) return json(500, { error: { message: 'overloaded' } })
 		const text = answer(body.system, body.messages[0].content)

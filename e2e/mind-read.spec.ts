@@ -268,6 +268,9 @@ test('after reading, Recall asks one question per idea, missed ideas first, and 
 	await expect(wrongItem).toContainText('Missed')
 	await expect(wrongItem).toContainText('Not quite')
 	await expect(wrongItem).toContainText('Back in 10 minutes')
+	// A missed idea can be taught back; one brought back and answered right needs nothing more.
+	await expect(wrongItem.getByRole('button', { name: 'Teach it back' })).toBeVisible()
+	await expect(coveredItem.getByRole('button', { name: 'Teach it back' })).toHaveCount(0)
 	await proof(page, testInfo, 'recall-results')
 
 	// Each card started from its answer: its start level moved one up when right, one down (to no lower than 0) when wrong.
@@ -1553,4 +1556,75 @@ test('Words in Review: fill the blank with a hint, see the right word beside you
 	await expect(words.filter({ hasText: 'cramming' }).getByTestId('word-test')).toHaveText('· Next: fill it into its sentence')
 	await expect(words.filter({ hasText: 'lapse' }).getByTestId('word-test')).toHaveText('· Next: use it in a sentence of your own')
 	await proof(page, testInfo, 'words-next')
+})
+
+test('Teach it back after a miss in Review: explain the idea, answer the student’s three questions, then see the gaps beside the idea, and the card comes back in 10 minutes; without a key the button says so', async ({ page }, testInfo) => {
+	const email = await joinAs(page)
+	const id = crypto.randomUUID()
+	const idea = 'Effortful recall strengthens memories more than rereading them.'
+	expect((await api(page, 'review/add', { id, kind: 'idea', prompt: 'Why does effortful recall help?', answer: idea })).ok()).toBe(true)
+	// Saved from a reading, so it shows on Ideas under that reading.
+	const added = await api(page, 'readings/addText', { id: crypto.randomUUID(), title: 'Practice', text: '# Recall\n\nRecalling with effort makes a memory stronger than reading it again. Rereading feels easy, and that ease misleads.' })
+	const { json: reading } = (await added.json()) as { json: { id: string } }
+	await sql(
+		`update cards set reading_id = $2, section_id = (select id from sections where reading_id = $2 limit 1),
+		quote = 'Recalling with effort makes a memory stronger than reading it again.', due_at = now() - interval '1 second' where id = $1`,
+		[id, reading.id],
+	)
+
+	// Without a key, the button stays and says what it needs.
+	await page.goto('/mind/ideas')
+	const saved = page.getByTestId('saved-idea')
+	await expect(saved.getByRole('button', { name: 'Teach it back' })).toHaveCount(0)
+	await expect(saved.getByRole('link', { name: 'Teach it back · Needs your AI key.' })).toHaveAttribute('href', '/settings')
+	await proof(page, testInfo, 'ideas-no-key')
+	expect((await api(page, 'ai/saveKey', { provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })).ok()).toBe(true)
+
+	await page.goto('/mind/review')
+	await expect(page.getByTestId('question')).toHaveText('Why does effortful recall help?')
+	await page.getByLabel('Your answer').fill('Something about bananas')
+	await page.getByRole('button', { name: 'Sure', exact: true }).click()
+	await expect(page.getByTestId('result')).toContainText('Not quite')
+	await page.getByRole('button', { name: 'Teach it back' }).click()
+
+	const dialog = page.getByRole('dialog', { name: 'Teach it back' })
+	await expect(dialog.getByTestId('teach-topic')).toHaveText('Why does effortful recall help?')
+	await expect(dialog).toContainText('Explain it to a curious student who has not read it')
+	// The idea stays hidden until the student sums up.
+	await expect(dialog).not.toContainText(idea)
+	await dialog.getByLabel('Your explanation').fill('You have to work to bring it back, and that work is what makes it stay.')
+	await proof(page, testInfo, 'teach-start')
+	await dialog.getByRole('button', { name: 'Send' }).click()
+	const student = dialog.getByTestId('student')
+	await expect(student).toHaveCount(1)
+	await expect(student.first()).toHaveText('Student · question 1 of 3But why does that happen?')
+	await dialog.getByLabel('Your answer').fill('Because the brain keeps what it has to fetch.')
+	await dialog.getByLabel('Your answer').press('ControlOrMeta+Enter')
+	await expect(student.nth(1)).toContainText('What happens if someone skips that step?')
+	await proof(page, testInfo, 'teach-questions')
+	await dialog.getByLabel('Your answer').fill('Then it fades within days.')
+	await dialog.getByRole('button', { name: 'Send' }).click()
+	await expect(student.nth(2)).toContainText('question 3 of 3')
+	await dialog.getByLabel('Your answer').fill('Quizzing myself before a talk.')
+	await dialog.getByRole('button', { name: 'Send' }).click()
+
+	const result = dialog.getByTestId('teach-result')
+	await expect(result).toContainText('the core of the idea was missing')
+	await expect(result.getByTestId('strengths')).toHaveText('You answered every question in your own words.')
+	await expect(result.getByTestId('gaps')).toHaveText(idea)
+	await expect(result).toContainText(`The idea${idea}`)
+	await expect(result).toContainText('From the text: “Recalling with effort makes a memory stronger than reading it again.”')
+	await expect(result.getByTestId('teach-due')).toHaveText('Back in 10 minutes in Review, so you can fill the gaps while they are fresh.')
+	await expect(dialog.getByLabel('Your answer')).toHaveCount(0)
+	await proof(page, testInfo, 'teach-result')
+	expect(await sql("select count(*)::int as n from ai_calls where purpose = 'teach-back' and user_id = (select id from users where email = $1)", [email])).toEqual([{ n: 4 }])
+
+	await result.getByRole('button', { name: 'Done' }).click()
+	await expect(dialog).toHaveCount(0)
+	await expect(page.getByTestId('result')).toContainText('Not quite')
+
+	// From Ideas, with a key, one click opens it too.
+	await page.goto('/mind/ideas')
+	await saved.getByRole('button', { name: 'Teach it back' }).click()
+	await expect(dialog.getByLabel('Your explanation')).toBeFocused()
 })

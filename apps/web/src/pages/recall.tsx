@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { quiet } from '../books'
 import { backIn, GuessFirstSwitch, primary, QuestionForm, RevealTile } from '../answer'
 import { client, errorMessage, orpc } from '../rpc'
+import { TeachBack } from '../teach'
 import { ErrorText } from '../ui'
 import { SectionText } from './reader'
 
@@ -279,6 +280,11 @@ function Results({ attempt }: { attempt: RecallAttempt }) {
 								{idea.quote && <p className="text-sm text-world-muted italic">From the text: “{idea.quote}”</p>}
 								<p className="font-sans text-xs text-world-muted">{backIn(idea.dueAt)}</p>
 							</>
+						)}
+						{(idea.status !== 'covered' || (idea.answer && !idea.answer.correct)) && (
+							<div>
+								<TeachBack cardId={idea.cardId} />
+							</div>
 						)}
 					</li>
 				))}

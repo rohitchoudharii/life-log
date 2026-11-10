@@ -7,6 +7,7 @@ import { type ReactNode, useState } from 'react'
 import { type Answered, GuessFirstSwitch, primary, QuestionForm, RevealTile, SelfRating } from '../answer'
 import { quiet } from '../books'
 import { client, errorMessage, orpc } from '../rpc'
+import { TeachBack } from '../teach'
 import { ErrorText } from '../ui'
 
 const BATCH = 20
@@ -106,6 +107,12 @@ function ReviewCard({ item, mode, onDone }: { item: ReviewItem; mode: 'review' |
 					showDue={mode === 'review'}
 					onOverride={(result) => setPhase({ kind: 'result', record: { ...record, result } })}
 				/>
+				{/* After a miss, explaining the idea in one's own words shows what is not understood yet. */}
+				{item.kind === 'idea' && !record.result.correct && (
+					<div>
+						<TeachBack cardId={item.cardId} />
+					</div>
+				)}
 				{questionId && <ReportProblem questionId={questionId} answerId={record.answerId} onReported={() => setPhase({ kind: 'reported', answered: true })} />}
 				<Next onClick={() => onDone(record)} />
 			</>
