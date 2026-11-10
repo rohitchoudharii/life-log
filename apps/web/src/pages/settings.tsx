@@ -1,4 +1,4 @@
-import type { AiKey } from '@life-log-club/contract'
+import type { AiKey, Preferences } from '@life-log-club/contract'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -102,10 +102,7 @@ export function Settings() {
 			</div>
 			<AiUsage />
 			<ReviewTarget />
-			<div className="grid gap-3 rounded-2xl bg-white p-5 ring-1 ring-ink/5">
-				<h2 className="text-lg font-semibold">Questions</h2>
-				<GuessFirstSwitch />
-			</div>
+			<QuestionSettings />
 			<div className="flex flex-wrap items-center gap-3 rounded-2xl bg-white p-5 ring-1 ring-ink/5">
 				<div className="mr-auto">
 					<h2 className="text-lg font-semibold">Account</h2>
@@ -119,6 +116,91 @@ export function Settings() {
 				</button>
 			</div>
 		</section>
+	)
+}
+
+/** One click on an option saves it. */
+function Choice<T extends string>({
+	legend,
+	name,
+	options,
+	value,
+	onPick,
+}: { legend: string; name: string; options: { value: T; label: string; hint: string }[]; value: T | undefined; onPick: (v: T) => void }) {
+	const picked = options.find((o) => o.value === value)
+	return (
+		<fieldset className="grid gap-2">
+			<legend className="mb-1.5 text-sm font-medium text-ink/80">{legend}</legend>
+			<div className="flex flex-wrap gap-2">
+				{options.map((o) => (
+					<label
+						key={o.value}
+						className="cursor-pointer rounded-lg border border-ink/15 px-3 py-1.5 text-sm has-[:checked]:border-navy has-[:checked]:bg-navy has-[:checked]:text-white has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-navy/40"
+					>
+						<input type="radio" name={name} className="sr-only" checked={value === o.value} onChange={() => onPick(o.value)} />
+						{o.label}
+					</label>
+				))}
+			</div>
+			{picked && <p className="text-sm text-ink/60">{picked.hint}</p>}
+		</fieldset>
+	)
+}
+
+const AMOUNTS = [
+	{ value: 'quick', label: 'Quick', hint: 'No written questions: each key idea comes back through its cue.' },
+	{ value: 'standard', label: 'Standard', hint: 'One question on each key idea, besides its cue. Best for most reading.' },
+	{ value: 'thorough', label: 'Thorough', hint: 'Two questions on each key idea: one on why, one applying it.' },
+] as const
+const KINDS = [
+	{ value: 'mixed', label: 'Mixed', hint: 'Mostly written answers, with multiple choice where the wrong options are tempting.' },
+	{ value: 'written', label: 'Written', hint: 'Written answers only. Harder, and the best for remembering.' },
+	{ value: 'choice', label: 'Choice', hint: 'Multiple choice only. Quicker, but recognising is easier than recalling.' },
+] as const
+
+/** How questions are written for newly read sections, and Guess first. Each choice saves at once. */
+function QuestionSettings() {
+	const queryClient = useQueryClient()
+	const prefs = useQuery(orpc.preferences.get.queryOptions())
+	// Each choice shows at once, without waiting for the save; a failed save shows the saved values again.
+	const [draft, setDraft] = useState<Partial<Preferences>>({})
+	const save = useMutation(
+		orpc.preferences.update.mutationOptions({
+			onError: () => setDraft({}),
+			onSuccess: (saved) => queryClient.setQueryData(orpc.preferences.get.queryKey(), saved),
+		}),
+	)
+	const change = (c: Partial<Preferences>) => {
+		setDraft((d) => ({ ...d, ...c }))
+		save.mutate(c)
+	}
+	const p = prefs.data && { ...prefs.data, ...draft }
+	return (
+		<div className="grid gap-4 rounded-2xl bg-white p-5 ring-1 ring-ink/5">
+			<div>
+				<h2 className="text-lg font-semibold">Questions</h2>
+				<p className="text-sm text-ink/60">For sections you read from now on. To change a section you read already, use Rewrite questions in its menu.</p>
+			</div>
+			<div className="grid gap-4" aria-disabled={!p}>
+				<Choice legend="How many" name="question-amount" options={[...AMOUNTS]} value={p?.questionAmount} onPick={(questionAmount) => change({ questionAmount })} />
+				<Choice legend="Kinds" name="question-style" options={[...KINDS]} value={p?.questionStyle} onPick={(questionStyle) => change({ questionStyle })} />
+				<label className="flex items-start gap-2 text-sm">
+					<input
+						type="checkbox"
+						className="mt-0.5 size-4 accent-navy"
+						checked={p?.qualityCheck ?? true}
+						disabled={!p}
+						onChange={(e) => change({ qualityCheck: e.target.checked })}
+					/>
+					<span>
+						<span className="font-medium">Check questions twice</span>
+						<span className="block text-ink/60">A second AI call checks each question and its answer before you see it. Fewer wrong questions, a little more use of your key.</span>
+					</span>
+				</label>
+				<GuessFirstSwitch />
+			</div>
+			<ErrorText>{save.error && errorMessage(save.error)}</ErrorText>
+		</div>
 	)
 }
 

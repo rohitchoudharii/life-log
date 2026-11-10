@@ -1,4 +1,16 @@
-import { Block, CONFIDENCES, EntryData, EntryText, GAP_BUCKETS, Note, PILLARS, RECALL_STATUSES, WRITE_STATUSES } from '@life-log-club/domain'
+import {
+	Block,
+	CONFIDENCES,
+	EntryData,
+	EntryText,
+	GAP_BUCKETS,
+	Note,
+	PILLARS,
+	QUESTION_AMOUNTS,
+	QUESTION_STYLES,
+	RECALL_STATUSES,
+	WRITE_STATUSES,
+} from '@life-log-club/domain'
 import { oc } from '@orpc/contract'
 import { z } from 'zod'
 
@@ -84,6 +96,12 @@ export const Preferences = z.object({
 	desiredRetention: z.number().min(0.8, 'Choose a target of 80% or more.').max(0.95, 'Choose a target of 95% or less.'),
 	/** Guess first: type a few words before multiple-choice options show. On by default. */
 	guessFirst: z.boolean(),
+	/** How many questions each key idea gets: Quick none (its cue only), Standard one, Thorough two. */
+	questionAmount: z.enum(QUESTION_AMOUNTS),
+	/** Which kinds: Mixed (mostly written, some multiple choice), Written or Choice. */
+	questionStyle: z.enum(QUESTION_STYLES),
+	/** Check questions twice: a second AI call checks each question before it is kept. */
+	qualityCheck: z.boolean(),
 })
 export type Preferences = z.infer<typeof Preferences>
 
@@ -430,6 +448,11 @@ export const Section = z.object({
 	writeStatus: z.enum(WRITE_STATUSES),
 	/** How many key ideas the AI found in it. */
 	keyIdeas: z.int(),
+	/**
+	 * Whether any of those key ideas has been answered or is in review. Only a section where none
+	 * has can have its key ideas written again.
+	 */
+	ideasInUse: z.boolean(),
 })
 export type Section = z.infer<typeof Section>
 
@@ -592,6 +615,13 @@ export const contract = {
 		 * back as it was before it.
 		 */
 		report: oc.input(z.object({ id: z.uuid(), reason: z.enum(REPORT_REASONS), answerId: z.uuid().optional() })).output(Ok),
+		/**
+		 * Rewrite questions: retires the section's questions and writes new ones in the background
+		 * for the same key ideas, at the member's amount and kinds. Every answer and schedule stays.
+		 * With `ideas`, on a section none of whose key ideas is in use yet (`Section.ideasInUse`),
+		 * the key ideas are written again too. The section is `queued`, then `writing`, until done.
+		 */
+		rewrite: oc.input(z.object({ sectionId: z.uuid(), ideas: z.boolean().default(false) })).output(Ok),
 	},
 	readings: {
 		/**

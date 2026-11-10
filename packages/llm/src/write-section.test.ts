@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseJudgeVerdict } from './judge'
 import { parseRecallVerdict } from './recall'
-import { type Complete, MAX_IDEAS, writeSection } from './write-section'
+import { type Complete, MAX_IDEAS, writeQuestions, writeSection } from './write-section'
 
 const section = {
 	title: 'Spacing',
@@ -118,6 +118,23 @@ describe('writeSection', () => {
 		const onlyWritten = await writeSection(scripted(reply).complete, [section], { amount: 'standard', style: 'written', qualityCheck: false })
 		expect(onlyWritten.ideas[0]!.questions).toEqual([])
 		expect(onlyWritten.rejected.map((r) => r.reasons.join())).toContain('type must be one of short_answer')
+	})
+
+	it('writes fresh questions on existing ideas for Rewrite, at the amount, and drops one like a question asked before', async () => {
+		const asked = 'Why would a student who waits 1 days before testing keep more?'
+		const { complete, calls } = scripted({
+			'rewrite-questions': {
+				questions: [
+					{ id: 1, ...question('How would a week between tests change what a learner keeps?') },
+					// The same question as before, reworded: dropped.
+					{ id: 2, ...question('Before testing, why would a student who waits 1 days keep more?') },
+				],
+			},
+		})
+		const ideas = [{ idea: 'Idea number 1 about memory.', cue: 'Which point?', quote: 'The effort of pulling a memory back is what makes it last.', asked: [asked] }]
+		const written = await writeQuestions(complete, section, ideas, { amount: 'thorough', style: 'written', qualityCheck: false })
+		expect(calls).toEqual(['rewrite-questions'])
+		expect(written.questions.map((qs) => qs.map((q) => (q.content as { prompt: string }).prompt))).toEqual([['How would a week between tests change what a learner keeps?']])
 	})
 
 	it('puts an idea in the section its quote is in, when sections are written together', async () => {

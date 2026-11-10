@@ -1,4 +1,4 @@
-import { type ReadingPosition, type ReadingWithContents, SEEN_SECONDS } from '@life-log-club/contract'
+import { type ReadingPosition, type ReadingWithContents, type Section, SEEN_SECONDS } from '@life-log-club/contract'
 import type { Block, Note, NoteRef, Link as TextLink } from '@life-log-club/domain'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
@@ -7,6 +7,7 @@ import { FinishCard, useFinish } from '../finish'
 import { importingText } from '../readings'
 import { SaveIdea } from '../save-idea'
 import { client, errorMessage, orpc } from '../rpc'
+import { useToast } from '../toast'
 
 type NoteMarks = { notes: Map<string, Note>; open: (note: Note) => void }
 
@@ -164,6 +165,87 @@ function NoteDialog({ note, onClose }: { note: Note; onClose: () => void }) {
 	)
 }
 
+/**
+ * The section's menu: Rewrite questions, and Rewrite key ideas while none of them is in use. A
+ * rewrite runs in the background; the line under the title follows it, and every answer and
+ * schedule is kept.
+ */
+function SectionMenu({ section }: { section: Section }) {
+	const queryClient = useQueryClient()
+	const toast = useToast()
+	const [open, setOpen] = useState(false)
+	const [asked, setAsked] = useState<'questions' | 'ideas' | null>(null)
+	const rewrite = useMutation({
+		mutationFn: (ideas: boolean) => client.questions.rewrite({ sectionId: section.id, ideas }),
+		onSuccess: (_, ideas) => {
+			setAsked(ideas ? 'ideas' : 'questions')
+			setOpen(false)
+			// The server queued it; showing that at once starts the polling and the line under the title.
+			queryClient.setQueryData(orpc.readings.section.queryKey({ input: { id: section.id } }), (old) => old && { ...old, writeStatus: 'queued' as const })
+		},
+	})
+	const busy = section.writeStatus === 'queued' || section.writeStatus === 'writing'
+	// Says when the rewrite the member asked for is done, once: after the section was seen busy with it.
+	const seenBusy = useRef(false)
+	useEffect(() => {
+		if (!asked) return
+		if (busy) {
+			seenBusy.current = true
+			return
+		}
+		if (!seenBusy.current) return
+		if (section.writeStatus === 'ready') toast({ text: asked === 'ideas' ? 'Key ideas and questions written again.' : 'New questions are ready. Your answers so far are kept.' })
+		seenBusy.current = false
+		setAsked(null)
+	}, [asked, busy, section.writeStatus, toast])
+	// Esc or a click outside closes it, as menus do.
+	const box = useRef<HTMLDivElement>(null)
+	useEffect(() => {
+		if (!open) return
+		const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+		const onDown = (e: PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false)
+		window.addEventListener('keydown', onKey)
+		window.addEventListener('pointerdown', onDown)
+		return () => {
+			window.removeEventListener('keydown', onKey)
+			window.removeEventListener('pointerdown', onDown)
+		}
+	}, [open])
+	const item = 'block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-world disabled:opacity-50'
+	return (
+		<div ref={box} className="relative font-sans">
+			<button
+				type="button"
+				aria-label="Section menu"
+				aria-expanded={open}
+				onClick={() => setOpen((o) => !o)}
+				className="grid size-8 place-items-center rounded-lg text-world-muted transition hover:bg-world-card hover:text-world-ink"
+			>
+				<span aria-hidden className="text-lg leading-none">⋯</span>
+			</button>
+			{open && (
+				<div role="menu" className="absolute right-0 z-20 mt-1 grid w-64 gap-0.5 rounded-xl bg-world-card p-1.5 shadow-lg ring-1 ring-world-line">
+					<button type="button" role="menuitem" className={item} disabled={busy || rewrite.isPending} onClick={() => rewrite.mutate(false)}>
+						<span className="font-medium">Rewrite questions</span>
+						<span className="block text-xs text-world-muted">New questions on the same key ideas. Your answers and schedule stay.</span>
+					</button>
+					{!section.ideasInUse && (
+						<button type="button" role="menuitem" className={item} disabled={busy || rewrite.isPending} onClick={() => rewrite.mutate(true)}>
+							<span className="font-medium">Rewrite key ideas</span>
+							<span className="block text-xs text-world-muted">Find the key ideas again. Only before you answer any of them.</span>
+						</button>
+					)}
+					{rewrite.error && (
+						<p role="alert" className="px-3 py-2 text-sm text-red">
+							{errorMessage(rewrite.error)}
+						</p>
+					)}
+				</div>
+			)}
+		</div>
+	)
+}
+
 /** Calls `onEnd` once, when the end of the text comes into view. */
 function EndMark({ onEnd }: { onEnd: () => void }) {
 	const mark = useRef<HTMLDivElement>(null)
@@ -287,7 +369,11 @@ function SectionView({
 	const queryClient = useQueryClient()
 	const section = useQuery({
 		...orpc.readings.section.queryOptions({ input: { id } }),
-		refetchInterval: (query) => (query.state.data?.headingsPending ? 2000 : false),
+		// While headings are added, or questions rewritten, the section changes on its own.
+		refetchInterval: (query) => {
+			const data = query.state.data
+			return data?.headingsPending || (data && ['queued', 'writing'].includes(data.writeStatus)) ? 2000 : false
+		},
 	})
 	// Once the AI's headings are in, the chapter is split differently, so the contents change too.
 	const pending = section.data?.headingsPending
@@ -310,8 +396,13 @@ function SectionView({
 	if (section.isError) return <p role="alert">{errorMessage(section.error)}</p>
 	if (!section.data) return <p className="text-world-muted">Loading…</p>
 	const marks: NoteMarks = { notes: new Map(section.data.notes.map((n) => [n.id, n])), open: setOpenNote }
+	const rewriting = ['queued', 'writing'].includes(section.data.writeStatus)
 	const note = section.data.headingsPending
 		? 'Adding headings to this long chapter…'
+		: rewriting && section.data.keyIdeas > 0
+			? 'Rewriting questions for this section…'
+			: section.data.writeStatus === 'failed' && section.data.keyIdeas > 0
+				? 'Rewriting the questions failed. Try again from the section menu.'
 		: section.data.kind === 'reference'
 			? 'Kept to read. No recall.'
 			: section.data.aiTitle
@@ -325,8 +416,11 @@ function SectionView({
 			style={{ fontSize: size }}
 		>
 			<header>
-				<h2 className="text-[1.35em] font-semibold tracking-tight">{section.data.title}</h2>
-				{note && <p className={`font-sans text-xs text-world-muted ${section.data.headingsPending ? 'animate-pulse' : ''}`}>{note}</p>}
+				<div className="flex items-start justify-between gap-3">
+					<h2 className="text-[1.35em] font-semibold tracking-tight">{section.data.title}</h2>
+					{(section.data.keyIdeas > 0 || rewriting) && <SectionMenu section={section.data} />}
+				</div>
+				{note && <p className={`font-sans text-xs text-world-muted ${section.data.headingsPending || rewriting ? 'animate-pulse' : ''}`}>{note}</p>}
 			</header>
 			{section.data.blocks.map((b, i) => (
 				// The block a saved position names, and where opening at it puts the top of the screen.

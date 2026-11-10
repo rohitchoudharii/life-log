@@ -630,6 +630,70 @@ test('Multiple choice in Review: options stored shuffled, shown after a typed gu
 	await proof(page, testInfo, 'calibration-progress')
 })
 
+test('Settings → Questions sets how many and which kinds; Rewrite questions writes new ones for the same ideas and keeps every answer and schedule', async ({ page }, testInfo) => {
+	const { readingId, ids } = await openWithKey(page)
+	await stay(page)
+	await expect.poll(() => writeStatus(ids[0]!), { timeout: 15_000 }).toBe('ready')
+	const ideas = await ideasOf(ids[0]!)
+
+	// Settings → Questions: Thorough, Written only, and no second check. Each click saves.
+	await page.goto('/settings')
+	const questions = page.getByRole('group', { name: 'How many' })
+	await expect(questions.getByRole('radio', { name: 'Standard' })).toBeChecked()
+	await expect(page.getByRole('group', { name: 'Kinds' }).getByRole('radio', { name: 'Mixed' })).toBeChecked()
+	await expect(page.getByRole('checkbox', { name: /Check questions twice/ })).toBeChecked()
+	await page.getByText('Thorough', { exact: true }).click()
+	await expect(page.getByText('Two questions on each key idea: one on why, one applying it.')).toBeVisible()
+	await page.getByText('Written', { exact: true }).click()
+	await page.getByRole('checkbox', { name: /Check questions twice/ }).uncheck()
+	const prefsOf = () =>
+		sql<{ question_amount: string; question_style: string; quality_check: boolean }>(
+			'select question_amount, question_style, quality_check from preferences where user_id = (select user_id from readings where id = $1)',
+			[readingId],
+		).then((r) => r[0])
+	await expect.poll(prefsOf).toEqual({ question_amount: 'thorough', question_style: 'written', quality_check: false })
+	await proof(page, testInfo, 'settings-questions')
+
+	// One idea answered in Review, so it has a schedule and a log row to keep.
+	await sql("update cards set started_at = now(), level = 1, due_at = now() - interval '1 second' where id = $1", [ideas[0]!.id])
+	await page.goto('/mind/review')
+	await page.getByLabel('Your answer').fill(ideas[0]!.answer)
+	await page.getByRole('button', { name: 'Sure', exact: true }).click()
+	await expect(page.getByTestId('result')).toContainText('Right')
+	const logBefore = await sql('select id, card_id, question_id, rating from review_log where card_id = any($1) order by id', [ideas.map((i) => i.id)])
+	expect(logBefore).toHaveLength(1)
+	const oldQuestions = await sql<{ id: string }>('select id from questions where section_id = $1', [ids[0]])
+	const cardsBefore = await ideasOf(ids[0]!)
+
+	// The section menu: Rewrite questions only, since an idea is in review.
+	await page.goto(`/mind/read/${readingId}`)
+	await page.getByRole('button', { name: 'Section menu' }).click()
+	const menu = page.getByRole('menu')
+	await expect(menu.getByRole('menuitem')).toHaveCount(1)
+	await proof(page, testInfo, 'section-menu')
+	await page.keyboard.press('Escape')
+	await expect(menu).toHaveCount(0)
+	await page.getByRole('button', { name: 'Section menu' }).click()
+	await menu.getByRole('menuitem', { name: /Rewrite questions/ }).click()
+	await expect(page.getByText('Rewriting questions for this section…')).toBeVisible()
+	await expect(page.getByRole('status').filter({ hasText: 'New questions are ready. Your answers so far are kept.' })).toBeVisible({ timeout: 15_000 })
+
+	// Old questions retired, not deleted; two new written ones per idea; every answer and schedule as it was.
+	const after = await sql<{ id: string; card_id: string; type: string; retired_at: Date | null }>('select id, card_id, type, retired_at from questions where section_id = $1', [ids[0]])
+	expect(after.filter((q) => oldQuestions.some((o) => o.id === q.id)).every((q) => q.retired_at)).toBe(true)
+	const fresh = after.filter((q) => !q.retired_at)
+	for (const idea of ideas) expect(fresh.filter((q) => q.card_id === idea.id)).toHaveLength(2)
+	expect(fresh.every((q) => q.type === 'short_answer')).toBe(true)
+	expect(await sql('select id, card_id, question_id, rating from review_log where card_id = any($1) order by id', [ideas.map((i) => i.id)])).toEqual(logBefore)
+	expect(await ideasOf(ids[0]!)).toEqual(cardsBefore)
+	expect(cardsBefore[0]!.started_at).not.toBeNull()
+
+	// In Review, the answered idea is asked a new question when it comes back.
+	await sql("update cards set due_at = now() - interval '1 second' where id = $1", [ideas[0]!.id])
+	await page.goto('/mind/review')
+	await expect(page.getByTestId('question')).toHaveText(/^(How would idea \d+ of this part change what a newcomer does next|What would go wrong for a beginner who ignored idea \d+ of this part)\?$/)
+})
+
 test('Review without a key: self-rated cards, 20 at a time with Keep going, filters, and answer keys that never switch worlds', async ({ page }, testInfo) => {
 	const desktop = testInfo.project.name === 'desktop'
 	const email = await joinAs(page)

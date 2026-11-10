@@ -3,10 +3,11 @@ import { ORPCError } from '@orpc/server'
 import { and, asc, count, desc, eq, gt, isNotNull, isNull } from 'drizzle-orm'
 import { asUser, type Tx } from '../db/client'
 import { cards, entries, questions, readings, sections } from '../db/schema'
-import { enqueueIdeaCue } from '../jobs'
+import { enqueueIdeaCue, enqueueWriteSection } from '../jobs'
 import { answerCard, overrideAnswer, reportQuestion } from '../learning/answer'
 import { dueNow, minutesFor, nextBatch } from '../learning/review'
 import { saveIdea } from '../learning/saved-ideas'
+import { startRewrite } from '../learning/write-section'
 import { authed } from '../orpc'
 
 const toCard = (c: typeof cards.$inferSelect) => ({
@@ -176,4 +177,10 @@ export const reviewRoutes = {
 
 export const questionRoutes = {
 	report: authed.questions.report.handler(({ input, context }) => reportQuestion(context.user.id, input)),
+
+	rewrite: authed.questions.rewrite.handler(async ({ input, context }) => {
+		const job = await asUser(context.user.id, (tx) => startRewrite(tx, context.user.id, input.sectionId, input.ideas))
+		await enqueueWriteSection(job)
+		return { ok: true as const }
+	}),
 }

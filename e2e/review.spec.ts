@@ -469,3 +469,43 @@ test('a multiple-choice answer is graded in code against its key, with no AI key
 	expect(await code(client.review.override({ answerId: log!.answer_id }))).toBe('BAD_REQUEST')
 	expect(await code(client.review.checklist({ cardId: card.id, questionId: question!.id }))).toBe('BAD_REQUEST')
 })
+
+test('Rewrite key ideas replaces ideas none of which is in use; once one is answered only questions can be rewritten, and never on Quick or without a key', async () => {
+	const { client, user } = await newMember()
+	await client.ai.saveKey({ provider: 'anthropic', apiKey: GOOD_ANTHROPIC_KEY })
+	const words = 'Spaced practice beats cramming because effortful recall strengthens memory traces. Sleep after study moves new memories into lasting storage overnight. Feedback soon after a mistake helps the learner fix it before it sets.'
+	const reading = await client.readings.addText({ id: randomUUID(), title: 'Habits', text: `# Learning\n\n${words} ${words}` })
+	const [section] = (await client.readings.get({ id: reading.id })).contents
+	const status = () => sql<{ write_status: string }>('select write_status from sections where id = $1', [section!.id]).then((r) => r[0]!.write_status)
+	const ideaIds = () => sql<{ id: string }>("select id from cards where section_id = $1 and origin = 'ai' order by position", [section!.id]).then((r) => r.map((c) => c.id))
+	await client.readings.seen({ sectionId: section!.id, seconds: 30 })
+	await expect.poll(status, { timeout: 15_000 }).toBe('ready')
+	const first = await ideaIds()
+	expect(first.length).toBeGreaterThan(0)
+	expect((await client.readings.section({ id: section!.id })).ideasInUse).toBe(false)
+
+	// None in use: the key ideas are written again, as new cards.
+	await client.questions.rewrite({ sectionId: section!.id, ideas: true })
+	await expect.poll(status, { timeout: 15_000 }).toBe('ready')
+	const second = await ideaIds()
+	expect(second.length).toBeGreaterThan(0)
+	expect(second.filter((id) => first.includes(id))).toEqual([])
+
+	// One answered: its ideas stay, and only questions can be rewritten.
+	await client.review.answer({ answerId: randomUUID(), cardId: second[0]!, mode: 'recall', ask: 'cue', response: { skipped: true }, confidence: null })
+	expect((await client.readings.section({ id: section!.id })).ideasInUse).toBe(true)
+	expect(await code(client.questions.rewrite({ sectionId: section!.id, ideas: true }))).toBe('CONFLICT')
+	await client.questions.rewrite({ sectionId: section!.id })
+	await expect.poll(status, { timeout: 15_000 }).toBe('ready')
+	expect(await ideaIds()).toEqual(second)
+	expect(await sql('select card_id from review_log where user_id = $1', [user.id])).toEqual([{ card_id: second[0] }])
+
+	// Quick writes no questions, so there is nothing to rewrite; another member and a member without a key can't.
+	await client.preferences.update({ questionAmount: 'quick' })
+	expect(await code(client.questions.rewrite({ sectionId: section!.id }))).toBe('BAD_REQUEST')
+	const other = await newMember('B')
+	expect(await code(other.client.questions.rewrite({ sectionId: section!.id }))).toBe('NOT_FOUND')
+	const own = await other.client.readings.addText({ id: randomUUID(), text: `# Notes\n\n${words}` })
+	const [ownSection] = (await other.client.readings.get({ id: own.id })).contents
+	expect(await code(other.client.questions.rewrite({ sectionId: ownSection!.id }))).toBe('BAD_REQUEST')
+})

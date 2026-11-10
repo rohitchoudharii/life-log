@@ -10,6 +10,7 @@ import { readPaste } from '../import/paste'
 import { NOT_A_BOOK, NOT_A_LINK, normaliseUrl, sectionRow } from '../import/reading'
 import { enqueueChapterHeadings, enqueueImport, enqueueWriteSection } from '../jobs'
 import { finishReading, milestoneOf, unfinishReading } from '../learning/finish'
+import { ideasInUse } from '../learning/write-section'
 import { addSampleReading } from '../seed/sample-reading'
 import { putInBook } from './books'
 import { toEntry } from './entries'
@@ -376,6 +377,7 @@ export const readingsRoutes = {
 					sourceUrl: sections.sourceUrl,
 					writeStatus: sections.writeStatus,
 					keyIdeas: sql<number>`(select count(*)::int from ${cards} where ${cards.sectionId} = ${sections.id} and ${cards.origin} = 'ai' and ${cards.deletedAt} is null)`,
+					ideasInUse: ideasInUse(sections.id),
 				})
 					.from(sections)
 					.innerJoin(readings, eq(readings.id, sections.readingId))

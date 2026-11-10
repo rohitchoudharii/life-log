@@ -5,6 +5,14 @@ import type { Rating } from './scheduler'
  * The kind of thinking a question asks for, from least to most demanding. A card's own cue is
  * the recall level; every stored question is above it.
  */
+/** How many questions each key idea gets: none (its cue only), one, or two. */
+export const QUESTION_AMOUNTS = ['quick', 'standard', 'thorough'] as const
+export type QuestionAmount = (typeof QUESTION_AMOUNTS)[number]
+
+/** Which kinds of question to write: mostly written with some multiple choice, written only, or choice only. */
+export const QUESTION_STYLES = ['mixed', 'written', 'choice'] as const
+export type QuestionStyle = (typeof QUESTION_STYLES)[number]
+
 export const QUESTION_LEVELS = ['recall', 'explain', 'apply', 'analyze', 'transfer'] as const
 export type QuestionLevel = (typeof QUESTION_LEVELS)[number]
 

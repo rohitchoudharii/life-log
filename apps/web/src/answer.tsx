@@ -57,13 +57,20 @@ export type Answered = { answerId: string; given: string | null; confidence: Con
 export function useGuessFirst() {
 	const queryClient = useQueryClient()
 	const prefs = useQuery(orpc.preferences.get.queryOptions())
+	// The switch moves at once, without waiting for the save; a failed save moves it back.
+	const [draft, setDraft] = useState<boolean | null>(null)
 	const save = useMutation(
 		orpc.preferences.update.mutationOptions({
+			onError: () => setDraft(null),
 			onSuccess: (saved) => queryClient.setQueryData(orpc.preferences.get.queryKey(), saved),
 		}),
 	)
-	const on = (save.isPending ? save.variables.guessFirst : undefined) ?? prefs.data?.guessFirst ?? true
-	return { on, set: (guessFirst: boolean) => save.mutate({ guessFirst }), error: save.error }
+	const on = draft ?? prefs.data?.guessFirst ?? true
+	const set = (guessFirst: boolean) => {
+		setDraft(guessFirst)
+		save.mutate({ guessFirst })
+	}
+	return { on, set, error: save.error }
 }
 
 /** The Guess first switch, the same value wherever it shows. */

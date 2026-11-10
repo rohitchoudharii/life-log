@@ -77,6 +77,33 @@ function writeSection(system: string, user: string) {
 	return { ideas }
 }
 
+/**
+ * For "Task: rewrite-questions": one fresh question for each request, on the idea it names,
+ * multiple choice when the member asks for choice only.
+ */
+function rewriteQuestions(system: string, user: string) {
+	const list = JSON.parse(user.slice(user.lastIndexOf('\n[') + 1)) as { id: number; idea: string }[]
+	return {
+		questions: list.map(({ id, idea }) => {
+			if (system.includes('Every question is mcq.')) return { id, ...mcqOn(id, idea) }
+			const words = idea.split(/\s+/)
+			const half = Math.ceil(words.length / 2)
+			return {
+				id,
+				type: 'short_answer',
+				level: 'apply',
+				content: {
+					// Two templates, so an idea's two questions in Thorough are not the same question.
+					prompt: id % 2 ? `How would idea ${id} of this part change what a newcomer does next?` : `What would go wrong for a beginner who ignored idea ${id} of this part?`,
+					reference: `${idea} So the newcomer acts on it.`,
+					mustHave: [words.slice(0, half).join(' '), words.slice(half).join(' ')],
+					misconceptions: [],
+				},
+			}
+		}),
+	}
+}
+
 /** Keeps every question for "Task: check-questions". */
 const checkQuestions = (user: string) => ({ checks: [...user.matchAll(/"id": (\d+)/g)].map((m) => ({ id: Number(m[1]), verdict: 'keep' })) })
 
@@ -119,6 +146,7 @@ function answer(system: string, user: string) {
 	if (system.startsWith('Task: grade-recall')) return JSON.stringify(gradeRecall(user))
 	if (system.startsWith('Task: headings')) return JSON.stringify(headings(user))
 	if (system.startsWith('Task: write-section')) return JSON.stringify(writeSection(system, user))
+	if (system.startsWith('Task: rewrite-questions')) return JSON.stringify(rewriteQuestions(system, user))
 	if (system.startsWith('Task: check-questions')) return JSON.stringify(checkQuestions(user))
 	if (system.startsWith('Task: lesson-cue')) return JSON.stringify({ cue: 'Where did this lesson come up for you?' })
 	if (system.startsWith('Task: write-cue')) return JSON.stringify({ cue: 'What did you want to keep from this part?' })

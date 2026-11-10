@@ -10,6 +10,8 @@ import {
 	quoteInText,
 	shuffleMcq,
 	type McqContent,
+	type QuestionAmount,
+	type QuestionStyle,
 } from '@life-log-club/domain'
 import type { ChatRequest } from './providers'
 
@@ -20,16 +22,10 @@ export const MAX_IDEAS = 20
 /** The guide given to the model: about one idea per this many words. Not a limit. */
 const WORDS_PER_IDEA = 150
 
-export const QUESTION_AMOUNTS = ['quick', 'standard', 'thorough'] as const
-export type QuestionAmount = (typeof QUESTION_AMOUNTS)[number]
 /** Questions written per key idea. Every idea is also recalled through its cue. */
 export const QUESTIONS_PER_IDEA: Record<QuestionAmount, number> = { quick: 0, standard: 1, thorough: 2 }
 /** The level of each question an idea gets, in order: explain first, then apply. */
 const LEVELS_FOR: Record<number, string> = { 0: '', 1: 'explain or apply', 2: 'one at explain and one at apply' }
-
-/** Which kinds of question to write: mostly written with some multiple choice, written only, or choice only. */
-export const QUESTION_STYLES = ['mixed', 'written', 'choice'] as const
-export type QuestionStyle = (typeof QUESTION_STYLES)[number]
 
 const WRITTEN: QuestionType[] = ['short_answer']
 const CHOICE: QuestionType[] = ['mcq']
@@ -177,6 +173,57 @@ async function qualityCheck(complete: Complete, context: string, list: { idea: W
 }
 
 /**
+ * Brings every idea up to the member's amount of questions: has the model check the questions
+ * already passed in code (when `qualityCheck` is on), then sends what failed or is missing back
+ * once with its reasons, and keeps the replacements that pass. Returns what was thrown out.
+ */
+async function fillQuestions(complete: Complete, context: string, sections: SectionText[], ideas: WrittenIdea[], pending: Pending[], prefs: QuestionPrefs) {
+	const perIdea = QUESTIONS_PER_IDEA[prefs.amount]
+	const check = async (list: { idea: WrittenIdea; question: WrittenQuestion }[]) => {
+		if (!prefs.qualityCheck) return
+		for (const r of await qualityCheck(complete, context, list)) {
+			r.idea.questions.splice(r.idea.questions.indexOf(r.question), 1)
+			pending.push({ idea: r.idea, raw: r.question, reasons: r.reasons })
+		}
+	}
+	await check(ideas.flatMap((idea) => idea.questions.map((question) => ({ idea, question }))))
+	for (const idea of ideas)
+		for (let k = idea.questions.length + pending.filter((p) => p.idea === idea).length; k < perIdea; k++)
+			pending.push({ idea, raw: {}, reasons: ['missing: write a question on this idea'] })
+
+	const wanted = pending.filter((p) => p.idea.questions.length < perIdea)
+	if (wanted.length) {
+		const list = wanted.map((p, k) => ({ id: k + 1, idea: p.idea.idea, problems: p.reasons, question: p.raw }))
+		let replies: RawQuestion[] = []
+		try {
+			const reply = await complete('rewrite-questions', (model) => ({
+				model,
+				system: rewriteRules(prefs.style),
+				user: `${context}\n\n${JSON.stringify(list, null, 1)}`,
+				json: true,
+				maxTokens: MAX_REPLY_TOKENS,
+				timeoutMs: TIMEOUT_MS,
+			}))
+			replies = ((jsonIn(reply) as { questions?: RawQuestion[] } | null)?.questions ?? []).filter((q) => q && typeof q === 'object')
+		} catch {
+			// A failed rewrite leaves those ideas with fewer questions; each is still recalled through its cue.
+		}
+		const fresh: { idea: WrittenIdea; question: WrittenQuestion }[] = []
+		for (const raw of replies) {
+			const p = wanted[Number(raw.id) - 1]
+			if (!p || p.idea.questions.length >= perIdea) continue
+			const q = checkQuestion(raw, p.idea, sections[p.idea.section]!.text, prefs.style)
+			if (Array.isArray(q)) continue
+			p.idea.questions.push(q)
+			fresh.push({ idea: p.idea, question: q })
+		}
+		// What the check rejects after the rewrite is dropped, so a bad question never reaches the learner.
+		await check(fresh)
+	}
+	return pending.map((p) => ({ what: `question on: ${p.idea.idea}`, reasons: p.reasons }))
+}
+
+/**
  * Writes the key ideas of one or more sections read together, and questions on each idea at the
  * member's amount. The model's output is never trusted as is: an idea whose quote isn't in the
  * text or whose cue gives it away is dropped; questions must pass the rules in code and, when
@@ -237,49 +284,30 @@ export async function writeSection(complete: Complete, sections: SectionText[], 
 			else idea.questions.push(q)
 		}
 	}
-	const check = async (list: { idea: WrittenIdea; question: WrittenQuestion }[]) => {
-		if (!prefs.qualityCheck) return
-		for (const r of await qualityCheck(complete, context, list)) {
-			r.idea.questions.splice(r.idea.questions.indexOf(r.question), 1)
-			pending.push({ idea: r.idea, raw: r.question, reasons: r.reasons })
-		}
-	}
-	await check(ideas.flatMap((idea) => idea.questions.map((question) => ({ idea, question }))))
-	for (const idea of ideas)
-		for (let k = idea.questions.length + pending.filter((p) => p.idea === idea).length; k < perIdea; k++)
-			pending.push({ idea, raw: {}, reasons: ['missing: write a question on this idea'] })
-
-	const wanted = pending.filter((p) => p.idea.questions.length < perIdea)
-	if (wanted.length) {
-		const list = wanted.map((p, k) => ({ id: k + 1, idea: p.idea.idea, problems: p.reasons, question: p.raw }))
-		let replies: RawQuestion[] = []
-		try {
-			const reply = await complete('rewrite-questions', (model) => ({
-				model,
-				system: rewriteRules(prefs.style),
-				user: `${context}\n\n${JSON.stringify(list, null, 1)}`,
-				json: true,
-				maxTokens: MAX_REPLY_TOKENS,
-				timeoutMs: TIMEOUT_MS,
-			}))
-			replies = ((jsonIn(reply) as { questions?: RawQuestion[] } | null)?.questions ?? []).filter((q) => q && typeof q === 'object')
-		} catch {
-			// A failed rewrite leaves those ideas with fewer questions; each is still recalled through its cue.
-		}
-		const fresh: { idea: WrittenIdea; question: WrittenQuestion }[] = []
-		for (const raw of replies) {
-			const p = wanted[Number(raw.id) - 1]
-			if (!p || p.idea.questions.length >= perIdea) continue
-			const q = checkQuestion(raw, p.idea, sections[p.idea.section]!.text, prefs.style)
-			if (Array.isArray(q)) continue
-			p.idea.questions.push(q)
-			fresh.push({ idea: p.idea, question: q })
-		}
-		// What the check rejects after the rewrite is dropped, so a bad question never reaches the learner.
-		await check(fresh)
-	}
-	for (const p of pending) rejected.push({ what: `question on: ${p.idea.idea}`, reasons: p.reasons })
+	rejected.push(...(await fillQuestions(complete, context, sections, ideas, pending, prefs)))
 
 	const strip = ({ rank: _rank, raw: _raw, ...idea }: (typeof ranked)[number]): WrittenIdea => idea
 	return { ideas: ideas.map(strip), spare: spare.map(strip), rejected }
+}
+
+/** An idea that has a card already, with the prompts of its questions so far, which new ones must not repeat. */
+export type IdeaToAsk = { idea: string; cue: string; quote: string; asked: string[] }
+
+/**
+ * Writes fresh questions at the member's amount on ideas that have cards already, for Rewrite
+ * questions. They pass the same checks as a section's first questions; a question too like one
+ * asked before is thrown out. Returns one list of questions per idea, in order.
+ */
+export async function writeQuestions(complete: Complete, section: SectionText, asks: IdeaToAsk[], prefs: QuestionPrefs) {
+	const context = material([section], prefs.amount)
+	const perIdea = QUESTIONS_PER_IDEA[prefs.amount]
+	const ideas: WrittenIdea[] = asks.map(({ idea, cue, quote }) => ({ section: 0, idea, cue, quote, questions: [] }))
+	const pending: Pending[] = ideas.flatMap((idea, i) => {
+		const asked = asks[i]!.asked
+		const reason = asked.length ? `missing: write a new question on this idea, unlike these: ${asked.map((a) => JSON.stringify(a)).join('; ')}` : 'missing: write a question on this idea'
+		return Array.from({ length: perIdea }, () => ({ idea, raw: {}, reasons: [reason] }))
+	})
+	const rejected = await fillQuestions(complete, context, [section], ideas, pending, prefs)
+	const questions = ideas.map((idea, i) => idea.questions.filter((q) => !asks[i]!.asked.some((a) => isDuplicatePrompt(a, (q.content as { prompt: string }).prompt))))
+	return { questions, rejected }
 }

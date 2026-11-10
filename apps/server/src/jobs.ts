@@ -69,7 +69,11 @@ const WRITE = 'write-section'
 // A chapter batch has its own key, so a job already waiting for its first section can't swallow
 // it and leave the rest unwritten. If both run, the section lock lets only one store ideas.
 export const enqueueWriteSection = (job: WriteJob) =>
-	boss.send(WRITE, job, { singletonKey: job.with?.length ? `batch:${job.sectionId}` : job.sectionId, priority: job.recall ? 10 : 0 })
+	boss.send(WRITE, job, {
+		singletonKey: job.rewrite ? `rewrite:${job.sectionId}` : job.with?.length ? `batch:${job.sectionId}` : job.sectionId,
+		// The member is waiting on a recall or a rewrite they asked for.
+		priority: job.recall || job.rewrite ? 10 : 0,
+	})
 
 /** True when the section's writing has ended, one way or another. */
 const sectionDone = ({ userId, sectionId }: WriteJob) =>
