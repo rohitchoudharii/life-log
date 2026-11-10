@@ -27,6 +27,8 @@ export function describe(e: Entry) {
 			return e.text ?? 'A lesson'
 		case 'reading.finished':
 			return `Finished ${e.details.title}`
+		case 'practice':
+			return `${e.details.skill ?? 'Practice'} · ${e.details.minutes} min${e.details.workedOn ? ` · ${e.details.workedOn}` : ''}`
 	}
 }
 

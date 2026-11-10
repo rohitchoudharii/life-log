@@ -156,6 +156,85 @@ test('a lesson logged with + Log is due in Review at once with its cue, Undo tak
 	await proof(page, testInfo, 'lesson-in-review')
 })
 
+test('a skill: practice logged twice starts the second session from the first one’s Next time, and the skill adds up its minutes this week', async ({ page }, testInfo) => {
+	await joinAs(page)
+	await page.goto('/mind')
+	const mindSkills = page.getByRole('region', { name: 'Skills' })
+	await expect(mindSkills).toContainText('Practising something, such as piano or public speaking?')
+	await mindSkills.getByRole('link', { name: 'Add a skill' }).click()
+
+	// With no skills yet, the form is open: name, an optional goal and an optional weekly target.
+	const add = page.getByRole('form', { name: 'Add skill' })
+	await add.getByLabel('Skill').fill('Piano')
+	await add.getByLabel('Goal (optional)').fill('Play the Bach prelude at 80 bpm')
+	await add.getByLabel('Minutes a week (optional)').fill('120')
+	await proof(page, testInfo, 'add-skill')
+	await add.getByRole('button', { name: 'Save' }).click()
+	const skill = page.getByTestId('skill')
+	await expect(skill.getByTestId('skill-week')).toHaveText('0 of 120 min this week · 0 sessions')
+
+	// The first session: the skill is chosen, and a first session starts at 30 minutes.
+	await skill.getByRole('button', { name: 'Log practice' }).click()
+	await expect(dialog(page).getByRole('radio', { name: 'Practice' })).toBeChecked()
+	await expect(dialog(page).getByLabel('Skill')).toHaveValue(await skill.getByRole('link', { name: 'Piano' }).getAttribute('href').then((h) => h!.split('/').at(-1)!))
+	await expect(dialog(page).getByLabel('Minutes')).toHaveValue('30')
+	await expect(dialog(page).getByLabel('Worked on')).toHaveValue('')
+	await dialog(page).getByLabel('Minutes').fill('25')
+	await dialog(page).getByLabel('Worked on').fill('Left hand, bars 1 to 8')
+	await dialog(page).getByLabel('What told you how it went').fill('A recording: the sixteenths rush')
+	await dialog(page).getByLabel('Next time').fill('Even sixteenths at 70 bpm')
+	await dialog(page).getByLabel('One thing I learned (optional)').fill('Slow practice finds the uneven notes.')
+	await proof(page, testInfo, 'log-practice-first')
+	await dialog(page).getByRole('button', { name: 'Save' }).click()
+	await expect(dialog(page)).toBeHidden()
+	await expect(skill.getByTestId('skill-week')).toHaveText('25 of 120 min this week · 1 session')
+	await expect(skill.getByTestId('skill-next')).toHaveText('Next focus: Even sixteenths at 70 bpm')
+
+	// The second session opens on last time's fix and minutes: the focus, feedback and fix loop at zero clicks.
+	await skill.getByRole('button', { name: 'Log practice' }).click()
+	await expect(dialog(page).getByLabel('Worked on')).toHaveValue('Even sixteenths at 70 bpm')
+	await expect(dialog(page).getByLabel('Minutes')).toHaveValue('25')
+	await expect(dialog(page).getByText('From last time’s Next time.')).toBeVisible()
+	await expect(dialog(page).getByLabel('Next time')).toHaveValue('')
+	await proof(page, testInfo, 'log-practice-second')
+	await dialog(page).getByLabel('Minutes').fill('20')
+	await dialog(page).getByLabel('Next time').fill('Hands together at 70 bpm')
+	await dialog(page).getByRole('button', { name: 'Save' }).click()
+	await expect(dialog(page)).toBeHidden()
+	await expect(skill.getByTestId('skill-week')).toHaveText('45 of 120 min this week · 2 sessions')
+	await proof(page, testInfo, 'skills')
+
+	// The skill's page: this week against the target, and the trail of worked on → next time.
+	await skill.getByRole('link', { name: 'Piano' }).click()
+	await expect(page.getByRole('heading', { name: 'Piano', level: 1 })).toBeVisible()
+	await expect(page.getByTestId('skill-week')).toHaveText('45 of 120 min this week · 2 sessions')
+	const sessions = page.getByTestId('session')
+	await expect(sessions).toHaveCount(2)
+	await expect(sessions.first()).toContainText('20 min')
+	await expect(sessions.first()).toContainText('Even sixteenths at 70 bpm → next time: Hands together at 70 bpm')
+	await expect(sessions.nth(1)).toContainText('Left hand, bars 1 to 8 → next time: Even sixteenths at 70 bpm')
+	await expect(sessions.nth(1)).toContainText('How it went: A recording: the sixteenths rush')
+	await expect(sessions.nth(1)).toContainText('Learned: Slow practice finds the uneven notes.')
+	await proof(page, testInfo, 'skill-page')
+
+	// Mind shows the week, the lesson learned is due in Review, and Progress counts the minutes.
+	await page.goto('/mind')
+	await expect(mindSkills.getByTestId('mind-skill')).toContainText('45 of 120 min this week · 2 sessions')
+	await expect(page.getByText("Practising Piano: what's the lesson?")).toBeVisible()
+	await expect(page.getByTestId('entry').filter({ hasText: 'Piano' })).toHaveCount(0)
+	await proof(page, testInfo, 'mind-skills')
+	await page.goto('/mind/progress')
+	await expect(page.getByTestId('practice')).toContainText('Piano45 of 120 min this week')
+	await page.getByTestId('practice').scrollIntoViewIfNeeded()
+	await proof(page, testInfo, 'progress-practice')
+
+	// + Log → Practice starts on the skill practised last, from its last session.
+	await openLog(page)
+	await dialog(page).getByRole('radio', { name: 'Practice' }).click()
+	await expect(dialog(page).getByLabel('Worked on')).toHaveValue('Hands together at 70 bpm')
+	await expect(dialog(page).getByLabel('Minutes')).toHaveValue('20')
+})
+
 test('keyboard: L opens + Log, Esc closes it, 1 to 4 switch worlds, and typing is never a shortcut', async ({
 	page,
 }, info) => {

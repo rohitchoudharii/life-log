@@ -555,6 +555,27 @@ export type RecallItem = { cardId: string; questionId: string | null }
  * One recall check: the member's brain dump after reading one or more sections, and how it
  * covered their key ideas. The dump can be personal, so it is stored encrypted.
  */
+/** A skill the member practises, such as piano or public speaking. Practice sessions are `practice` entries. */
+export const skills = pgTable(
+	'skills',
+	{
+		/** Chosen by the client, so a retried create can't make a second skill. */
+		id: uuid().primaryKey(),
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		name: text().notNull(),
+		/** What the member is working towards ("Play the Bach prelude at 80 bpm"). */
+		goal: text(),
+		/** Minutes a week the member aims for; null shows sessions only. */
+		weeklyMinutes: integer(),
+		/** Set when archived; its practice entries stay. */
+		archivedAt: timestamp({ withTimezone: true }),
+		createdAt: createdAt(),
+	},
+	(t) => [ownRows(t.userId)],
+)
+
 /**
  * A teach-back on one idea card: the learner explains it to an AI student, who asks up to 3
  * follow-ups and then sums up the gaps and strengths.

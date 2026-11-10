@@ -7,6 +7,7 @@ import { Devices } from './pages/devices'
 import { Settings } from './pages/settings'
 import { Home } from './pages/home'
 import { Ideas } from './pages/ideas'
+import { SkillPage, Skills } from './pages/skills'
 import { Words } from './pages/words'
 import { Progress } from './pages/progress'
 import { Reader } from './pages/reader'
@@ -72,6 +73,15 @@ const reviewRoute = createRoute({
 const progressRoute = createRoute({ getParentRoute: () => appRoute, path: '/mind/progress', component: Progress })
 const ideasRoute = createRoute({ getParentRoute: () => appRoute, path: '/mind/ideas', component: Ideas })
 const wordsRoute = createRoute({ getParentRoute: () => appRoute, path: '/mind/words', component: Words })
+const skillsRoute = createRoute({ getParentRoute: () => appRoute, path: '/mind/skills', component: Skills })
+const skillRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/mind/skills/$skillId',
+	component: function SkillRoute() {
+		const { skillId } = skillRoute.useParams()
+		return <SkillPage key={skillId} skillId={skillId} />
+	},
+})
 const bookRoute = createRoute({
 	getParentRoute: () => appRoute,
 	path: '/mind/book/$bookId',
@@ -85,7 +95,7 @@ const heartRoute = createRoute({ getParentRoute: () => appRoute, path: '/heart',
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: '/settings', component: Settings })
 
 const router = createRouter({
-	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, mindRoute, readerRoute, recallRoute, reviewRoute, progressRoute, ideasRoute, wordsRoute, bookRoute, bodyRoute, heartRoute, devicesRoute, settingsRoute])]),
+	routeTree: rootRoute.addChildren([welcomeRoute, appRoute.addChildren([homeRoute, mindRoute, readerRoute, recallRoute, reviewRoute, progressRoute, ideasRoute, wordsRoute, skillsRoute, skillRoute, bookRoute, bodyRoute, heartRoute, devicesRoute, settingsRoute])]),
 })
 
 declare module '@tanstack/react-router' {

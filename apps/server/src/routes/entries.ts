@@ -7,6 +7,7 @@ import { entries } from '../db/schema'
 import { enqueueLessonCue } from '../jobs'
 import { onFinishedEntry } from '../learning/finish'
 import { addLessonCard, hideLessonCard, updateLessonCard } from '../learning/lessons'
+import { practisedSkill } from '../learning/skills'
 import { authed } from '../orpc'
 
 type Row = typeof entries.$inferSelect
@@ -54,6 +55,9 @@ export const entriesRoutes = {
 		if (input.type === 'reading.finished') throw new ORPCError('BAD_REQUEST', { message: 'Mark a reading finished from the reading itself.' })
 		checkLessonText(input.type, input.text)
 		const { entry, needsCue } = await asUser(context.user.id, async (tx) => {
+			// Details are not a foreign key, so the skill is checked to be the member's own here.
+			const skill = input.type === 'practice' ? await practisedSkill(tx, input.details.skillId) : null
+			const details = skill ? { ...input.details, skill: skill.name } : input.details
 			const [created] = await tx
 				.insert(entries)
 				.values({
@@ -62,13 +66,16 @@ export const entriesRoutes = {
 					type: input.type,
 					pillar: ENTRY_TYPES[input.type].pillar,
 					occurredAt: input.occurredAt ?? new Date(),
-					details: input.details,
+					details,
 					...storeText(input.type, input.id, input.text),
 				})
 				.onConflictDoNothing()
 				.returning()
 			if (created) {
-				const needsCue = created.type === 'lesson' && input.remember !== false && (await addLessonCard(tx, created))
+				const needsCue =
+					(created.type === 'lesson' && input.remember !== false && (await addLessonCard(tx, created))) ||
+					// One thing learned in practice comes back like a lesson, asked by its skill.
+					(created.type === 'practice' && created.text !== null && skill !== null && (await addLessonCard(tx, created, `Practising ${skill.name}`)))
 				return { entry: toEntry(created), needsCue }
 			}
 			// A retry of a create that already happened returns the first entry. An id that
@@ -103,7 +110,9 @@ export const entriesRoutes = {
 		asUser(context.user.id, async (tx) => {
 			const row = await find(tx, input.id, false)
 			const type = row.type as EntryType
-			const parsed = EntryData.safeParse({ type, details: { ...row.details, ...input.details } })
+			// A practice session stays on its skill: the skill is checked only when the entry is made.
+			const kept = type === 'practice' ? { skillId: row.details.skillId, skill: row.details.skill } : {}
+			const parsed = EntryData.safeParse({ type, details: { ...row.details, ...input.details, ...kept } })
 			if (!parsed.success) throw new ORPCError('BAD_REQUEST', { message: 'Those details are not valid for this entry.' })
 			if (input.text !== undefined) checkLessonText(type, input.text)
 			const [updated] = await tx
@@ -116,7 +125,7 @@ export const entriesRoutes = {
 				})
 				.where(eq(entries.id, row.id))
 				.returning()
-			if (type === 'lesson') await updateLessonCard(tx, row, updated!)
+			if (type === 'lesson' || type === 'practice') await updateLessonCard(tx, row, updated!)
 			return toEntry(updated!)
 		}),
 	),

@@ -175,6 +175,54 @@ function Dumps({ dumps }: { dumps: ProgressSummary['dumps'] }) {
 	)
 }
 
+/** Practice minutes a week on each skill, with its target as a mark, oldest week first. */
+function Practice({ practice }: { practice: ProgressSummary['practice'] }) {
+	return (
+		<Block title="Practice" sub="Minutes a week on each skill, against its target.">
+			{practice.length ? (
+				<ul className="grid gap-4" data-testid="practice">
+					{practice.map((p) => {
+						const top = Math.max(1, p.weeklyMinutes ?? 0, ...p.weeks.map((w) => w.minutes))
+						const thisWeek = p.weeks.at(-1)?.minutes ?? 0
+						return (
+							<li key={p.skillId} className="grid gap-2">
+								<p className="flex justify-between gap-3 font-sans text-sm">
+									<span className="font-medium">{p.name}</span>
+									<span className="text-world-muted tabular-nums">
+										{thisWeek}
+										{p.weeklyMinutes !== null ? ` of ${p.weeklyMinutes}` : ''} min this week
+									</span>
+								</p>
+								<div className="relative h-12">
+									<ol aria-label={`${p.name}: minutes by week`} className="flex h-full items-end gap-1">
+										{p.weeks.map((w) => (
+											<li key={w.week.toISOString()} className="flex h-full flex-1 items-end" title={`${w.minutes} min`}>
+												<div className="w-full rounded-t-sm bg-world-accent" style={{ height: `${(w.minutes / top) * 100}%`, minHeight: w.minutes ? 3 : 0 }} />
+												<span className="sr-only">{w.minutes} min</span>
+											</li>
+										))}
+									</ol>
+									{p.weeklyMinutes !== null && (
+										<div aria-hidden className="pointer-events-none absolute inset-x-0 border-t-2 border-dashed border-red" style={{ bottom: `${(p.weeklyMinutes / top) * 100}%` }} />
+									)}
+								</div>
+							</li>
+						)
+					})}
+				</ul>
+			) : (
+				<p className="font-sans text-sm text-world-muted">
+					No practice in these weeks. Log practice on a{' '}
+					<Link to="/mind/skills" className="underline underline-offset-2">
+						skill
+					</Link>{' '}
+					after a session.
+				</p>
+			)}
+		</Block>
+	)
+}
+
 /** Progress: what the member knows and what is fading, measured at review, never flattered. */
 /** How often each confidence was right: a percentage from 20 answers, counts below that. */
 function Calibration({ calibration }: { calibration: ProgressSummary['calibration'] }) {
@@ -211,6 +259,7 @@ export function Progress() {
 					<RecallByGap gaps={data.recallByGap} />
 					<Calibration calibration={data.calibration} />
 					<Dumps dumps={data.dumps} />
+					<Practice practice={data.practice} />
 				</>
 			)}
 		</section>

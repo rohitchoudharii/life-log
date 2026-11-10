@@ -7,11 +7,12 @@ import { useToast } from './toast'
 
 /**
  * Every list and summary reads entries, so any change refreshes them all. A lesson's review card
- * comes and goes with its entry, so the review counts refresh too.
+ * comes and goes with its entry, so the review counts refresh too, and practice counts towards
+ * its skill's week and Progress.
  */
 function useRefresh() {
 	const queryClient = useQueryClient()
-	return () => Promise.all([queryClient.invalidateQueries({ queryKey: orpc.entries.key() }), queryClient.invalidateQueries({ queryKey: orpc.review.key() })])
+	return () => Promise.all([orpc.entries, orpc.review, orpc.skills, orpc.progress].map((key) => queryClient.invalidateQueries({ queryKey: key.key() })))
 }
 
 /** Saves an entry and offers Undo. The client picks the id, so a retry can't make a duplicate. */

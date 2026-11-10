@@ -5,6 +5,9 @@ import { z } from 'zod'
  * is shared, so one list of entries feeds history, search and look-back for every pillar.
  * To add a kind of log, add a variant here and a line to ENTRY_TYPES.
  */
+/** The longest practice session one entry logs: 10 hours. */
+export const MAX_PRACTICE_MINUTES = 600
+
 export const EntryData = z.discriminatedUnion('type', [
 	z.object({
 		type: z.literal('gym.set'),
@@ -26,6 +29,22 @@ export const EntryData = z.discriminatedUnion('type', [
 		type: z.literal('lesson'),
 		// When the lesson applies ("Salary talks"): the cue its review card asks with.
 		details: z.object({ cue: z.string().trim().min(1).max(80).optional() }),
+	}),
+	z.object({
+		// A practice session on a skill. Its text is the one thing learned, which becomes a lesson card.
+		type: z.literal('practice'),
+		details: z.object({
+			skillId: z.uuid(),
+			/** The skill's name, set by the server, so lists show it without another lookup. */
+			skill: z.string().max(80).optional(),
+			minutes: z.int().min(1, 'Practise for at least a minute.').max(MAX_PRACTICE_MINUTES, 'Log at most 10 hours at a time.'),
+			/** The focus of this session; prefilled from the last session's Next time. */
+			workedOn: z.string().trim().max(300).optional(),
+			/** What told the learner how it went: a recording, a teacher, a metronome. */
+			feedback: z.string().trim().max(300).optional(),
+			/** The fix for next time, which becomes the next session's focus. */
+			nextTime: z.string().trim().max(300).optional(),
+		}),
 	}),
 	z.object({
 		// Made by Finished on a reading, never from + Log. The text holds its key lessons, one a line.
@@ -54,6 +73,7 @@ export const ENTRY_TYPES: Record<EntryType, EntryTypeInfo> = {
 	meeting: { pillar: 'heart', jobs: ['relive'], privateText: true },
 	moment: { pillar: 'heart', jobs: ['relive'], privateText: false },
 	lesson: { pillar: 'mind', jobs: ['remember'], privateText: false },
+	practice: { pillar: 'mind', jobs: ['track', 'remember'], privateText: false },
 	'reading.finished': { pillar: 'mind', jobs: ['relive', 'track'], privateText: false },
 }
 

@@ -109,6 +109,69 @@ test('removing an entry hides it, undo brings it back, and edits are checked', a
 	expect(await code(client.entries.update({ id: entry.id, details: { reps: -1 } }))).toBe('BAD_REQUEST')
 })
 
+test('practice is logged on a member’s own skill, counts towards its week, keeps its name in step, turns one thing learned into a lesson card, and stays when the skill is archived', async () => {
+	const { client } = await newMember()
+	const piano = await client.skills.create({ id: randomUUID(), name: 'Piano', goal: 'Play the Bach prelude at 80 bpm', weeklyMinutes: 120 })
+	expect(piano).toMatchObject({ name: 'Piano', goal: 'Play the Bach prelude at 80 bpm', weeklyMinutes: 120, archived: false, week: { minutes: 0, sessions: 0 }, sessions: 0, last: null })
+	expect(await client.skills.create({ id: piano.id, name: 'Piano again' })).toEqual(piano)
+	expect(await code(client.skills.create({ id: randomUUID(), name: 'piano' }))).toBe('CONFLICT')
+	expect(await code(client.skills.create({ id: randomUUID(), name: 'Chess', weeklyMinutes: 0 }))).toBe('BAD_REQUEST')
+	const practice = (details: Record<string, unknown>, more: { text?: string; occurredAt?: Date } = {}) =>
+		client.entries.create({ id: randomUUID(), type: 'practice', details: { skillId: piano.id, minutes: 30, ...details } as never, ...more })
+
+	// Minutes from 1 to 600, on the member's own skill only.
+	expect(await code(practice({ minutes: 0 }))).toBe('BAD_REQUEST')
+	expect(await code(practice({ minutes: 601 }))).toBe('BAD_REQUEST')
+	const other = await newMember('Asha')
+	const theirs = await other.client.skills.create({ id: randomUUID(), name: 'Chess' })
+	expect(await code(practice({ skillId: theirs.id }))).toBe('BAD_REQUEST')
+	expect(await code(other.client.skills.get({ id: piano.id }))).toBe('NOT_FOUND')
+
+	// Last week's session doesn't count towards this week.
+	await practice({ minutes: 20, nextTime: 'Left hand alone' }, { occurredAt: new Date(Date.now() - 8 * 86_400_000) })
+	const first = await practice({ minutes: 30, workedOn: 'Left hand alone', feedback: 'A recording', nextTime: 'Even sixteenths at 70 bpm' }, { text: 'Slow practice finds the uneven notes.' })
+	expect(first).toMatchObject({ pillar: 'mind', jobs: ['track', 'remember'], details: { skill: 'Piano', minutes: 30 }, text: 'Slow practice finds the uneven notes.' })
+	await practice({ minutes: 45, workedOn: 'Even sixteenths at 70 bpm' })
+	const [listed] = await client.skills.list()
+	expect(listed).toMatchObject({ week: { minutes: 75, sessions: 2 }, sessions: 3, last: { minutes: 45, nextTime: null } })
+
+	// One thing learned comes back like a lesson, asked by its skill; a session without one makes no card.
+	expect(await sql('select prompt, answer, kind from cards where entry_id = $1', [first.id])).toEqual([
+		{ prompt: "Practising Piano: what's the lesson?", answer: 'Slow practice finds the uneven notes.', kind: 'lesson' },
+	])
+	expect(await sql("select count(*)::int as n from cards where kind = 'lesson' and user_id = (select user_id from entries where id = $1)", [first.id])).toEqual([{ n: 1 }])
+
+	// The skill's page: 8 weeks, this one last, and the trail newest first.
+	const detail = await client.skills.get({ id: piano.id })
+	expect(detail.weeks).toHaveLength(8)
+	expect(detail.weeks.at(-1)).toMatchObject({ minutes: 75, sessions: 2 })
+	expect(detail.weeks.reduce((n, w) => n + w.minutes, 0)).toBe(95)
+	expect(detail.trail.map((t) => [t.minutes, t.workedOn, t.nextTime, t.learned])).toEqual([
+		[45, 'Even sixteenths at 70 bpm', null, null],
+		[30, 'Left hand alone', 'Even sixteenths at 70 bpm', 'Slow practice finds the uneven notes.'],
+		[20, null, 'Left hand alone', null],
+	])
+	const progress = await client.progress.summary({ days: 84 })
+	expect(progress.practice).toEqual([{ skillId: piano.id, name: 'Piano', weeklyMinutes: 120, weeks: expect.any(Array) }])
+	expect(progress.practice[0]!.weeks.at(-1)!.minutes).toBe(75)
+
+	// A new name shows on past sessions; an edit can't move a session to another skill.
+	await client.skills.update({ id: piano.id, name: 'Piano (classical)', goal: '', weeklyMinutes: null })
+	expect((await client.entries.list({})).filter((e) => e.type === 'practice').map((e) => e.type === 'practice' && e.details.skill)).toEqual(Array(3).fill('Piano (classical)'))
+	const edited = await client.entries.update({ id: first.id, details: { skillId: theirs.id, minutes: 35 } })
+	expect(edited.details).toMatchObject({ skillId: piano.id, minutes: 35 })
+	expect((await client.skills.list())[0]).toMatchObject({ goal: null, weeklyMinutes: null })
+
+	// Archived: gone from the list, its sessions kept, and no new ones until it is back.
+	await client.skills.archive({ id: piano.id })
+	expect(await client.skills.list()).toEqual([])
+	expect((await client.entries.list({})).filter((e) => e.type === 'practice')).toHaveLength(3)
+	expect(await code(practice({}))).toBe('BAD_REQUEST')
+	expect((await client.skills.get({ id: piano.id })).archived).toBe(true)
+	expect((await client.skills.restore({ id: piano.id })).sessions).toBe(3)
+	expect(await code(practice({}))).toBe('ok')
+})
+
 test('entries need a session', async () => {
 	const { client } = await newMember()
 	await client.auth.signOut({})

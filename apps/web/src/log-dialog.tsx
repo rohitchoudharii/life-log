@@ -1,6 +1,7 @@
-import type { Entry } from '@life-log-club/contract'
-import { ENTRY_TYPES, type EntryType } from '@life-log-club/domain'
+import type { Entry, Skill } from '@life-log-club/contract'
+import { ENTRY_TYPES, type EntryType, MAX_PRACTICE_MINUTES } from '@life-log-club/domain'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { useLogEntry } from './entry-actions'
 import { MOODS, PILLAR_DOT } from './entries'
@@ -14,6 +15,7 @@ const TYPES: { type: EntryType; label: string }[] = [
 	{ type: 'mood', label: 'Mood' },
 	{ type: 'moment', label: 'Moment' },
 	{ type: 'lesson', label: 'Lesson' },
+	{ type: 'practice', label: 'Practice' },
 ]
 
 const input =
@@ -48,9 +50,32 @@ type Form = {
 	text: string
 	cue: string
 	remember: boolean
+	skillId: string
+	minutes: string
+	workedOn: string
+	feedback: string
+	nextTime: string
 }
 
-function defaults(last: Map<EntryType, Entry>): Form {
+/** A first session lasts this long, until the skill has one to start from. */
+const FIRST_SESSION_MINUTES = 30
+
+/**
+ * A practice session starts from the skill's last one: its minutes, and its Next time as this
+ * session's focus, so focus, feedback and fix carry on with no typing.
+ */
+const practiceFrom = (skill: Skill | undefined) => ({
+	skillId: skill?.id ?? '',
+	minutes: String(skill?.last?.minutes ?? FIRST_SESSION_MINUTES),
+	workedOn: skill?.last?.nextTime ?? '',
+	feedback: '',
+	nextTime: '',
+})
+
+function defaults(last: Map<EntryType, Entry>, skills: Skill[], skillId: string | undefined): Form {
+	const practised = last.get('practice')
+	// The skill asked for, else the one practised last, else the first.
+	const skill = skills.find((k) => k.id === skillId) ?? skills.find((k) => practised?.type === 'practice' && k.id === practised.details.skillId) ?? skills[0]
 	const set = last.get('gym.set')
 	const meal = last.get('meal')
 	const sleep = last.get('sleep')
@@ -66,6 +91,7 @@ function defaults(last: Map<EntryType, Entry>): Form {
 		text: '',
 		cue: '',
 		remember: true,
+		...practiceFrom(skill),
 	}
 }
 
@@ -73,11 +99,12 @@ function defaults(last: Map<EntryType, Entry>): Form {
  * Quick capture for every kind of log. It starts from the last values of the chosen type, so
  * most logs are one click on Save; a mood is one click on its face.
  */
-export function LogDialog({ type: openWith, onClose }: { type: EntryType | null; onClose: () => void }) {
+export function LogDialog({ type: openWith, skillId, onClose }: { type: EntryType | null; skillId?: string; onClose: () => void }) {
 	const ref = useRef<HTMLDialogElement>(null)
 	const [type, setType] = useState<EntryType>('gym.set')
 	const { last, people } = useLastOfEach()
-	const [form, setForm] = useState<Form>(() => defaults(last))
+	const skills = useQuery(orpc.skills.list.queryOptions()).data ?? []
+	const [form, setForm] = useState<Form>(() => defaults(last, skills, skillId))
 	const log = useLogEntry()
 
 	useEffect(() => {
@@ -85,7 +112,7 @@ export function LogDialog({ type: openWith, onClose }: { type: EntryType | null;
 		if (!dialog) return
 		if (openWith && !dialog.open) {
 			setType(openWith)
-			setForm(defaults(last))
+			setForm(defaults(last, skills, skillId))
 			log.reset()
 			dialog.showModal()
 		}
@@ -93,6 +120,11 @@ export function LogDialog({ type: openWith, onClose }: { type: EntryType | null;
 		// Defaults are read once, when the dialog opens.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [openWith])
+
+	// Skills can load after the dialog opened: practice then starts from the first skill.
+	useEffect(() => {
+		if (type === 'practice' && skills.length && !skills.some((k) => k.id === form.skillId)) setForm((f) => ({ ...f, ...practiceFrom(skills[0]) }))
+	}, [type, skills, form.skillId])
 
 	const set = (key: keyof Form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [key]: e.target.value }))
 	const save = (data: Parameters<typeof log.mutate>[0]) => log.mutate(data, { onSuccess: onClose })
@@ -113,6 +145,14 @@ export function LogDialog({ type: openWith, onClose }: { type: EntryType | null;
 			case 'lesson': {
 				const cue = form.cue.trim()
 				return save({ type, details: cue ? { cue } : {}, text, remember: form.remember })
+			}
+			case 'practice': {
+				const optional = (v: string) => v.trim() || undefined
+				return save({
+					type,
+					details: { skillId: form.skillId, minutes: Number(form.minutes), workedOn: optional(form.workedOn), feedback: optional(form.feedback), nextTime: optional(form.nextTime) },
+					text,
+				})
 			}
 			case 'mood':
 				return
@@ -226,6 +266,52 @@ export function LogDialog({ type: openWith, onClose }: { type: EntryType | null;
 						</label>
 					</>
 				)}
+				{type === 'practice' &&
+					(skills.length ? (
+						<>
+							<div className="grid grid-cols-[1fr_6rem] gap-3">
+								<Field label="Skill">
+									<select
+										className={input}
+										value={form.skillId}
+										onChange={(e) => setForm((f) => ({ ...f, ...practiceFrom(skills.find((k) => k.id === e.target.value)) }))}
+									>
+										{skills.map((k) => (
+											<option key={k.id} value={k.id}>
+												{k.name}
+											</option>
+										))}
+									</select>
+								</Field>
+								<Field label="Minutes">
+									<input className={input} required type="number" inputMode="numeric" min={1} max={MAX_PRACTICE_MINUTES} step={1} value={form.minutes} onChange={set('minutes')} />
+								</Field>
+							</div>
+							<Field label="Worked on">
+								<input className={input} maxLength={300} value={form.workedOn} onChange={set('workedOn')} placeholder="The one thing this session is for" />
+							</Field>
+							{form.workedOn && form.workedOn === skills.find((k) => k.id === form.skillId)?.last?.nextTime && (
+								<p className="-mt-3 text-xs text-ink/60">From last time’s Next time.</p>
+							)}
+							<Field label="What told you how it went">
+								<input className={input} maxLength={300} value={form.feedback} onChange={set('feedback')} placeholder="A recording, a teacher, the metronome" />
+							</Field>
+							<Field label="Next time">
+								<input className={input} maxLength={300} value={form.nextTime} onChange={set('nextTime')} placeholder="The fix to try next" />
+							</Field>
+							<Field label="One thing I learned (optional)">
+								<textarea className={`${input} min-h-16`} value={form.text} onChange={set('text')} />
+							</Field>
+							<p className="-mt-3 text-xs text-ink/60">What you learned comes back in Review.</p>
+						</>
+					) : (
+						<p className="text-sm text-ink/80">
+							Add a skill first, such as piano or public speaking.{' '}
+							<Link to="/mind/skills" onClick={onClose} className="font-medium text-navy underline underline-offset-2">
+								Add a skill
+							</Link>
+						</p>
+					))}
 				{type === 'mood' ? (
 					<div role="group" aria-label="How do you feel?" className="grid grid-cols-5 gap-2">
 						{MOODS.map((label, i) => (
@@ -241,7 +327,7 @@ export function LogDialog({ type: openWith, onClose }: { type: EntryType | null;
 							</button>
 						))}
 					</div>
-				) : (
+				) : type === 'practice' && !skills.length ? null : (
 					<button
 						type="submit"
 						disabled={log.isPending}

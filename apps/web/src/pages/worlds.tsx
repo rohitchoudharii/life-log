@@ -9,6 +9,7 @@ import { NewBook } from '../books'
 import { AddReading, FinishedReadings, ReadingNow, useFileDrop } from '../readings'
 import { client, orpc } from '../rpc'
 import { useOpenLog } from '../shell'
+import { LogPractice, weekLine } from './skills'
 
 function Hero({ title, sub, children }: { title: string; sub: string; children?: ReactNode }) {
 	return (
@@ -90,6 +91,9 @@ export function Mind() {
 					<Link to="/mind/words" className="rounded-xl border border-world-line px-4 py-2.5 text-sm font-medium transition hover:bg-world-card">
 						Words
 					</Link>
+					<Link to="/mind/skills" className="rounded-xl border border-world-line px-4 py-2.5 text-sm font-medium transition hover:bg-world-card">
+						Skills
+					</Link>
 					<LogButton type="lesson">Log a lesson</LogButton>
 				</div>
 			</Hero>
@@ -144,11 +148,48 @@ export function Mind() {
 			</section>
 			<FinishedReadings />
 			<Fading />
+			<MindSkills />
 			<section className="grid gap-3">
 				<h2 className="text-xl">Lessons</h2>
-				<EntryList entries={lessons.data} empty="No lessons yet. Log what life teaches you." />
+				{/* Practice sessions show on their skill, with the trail of worked on and next time. */}
+				<EntryList entries={lessons.data?.filter((e) => e.type !== 'practice')} empty="No lessons yet. Log what life teaches you." />
 			</section>
 		</div>
+	)
+}
+
+/** Each skill's week against its target, one click from Log practice. */
+function MindSkills() {
+	const skills = useQuery(orpc.skills.list.queryOptions())
+	if (!skills.isSuccess) return null
+	return (
+		<section className="grid gap-3" aria-labelledby="mind-skills">
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<h2 id="mind-skills" className="text-xl">
+					Skills
+				</h2>
+				<Link to="/mind/skills" className="font-sans text-sm text-world-accent underline-offset-2 hover:underline">
+					{skills.data.length ? 'All skills' : 'Add a skill'}
+				</Link>
+			</div>
+			{skills.data.length ? (
+				<ul className="grid gap-2">
+					{skills.data.map((k) => (
+						<li key={k.id} data-testid="mind-skill" className="flex flex-wrap items-center gap-3 rounded-2xl border border-world-line bg-world-card px-4 py-3">
+							<div className="mr-auto grid min-w-0 gap-1">
+								<Link to="/mind/skills/$skillId" params={{ skillId: k.id }} className="text-lg hover:underline">
+									{k.name}
+								</Link>
+								<p className="font-sans text-xs text-world-muted">{weekLine(k)}</p>
+							</div>
+							<LogPractice skillId={k.id} className="rounded-xl border border-world-line px-3 py-1.5 font-sans text-sm font-medium transition hover:bg-world active:scale-[0.97]" />
+						</li>
+					))}
+				</ul>
+			) : (
+				<p className="font-sans text-sm text-world-muted">Practising something, such as piano or public speaking? Add it as a skill to log each session with a focus and a fix.</p>
+			)}
+		</section>
 	)
 }
 

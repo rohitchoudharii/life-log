@@ -90,6 +90,48 @@ export type Word = z.infer<typeof Word>
 export const Suggestion = z.object({ word: z.string(), form: z.string(), sentence: z.string(), meaning: z.string() })
 export type Suggestion = z.infer<typeof Suggestion>
 
+const SkillWeek = z.object({ minutes: z.int(), sessions: z.int() })
+
+/** A skill the member practises, with this week's practice. Weeks start on Monday (UTC). */
+export const Skill = z.object({
+	id: z.uuid(),
+	name: z.string(),
+	goal: z.string().nullable(),
+	/** Minutes a week the member aims for; null shows sessions only. */
+	weeklyMinutes: z.int().nullable(),
+	archived: z.boolean(),
+	week: SkillWeek,
+	/** Every session so far. */
+	sessions: z.int(),
+	/** The last session, which the next one starts from: its minutes, and its Next time as the next focus. */
+	last: z.object({ at: z.date(), minutes: z.int(), nextTime: z.string().nullable() }).nullable(),
+	createdAt: z.date(),
+})
+export type Skill = z.infer<typeof Skill>
+
+/** One skill in full: the last 8 weeks against the target, and the trail of sessions. */
+export const SkillDetail = Skill.extend({
+	/** Oldest first, this week last. */
+	weeks: z.array(SkillWeek.extend({ week: z.date() })),
+	/** Newest first: what each session worked on, what told how it went, the fix for next time, and what was learned. */
+	trail: z.array(
+		z.object({
+			entryId: z.uuid(),
+			at: z.date(),
+			minutes: z.int(),
+			workedOn: z.string().nullable(),
+			feedback: z.string().nullable(),
+			nextTime: z.string().nullable(),
+			learned: z.string().nullable(),
+		}),
+	),
+})
+export type SkillDetail = z.infer<typeof SkillDetail>
+
+const SkillName = z.string().trim().min(1, 'Name the skill.').max(80, 'Keep the name short.')
+const SkillGoal = z.string().trim().max(200, 'Keep the goal to one line.')
+const WeeklyMinutes = z.int().min(1, 'Aim for at least a minute a week.').max(3000, 'That is more than 50 hours a week.')
+
 /**
  * A teach-back: the learner explains an idea to an AI student, who asks up to 3 follow-ups and
  * then sums up. `topic` is the card's cue, what the learner teaches. `result` comes with the
@@ -362,6 +404,8 @@ export const ProgressSummary = z.object({
 	 * many answers this calendar month (UTC) were wrong though the member was sure.
 	 */
 	calibration: z.object({ sure: RightOf, think_so: RightOf, guessing: RightOf, sureWrongThisMonth: z.int() }),
+	/** Practice minutes per skill by week (Monday, UTC), every week of the period, oldest first; skills with practice in it only. */
+	practice: z.array(z.object({ skillId: z.uuid(), name: z.string(), weeklyMinutes: z.int().nullable(), weeks: z.array(z.object({ week: z.date(), minutes: z.int() })) })),
 })
 export type ProgressSummary = z.infer<typeof ProgressSummary>
 
@@ -943,6 +987,22 @@ export const contract = {
 		/** Takes a word out of the vocabulary and the review queue; `restore` brings it back (undo). */
 		remove: oc.input(z.object({ id: z.uuid() })).output(Ok),
 		restore: oc.input(z.object({ id: z.uuid() })).output(Word),
+	},
+	skills: {
+		/** The member's skills, not archived, in the order they were added. */
+		list: oc.output(z.array(Skill)),
+		get: oc.input(z.object({ id: z.uuid() })).output(SkillDetail),
+		/** Adds a skill. The client picks the id; a retry returns the same skill. */
+		create: oc
+			.input(z.object({ id: z.uuid(), name: SkillName, goal: SkillGoal.optional(), weeklyMinutes: WeeklyMinutes.optional() }))
+			.output(Skill),
+		/** Renames a skill or changes its goal or target; an empty goal or a null target clears it. */
+		update: oc
+			.input(z.object({ id: z.uuid(), name: SkillName.optional(), goal: SkillGoal.optional(), weeklyMinutes: WeeklyMinutes.nullable().optional() }))
+			.output(Skill),
+		/** Hides a skill from the lists; its practice entries stay. `restore` brings it back (undo). */
+		archive: oc.input(z.object({ id: z.uuid() })).output(Ok),
+		restore: oc.input(z.object({ id: z.uuid() })).output(Skill),
 	},
 	teach: {
 		/**

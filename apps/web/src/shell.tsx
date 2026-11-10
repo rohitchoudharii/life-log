@@ -16,8 +16,8 @@ const WORLDS: { world: World; to: '/' | '/mind' | '/body' | '/heart'; label: str
 	{ world: 'heart', to: '/heart', label: 'Heart', title: 'The journal', dot: 'bg-heart' },
 ]
 
-const OpenLog = createContext<(type?: EntryType) => void>(() => {})
-/** Opens the + Log dialog, on a given type or on the last one used. */
+const OpenLog = createContext<(type?: EntryType, skillId?: string) => void>(() => {})
+/** Opens the + Log dialog, on a given type or on the last one used; practice can start on a given skill. */
 export const useOpenLog = () => useContext(OpenLog)
 
 /** Shows the sign-in page until there is a session, then the app around the current page. */
@@ -38,9 +38,11 @@ function Shell({ user }: { user: User }) {
 	const path = useRouterState({ select: (s) => s.location.pathname })
 	const current = WORLDS.find((w) => w.to !== '/' && path.startsWith(w.to)) ?? WORLDS[0]!
 	const [logType, setLogType] = useState<EntryType | null>(null)
+	const [logSkill, setLogSkill] = useState<string | undefined>()
 	const lastType = useRef<EntryType>('gym.set')
-	const openLog = (type?: EntryType) => {
+	const openLog = (type?: EntryType, skillId?: string) => {
 		if (type) lastType.current = type
+		setLogSkill(skillId)
 		setLogType(type ?? lastType.current)
 	}
 	const signOut = useSignOut()
@@ -51,6 +53,7 @@ function Shell({ user }: { user: User }) {
 			if ((e.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"], dialog')) return
 			if (e.key === 'l' || e.key === 'L') {
 				e.preventDefault()
+				setLogSkill(undefined)
 				setLogType(lastType.current)
 			}
 			const target = WORLDS[Number(e.key) - 1]
@@ -162,7 +165,7 @@ function Shell({ user }: { user: User }) {
 					})}
 				</nav>
 
-				<LogDialog type={logType} onClose={() => setLogType(null)} />
+				<LogDialog type={logType} skillId={logSkill} onClose={() => setLogType(null)} />
 			</div>
 		</OpenLog>
 	)

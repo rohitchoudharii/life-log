@@ -18,12 +18,12 @@ const fallbackCue = (at: Date) =>
 const cueOf = (entry: Entry) => (entry.details as { cue?: string }).cue
 
 /**
- * Makes the review card for a lesson just logged, in the same transaction as the entry. It is
- * started and due at once. Returns whether the card still needs a cue written by AI: true when
- * the member gave none and has a key.
+ * Makes the review card for a lesson just logged, in the same transaction as the entry: a lesson
+ * entry, or the one thing learned in a practice session, whose cue is the skill. It is started
+ * and due at once. Returns whether the card still needs a cue written by AI: true when there is
+ * no cue and the member has a key.
  */
-export async function addLessonCard(tx: Tx, entry: Entry) {
-	const cue = cueOf(entry)
+export async function addLessonCard(tx: Tx, entry: Entry, cue = cueOf(entry)) {
 	await tx.insert(cards).values({
 		id: randomUUID(),
 		userId: entry.userId,

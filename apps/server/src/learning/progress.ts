@@ -2,7 +2,7 @@ import type { MindSummary, ProgressSummary } from '@life-log-club/contract'
 import { calibration, GAP_BUCKETS, gapBucket, ideaStatus, isGraduated, recallNow, type IdeaStatus } from '@life-log-club/domain'
 import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { Tx } from '../db/client'
-import { cards, readings, recallAttempts, reviewLog, sections } from '../db/schema'
+import { cards, entries, readings, recallAttempts, reviewLog, sections, skills } from '../db/schema'
 import { monthStart } from './ai'
 import { preferencesOf } from './preferences'
 
@@ -45,7 +45,7 @@ async function reviewAnswers(tx: Tx, since: Date): Promise<Answer[]> {
 const rightOf = (answers: Answer[]) => ({ right: answers.filter((a) => a.right).length, total: answers.length })
 
 /** Monday 00:00 UTC of the week `at` falls in. */
-function weekOf(at: Date) {
+export function weekOf(at: Date) {
 	const d = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()))
 	d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7))
 	return d
@@ -120,7 +120,29 @@ export async function progressSummary(tx: Tx, userId: string, days: number, now 
 		recallByGap: byGap,
 		dumps,
 		calibration: { ...calibration(confident), sureWrongThisMonth: sureWrongThisMonth[0]?.n ?? 0 },
+		practice: await practiceByWeek(tx, ago(now, days), now),
 	}
+}
+
+/** Practice minutes per skill, for every week from the one `since` falls in to this one, for skills practised in that time. */
+async function practiceByWeek(tx: Tx, since: Date, now: Date) {
+	const first = weekOf(since).getTime()
+	const rows = await tx
+		.select({ skillId: skills.id, name: skills.name, weeklyMinutes: skills.weeklyMinutes, at: entries.occurredAt, details: entries.details })
+		.from(entries)
+		.innerJoin(skills, sql`${skills.id}::text = ${entries.details}->>'skillId'`)
+		.where(and(eq(entries.type, 'practice'), isNull(entries.deletedAt), gte(entries.occurredAt, new Date(first))))
+		.orderBy(asc(skills.createdAt))
+	const starts: number[] = []
+	for (let w = first; w <= weekOf(now).getTime(); w += 7 * DAY) starts.push(w)
+	const bySkill = new Map<string, { skillId: string; name: string; weeklyMinutes: number | null; minutes: Map<number, number> }>()
+	for (const r of rows) {
+		const skill = bySkill.get(r.skillId) ?? { skillId: r.skillId, name: r.name, weeklyMinutes: r.weeklyMinutes, minutes: new Map() }
+		const week = weekOf(r.at).getTime()
+		skill.minutes.set(week, (skill.minutes.get(week) ?? 0) + (r.details as { minutes: number }).minutes)
+		bySkill.set(r.skillId, skill)
+	}
+	return [...bySkill.values()].map(({ minutes, ...skill }) => ({ ...skill, weeks: starts.map((w) => ({ week: new Date(w), minutes: minutes.get(w) ?? 0 })) }))
 }
 
 /** Fading ideas and the 30-day recall at review, for Mind and the Home card. */
