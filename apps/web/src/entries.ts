@@ -25,6 +25,8 @@ export function describe(e: Entry) {
 			return e.text ?? 'A moment'
 		case 'lesson':
 			return e.text ?? 'A lesson'
+		case 'reading.finished':
+			return `Finished ${e.details.title}`
 	}
 }
 

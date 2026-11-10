@@ -40,3 +40,19 @@ export function gapBucket(days: number): GapBucket {
 	if (d <= 91) return 'quarter'
 	return 'longer'
 }
+
+/** Words to a page, for a goal's pace. */
+export const WORDS_PER_PAGE = 300
+
+/**
+ * How a reading stands against its goal date on `today` (both YYYY-MM-DD, UTC): the share read,
+ * and the pages a day left to finish by the end of the goal day, counting today. `passed` once
+ * the goal day is over.
+ */
+export function goalPace({ wordCount, wordsRead, goalBy, today }: { wordCount: number; wordsRead: number; goalBy: string; today: string }) {
+	const percent = wordCount ? Math.min(100, Math.round((wordsRead / wordCount) * 100)) : 0
+	const days = Math.round((Date.parse(goalBy) - Date.parse(today)) / 86_400_000) + 1
+	if (days < 1) return { percent, passed: true as const }
+	const pages = Math.ceil(Math.max(0, wordCount - wordsRead) / WORDS_PER_PAGE / days)
+	return { percent, passed: false as const, pagesPerDay: pages }
+}

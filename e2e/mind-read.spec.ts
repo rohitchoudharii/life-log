@@ -872,3 +872,79 @@ test('Recall chapter at the end of an EPUB chapter is graded against every key i
 		expect.arrayContaining(unasked.map((i) => [i.id, 'good', 'recall'])),
 	)
 })
+
+/** A pasted reading of two parts, 600 words in all. */
+const twoParts = () => {
+	const words = (n: number, w: string) => Array.from({ length: n }, (_, i) => `${w}${i}`).join(' ')
+	return `## Practice\n\n${words(300, 'practice')}.\n\n## Feedback\n\n${words(300, 'feedback')}.`
+}
+
+test('Finish by sets a pace on the tile; Finished logs the reading as a milestone whose key lessons become cards, and Undo takes both back', async ({ page }, testInfo) => {
+	const email = await joinAs(page)
+	const id = crypto.randomUUID()
+	expect((await api(page, 'readings/addText', { id, text: twoParts(), title: 'Peak' })).ok()).toBe(true)
+	await page.goto('/mind')
+	const tile = page.getByTestId('reading').filter({ hasText: 'Peak' })
+
+	// A goal a week from today (8 days, today included): 600 words = 2 pages, so 1 a day.
+	const goal = new Date(Date.now() + 7 * DAY_MINUTES * 60_000).toISOString().slice(0, 10)
+	await tile.getByRole('button', { name: 'Finish by' }).click()
+	await tile.getByLabel('Finish by').fill(goal)
+	const label = new Date(`${goal}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+	await expect(tile.getByTestId('goal')).toHaveText(`0% · about 1 page a day to finish by ${label}`)
+	await proof(page, testInfo, 'tile-goal')
+	// A goal day already over says so, and nothing more.
+	await sql("update readings set goal_by = (now() at time zone 'utc')::date - 1 where id = $1", [id])
+	await page.reload()
+	await expect(tile.getByTestId('goal')).toHaveText('0% · Goal date passed')
+
+	// Finished works from any section, without reading them all, and opens the last one.
+	await tile.getByRole('link', { name: /Peak/ }).click()
+	await expect(page.getByRole('heading', { level: 2, name: 'Practice' })).toBeVisible()
+	await page.getByRole('button', { name: 'Finished', exact: true }).click()
+	await expect(page.getByRole('status').filter({ hasText: 'Finished: Peak' })).toBeVisible()
+	await expect(page.getByRole('heading', { level: 2, name: 'Feedback' })).toBeVisible()
+	// An article has no chapters, so its last section is not the end of one.
+	await expect(page.getByRole('button', { name: 'Recall chapter' })).toHaveCount(0)
+	const card = page.getByRole('region', { name: 'Finished' })
+	await expect(card.getByTestId('milestone')).toHaveText(/^\d+ min read · 0 ideas in review · no reviews yet$/)
+	await card.getByLabel('Key lesson 1').fill('Practise at the edge of what you can do.')
+	await card.getByLabel('Key lesson 2').fill('Feedback has to come fast to help.')
+	await card.getByRole('button', { name: 'Save lessons' }).click()
+	await expect(card.getByRole('listitem')).toHaveText(['Practise at the edge of what you can do.', 'Feedback has to come fast to help.'])
+	await expect(card.getByLabel('Key lesson 3')).toBeVisible()
+	await card.scrollIntoViewIfNeeded()
+	await proof(page, testInfo, 'milestone')
+
+	const [user] = await sql<{ id: string }>('select id from users where email = $1', [email])
+	const finished = () =>
+		sql<{ id: string; text: string; deleted_at: Date | null }>("select id, text, deleted_at from entries where user_id = $1 and type = 'reading.finished'", [user!.id])
+	const lessons = () => sql<{ answer: string; entry_id: string; deleted_at: Date | null }>("select answer, entry_id, deleted_at from cards where user_id = $1 and kind = 'lesson' order by position", [user!.id])
+	const [entry] = await finished()
+	expect(await finished()).toHaveLength(1)
+	expect(entry!.text).toBe('Practise at the edge of what you can do.\nFeedback has to come fast to help.')
+	expect((await lessons()).map((c) => [c.answer, c.entry_id])).toEqual([
+		['Practise at the edge of what you can do.', entry!.id],
+		['Feedback has to come fast to help.', entry!.id],
+	])
+
+	// On Mind: the milestone in the entry list, the reading under Finished this year, and its lessons due.
+	await page.goto('/mind')
+	await expect(page.getByTestId('entry').filter({ hasText: 'Finished Peak' })).toBeVisible()
+	await expect(page.getByRole('region', { name: 'Finished this year' }).getByRole('link', { name: 'Peak' })).toBeVisible()
+	await expect(page.getByTestId('reading')).toHaveCount(0)
+	await expect(page.getByTestId('mind-due')).toHaveText('2')
+	await proof(page, testInfo, 'mind-finished')
+
+	// Undo takes back the entry and its lesson cards, and the reading is back in Reading now.
+	await page.getByRole('region', { name: 'Finished this year' }).getByRole('link', { name: 'Peak' }).click()
+	await page.getByRole('region', { name: 'Finished' }).getByRole('button', { name: 'Undo finished' }).click()
+	await expect(page.getByRole('button', { name: 'Finished', exact: true }).first()).toBeVisible()
+	expect((await finished())[0]!.deleted_at).not.toBeNull()
+	expect((await lessons()).every((c) => c.deleted_at)).toBe(true)
+	await page.goto('/mind')
+	await expect(page.getByTestId('entry').filter({ hasText: 'Finished Peak' })).toHaveCount(0)
+	await expect(page.getByRole('region', { name: 'Finished this year' })).toHaveCount(0)
+	await expect(page.getByTestId('reading').filter({ hasText: 'Peak' })).toBeVisible()
+	await expect(page.getByTestId('mind-due')).toHaveText('0')
+})

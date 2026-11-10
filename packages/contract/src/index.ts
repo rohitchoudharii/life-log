@@ -297,9 +297,25 @@ export const Reading = z.object({
 	position: ReadingPosition.nullable(),
 	/** The member's book this reading is a chapter of. */
 	book: z.object({ id: z.uuid(), title: z.string() }).nullable(),
+	/** Words in the sections read to their end, for the share read against a goal. */
+	wordsRead: z.int(),
+	/** The day the member means to finish it by (YYYY-MM-DD), or null. */
+	goalBy: z.string().nullable(),
+	/** When the member marked it finished, or null. */
+	finishedAt: z.date().nullable(),
 	createdAt: z.date(),
 })
 export type Reading = z.infer<typeof Reading>
+
+/** What finishing a reading kept: time read, ideas held, and recall at their last reviews. */
+export const Milestone = z.object({
+	seconds: z.int(),
+	ideas: z.int(),
+	recall: z.object({ right: z.int(), total: z.int() }),
+	/** The key lessons saved with it, each now a lesson card. */
+	lessons: z.array(z.object({ id: z.uuid(), text: z.string() })),
+})
+export type Milestone = z.infer<typeof Milestone>
 
 /** A book the member made from articles; its chapters are readings, in the member's order. */
 export const Book = z.object({
@@ -589,6 +605,32 @@ export const contract = {
 		 * section marks the whole reading read. The first time counts.
 		 */
 		markRead: oc.input(z.object({ id: z.uuid(), sectionId: z.uuid() })).output(Ok),
+		/** Sets the day to finish by, or clears it with null. */
+		update: oc
+			.input(z.object({ id: z.uuid(), goalBy: z.iso.date('Pick a date.').nullable() }))
+			.output(Reading),
+		/**
+		 * Marks the reading finished and logs a `reading.finished` entry (`entryId`, picked by the
+		 * client). Each of `lessons` becomes a lesson card linked to the entry, and the entry's text
+		 * holds them all. Finishing a finished reading only adds lessons, to its existing entry; the
+		 * same lesson id twice adds it once. At most 3 lessons in all.
+		 */
+		finish: oc
+			.input(
+				z.object({
+					id: z.uuid(),
+					entryId: z.uuid(),
+					lessons: z
+						.array(z.object({ id: z.uuid(), text: z.string().trim().min(1, 'Write the lesson, or leave the line empty.').max(1000) }))
+						.max(3)
+						.default([]),
+				}),
+			)
+			.output(z.object({ reading: Reading, entry: Entry, milestone: Milestone })),
+		/** Undoes Finished: removes its entry and hides its lesson cards. Restoring the entry finishes it again. */
+		unfinish: oc.input(EntryId).output(Reading),
+		/** The milestone of a finished reading. */
+		milestone: oc.input(EntryId).output(Milestone),
 		/** Saves where the member is in a reading, which opening it next time goes back to. The last save wins. */
 		savePosition: oc.input(ReadingPosition.extend({ id: z.uuid() })).output(Ok),
 		/**

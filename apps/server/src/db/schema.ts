@@ -288,6 +288,11 @@ export const readings = pgTable(
 		position: jsonb().$type<{ sectionId: string; block: number }>(),
 		/** When a position was last saved, so the reading the member last had open can be found. */
 		lastOpenedAt: timestamp({ withTimezone: true }),
+		/** The day the member means to finish it by, as YYYY-MM-DD; null without a goal. */
+		goalBy: date({ mode: 'string' }),
+		/** When the member marked it finished, and the `reading.finished` entry that records it. */
+		finishedAt: timestamp({ withTimezone: true }),
+		finishedEntryId: uuid().references((): AnyPgColumn => entries.id, { onDelete: 'set null' }),
 		/**
 		 * For a chapter page of a web book: the book it belongs to, which the member can add whole.
 		 * `pages` is how many pages its contents list names.

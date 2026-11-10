@@ -1,4 +1,5 @@
 import { FILE_TOO_LARGE, MAX_FILE_BYTES, type Reading } from '@life-log-club/contract'
+import { goalPace } from '@life-log-club/domain'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { type DragEvent, useRef, useState } from 'react'
@@ -47,6 +48,9 @@ function useAddReading() {
 				readAt: null,
 				position: null,
 				book: null,
+				wordsRead: 0,
+				goalBy: null,
+				finishedAt: null,
 				createdAt: new Date(),
 			}
 			const before = queryClient.getQueryData<Reading[]>(listKey)
@@ -96,6 +100,9 @@ export function useAddFile() {
 				readAt: null,
 				position: null,
 				book: null,
+				wordsRead: 0,
+				goalBy: null,
+				finishedAt: null,
 				createdAt: new Date(),
 			}
 			queryClient.setQueryData<Reading[]>(listKey, (list) => [placeholder, ...(list ?? [])])
@@ -309,6 +316,90 @@ function useAddBook() {
 	})
 }
 
+const shortDay = (day: string) => new Date(`${day}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+const todayUtc = () => new Date().toISOString().slice(0, 10)
+
+/** The goal line ("34% · about 12 pages a day to finish by 1 Mar") and Finish by, which sets or clears it. */
+function Goal({ reading }: { reading: Reading }) {
+	const queryClient = useQueryClient()
+	const [editing, setEditing] = useState(false)
+	const save = useMutation({
+		mutationFn: (goalBy: string | null) => client.readings.update({ id: reading.id, goalBy }),
+		onSuccess: async () => {
+			setEditing(false)
+			await queryClient.invalidateQueries({ queryKey: listKey })
+		},
+	})
+	const pace = reading.goalBy ? goalPace({ wordCount: reading.wordCount, wordsRead: reading.wordsRead, goalBy: reading.goalBy, today: todayUtc() }) : null
+	return (
+		<div className="flex flex-wrap items-center gap-2 border-t border-world-line px-4 py-3 font-sans text-sm">
+			{pace && (
+				<p className="mr-auto text-world-muted" data-testid="goal">
+					{pace.passed
+						? `${pace.percent}% · Goal date passed`
+						: `${pace.percent}% · about ${pace.pagesPerDay} ${pace.pagesPerDay === 1 ? 'page' : 'pages'} a day to finish by ${shortDay(reading.goalBy!)}`}
+				</p>
+			)}
+			{editing ? (
+				<label className="flex items-center gap-2">
+					<span>Finish by</span>
+					<input
+						type="date"
+						autoFocus
+						min={todayUtc()}
+						defaultValue={reading.goalBy ?? ''}
+						onChange={(e) => e.target.value && save.mutate(e.target.value)}
+						className="rounded-lg border border-world-line bg-world px-2 py-1"
+					/>
+					{reading.goalBy && (
+						<button type="button" className="text-world-muted underline underline-offset-2" onClick={() => save.mutate(null)}>
+							No goal
+						</button>
+					)}
+				</label>
+			) : (
+				<button type="button" className="rounded-lg border border-world-line px-3 py-1.5 transition hover:bg-world active:scale-[0.97]" onClick={() => setEditing(true)}>
+					{reading.goalBy ? 'Change goal' : 'Finish by'}
+				</button>
+			)}
+		</div>
+	)
+}
+
+/** Readings finished, this year's first, each opening at its milestone. Earlier years are listed after them. */
+export function FinishedReadings() {
+	const readings = useReadings()
+	const done = (readings.data ?? []).filter((r) => r.finishedAt).sort((a, b) => b.finishedAt!.getTime() - a.finishedAt!.getTime())
+	if (!done.length) return null
+	const year = new Date().getFullYear()
+	const groups = [
+		{ title: 'Finished this year', list: done.filter((r) => r.finishedAt!.getFullYear() === year) },
+		{ title: 'Finished before', list: done.filter((r) => r.finishedAt!.getFullYear() !== year) },
+	].filter((g) => g.list.length)
+	return (
+		<>
+			{groups.map((g) => (
+				<section key={g.title} className="grid gap-3" aria-label={g.title}>
+					<h2 className="text-xl">{g.title}</h2>
+					<ul className="flex flex-wrap gap-2">
+						{g.list.map((r) => (
+							<li key={r.id}>
+								<Link
+									to="/mind/read/$readingId"
+									params={{ readingId: r.id }}
+									className="inline-block rounded-xl border border-world-line bg-world-card px-3 py-2 italic transition hover:border-world-accent"
+								>
+									{r.title}
+								</Link>
+							</li>
+						))}
+					</ul>
+				</section>
+			))}
+		</>
+	)
+}
+
 function ReadingItem({ reading }: { reading: Reading }) {
 	const add = useAddReading()
 	const remove = useRemoveReading()
@@ -325,6 +416,7 @@ function ReadingItem({ reading }: { reading: Reading }) {
 							.join(' · ')}
 					</p>
 				</Link>
+				<Goal reading={reading} />
 				{reading.position && !reading.readAt && (
 					<div className="border-t border-world-line px-4 py-3">
 						<Link to="/mind/read/$readingId" params={{ readingId: reading.id }} className={`${quiet} inline-block`}>
@@ -384,14 +476,16 @@ export function ReadingNow() {
 	const readings = useReadings()
 	const books = useBooks()
 	if (!readings.data || !books.data) return null
-	if (!readings.data.length && !books.data.length)
+	// Finished readings move to Finished this year.
+	const reading = readings.data.filter((r) => !r.finishedAt)
+	if (!reading.length && !books.data.length)
 		return <p className="text-world-muted">Nothing to read yet. Paste a link above, or add an EPUB or PDF.</p>
 	return (
 		<ul className="grid items-start gap-3 md:grid-cols-2">
 			{books.data.map((b) => (
 				<BookItem key={b.id} book={b} />
 			))}
-			{readings.data.map((r) => (
+			{reading.map((r) => (
 				<ReadingItem key={r.id} reading={r} />
 			))}
 		</ul>

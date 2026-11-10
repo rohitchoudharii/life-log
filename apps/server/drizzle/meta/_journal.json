@@ -134,6 +134,13 @@
       "when": 1794250963002,
       "tag": "0018_sample_reading",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794272283485,
+      "tag": "0019_reading_goals",
+      "breakpoints": true
     }
   ]
 }

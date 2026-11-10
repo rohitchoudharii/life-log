@@ -330,3 +330,28 @@ test('Report a problem retires the question, and an answer to it stops counting'
 	const b = await newMember('B')
 	expect(await code(b.client.questions.report({ id: apply!, reason: 'unclear' }))).toBe('NOT_FOUND')
 })
+
+test('a finished reading follows its entry: removing it unfinishes, restoring finishes again; lessons count once, at most 3', async () => {
+	const { client } = await newMember()
+	const reading = await client.readings.addText({ id: randomUUID(), title: 'Peak', text: 'Practice at the edge of your skill, with fast feedback, makes experts.' })
+	const entryId = randomUUID()
+	const lesson = { id: randomUUID(), text: 'Practise at the edge.' }
+	const first = await client.readings.finish({ id: reading.id, entryId, lessons: [lesson] })
+	expect(first.entry).toMatchObject({ id: entryId, type: 'reading.finished', details: { readingId: reading.id, title: 'Peak' }, text: 'Practise at the edge.' })
+	// A retried save, and a second Finished with another entry id, add nothing new.
+	const again = await client.readings.finish({ id: reading.id, entryId: randomUUID(), lessons: [lesson] })
+	expect(again.entry.id).toBe(entryId)
+	expect(again.milestone.lessons).toEqual([lesson])
+	const more = [1, 2, 3].map((n) => ({ id: randomUUID(), text: `Lesson ${n}.` }))
+	expect(await code(client.readings.finish({ id: reading.id, entryId, lessons: more }))).toBe('BAD_REQUEST')
+	expect((await client.readings.finish({ id: reading.id, entryId, lessons: more.slice(0, 2) })).milestone.lessons).toHaveLength(3)
+
+	await client.entries.remove({ id: entryId })
+	expect((await client.readings.get({ id: reading.id })).finishedAt).toBeNull()
+	expect((await client.review.due({})).total).toBe(0)
+	await client.entries.restore({ id: entryId })
+	expect((await client.readings.get({ id: reading.id })).finishedAt).not.toBeNull()
+	expect((await client.review.due({})).total).toBe(3)
+	// Only Finished makes this entry.
+	expect(await code(client.entries.create({ id: randomUUID(), type: 'reading.finished', details: { readingId: reading.id, title: 'Peak' } }))).toBe('BAD_REQUEST')
+})

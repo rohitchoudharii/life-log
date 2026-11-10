@@ -6,7 +6,7 @@ import { useLogEntry } from '../entry-actions'
 import { EntryList } from '../entry-list'
 import { isToday, MOODS, when } from '../entries'
 import { NewBook } from '../books'
-import { AddReading, ReadingNow, useFileDrop } from '../readings'
+import { AddReading, FinishedReadings, ReadingNow, useFileDrop } from '../readings'
 import { client, orpc } from '../rpc'
 import { useOpenLog } from '../shell'
 
@@ -136,6 +136,7 @@ export function Mind() {
 				</div>
 				<ReadingNow />
 			</section>
+			<FinishedReadings />
 			<Fading />
 			<section className="grid gap-3">
 				<h2 className="text-xl">Lessons</h2>

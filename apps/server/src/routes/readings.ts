@@ -9,8 +9,10 @@ import { ExtractError } from '../import/extract'
 import { readPaste } from '../import/paste'
 import { NOT_A_BOOK, NOT_A_LINK, normaliseUrl, sectionRow } from '../import/reading'
 import { enqueueChapterHeadings, enqueueImport, enqueueWriteSection } from '../jobs'
+import { finishReading, milestoneOf, unfinishReading } from '../learning/finish'
 import { addSampleReading } from '../seed/sample-reading'
 import { putInBook } from './books'
+import { toEntry } from './entries'
 import { authed } from '../orpc'
 
 // Written out in full: inside a subquery Drizzle leaves column names unqualified, and `id` would
@@ -24,15 +26,18 @@ const progress = sql<{ done: number; total: number } | null>`(select case when c
 const inBook = sql`from book_chapters join books on books.id = book_chapters.book_id
 	where book_chapters.reading_id = readings.id and books.deleted_at is null`
 const book = sql<{ id: string; title: string } | null>`(select json_build_object('id', books.id, 'title', books.title) ${inBook})`
-export const columns = { reading: readings, sectionCount, progress, book }
+const wordsRead = sql<number>`(select coalesce(sum(sections.word_count), 0)::int from sections
+	where sections.reading_id = readings.id and sections.kind = 'body' and sections.read_at is not null)`
+export const columns = { reading: readings, sectionCount, progress, book, wordsRead }
 type Row = {
 	reading: typeof readings.$inferSelect
 	sectionCount: number
+	wordsRead: number
 	progress: { done: number; total: number } | null
 	book: { id: string; title: string } | null
 }
 
-export const toReading = ({ reading: r, sectionCount, progress, book }: Row) => ({
+export const toReading = ({ reading: r, sectionCount, progress, book, wordsRead }: Row) => ({
 	id: r.id,
 	title: r.title,
 	author: r.author,
@@ -48,6 +53,9 @@ export const toReading = ({ reading: r, sectionCount, progress, book }: Row) => 
 	readAt: r.readAt,
 	position: r.position,
 	book,
+	wordsRead,
+	goalBy: r.goalBy,
+	finishedAt: r.finishedAt,
 	createdAt: r.createdAt,
 })
 
@@ -78,7 +86,7 @@ async function addReading(userId: string, values: NewReading, same: SQL, created
 		const [inserted] = await tx.insert(readings).values(values).onConflictDoNothing().returning()
 		if (inserted) {
 			await created?.(tx)
-			return { row: { reading: inserted, sectionCount: 0, progress: null, book: null }, queue: true }
+			return { row: { reading: inserted, sectionCount: 0, progress: null, book: null, wordsRead: 0 }, queue: true }
 		}
 		// An id that belongs to someone else is invisible here, so it can't be read or overwritten.
 		const [found] = await tx
@@ -431,6 +439,38 @@ export const readingsRoutes = {
 				.where(eq(readings.id, row.reading.id))
 			return { ok: true as const }
 		}),
+	),
+
+	update: authed.readings.update.handler(({ input, context }) =>
+		asUser(context.user.id, async (tx) => {
+			const row = await live(tx, input.id)
+			await tx.update(readings).set({ goalBy: input.goalBy }).where(eq(readings.id, row.reading.id))
+			return toReading(await live(tx, row.reading.id))
+		}),
+	),
+
+	finish: authed.readings.finish.handler(({ input, context }) =>
+		asUser(context.user.id, async (tx) => {
+			const row = await live(tx, input.id)
+			// Locked, so two Finished taps can't make two entries.
+			await tx.select({ id: readings.id }).from(readings).where(eq(readings.id, row.reading.id)).for('update')
+			const current = await live(tx, row.reading.id)
+			const entry = await finishReading(tx, current.reading, input)
+			const after = await live(tx, row.reading.id)
+			return { reading: toReading(after), entry: toEntry(entry), milestone: await milestoneOf(tx, after.reading) }
+		}),
+	),
+
+	unfinish: authed.readings.unfinish.handler(({ input, context }) =>
+		asUser(context.user.id, async (tx) => {
+			const row = await live(tx, input.id)
+			await unfinishReading(tx, row.reading)
+			return toReading(await live(tx, row.reading.id))
+		}),
+	),
+
+	milestone: authed.readings.milestone.handler(({ input, context }) =>
+		asUser(context.user.id, async (tx) => milestoneOf(tx, (await live(tx, input.id)).reading)),
 	),
 
 	seen: authed.readings.seen.handler(async ({ input, context }) => {

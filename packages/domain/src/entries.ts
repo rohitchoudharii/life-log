@@ -27,6 +27,11 @@ export const EntryData = z.discriminatedUnion('type', [
 		// When the lesson applies ("Salary talks"): the cue its review card asks with.
 		details: z.object({ cue: z.string().trim().min(1).max(80).optional() }),
 	}),
+	z.object({
+		// Made by Finished on a reading, never from + Log. The text holds its key lessons, one a line.
+		type: z.literal('reading.finished'),
+		details: z.object({ readingId: z.uuid(), title: z.string().max(500), author: z.string().max(500).optional() }),
+	}),
 ])
 export type EntryData = z.infer<typeof EntryData>
 export type EntryType = EntryData['type']
@@ -49,6 +54,7 @@ export const ENTRY_TYPES: Record<EntryType, EntryTypeInfo> = {
 	meeting: { pillar: 'heart', jobs: ['relive'], privateText: true },
 	moment: { pillar: 'heart', jobs: ['relive'], privateText: false },
 	lesson: { pillar: 'mind', jobs: ['remember'], privateText: false },
+	'reading.finished': { pillar: 'mind', jobs: ['relive', 'track'], privateText: false },
 }
 
 export const EntryText = z.string().trim().max(5000)

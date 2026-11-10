@@ -3,6 +3,7 @@ import type { Block, Note, NoteRef, Link as TextLink } from '@life-log-club/doma
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { FinishCard, useFinish } from '../finish'
 import { importingText } from '../readings'
 import { client, errorMessage, orpc } from '../rpc'
 
@@ -236,12 +237,27 @@ function RecallCard({ readingId, sectionId, chapter }: { readingId: string; sect
 
 /**
  * The sections to recall together when `sectionId` is the last one with words in its chapter and
- * the chapter has more than one; otherwise null.
+ * the chapter has more than one; otherwise null. An article is all chapter 0, so it has none.
  */
 function chapterToRecall(contents: ReadingWithContents['contents'], sectionId: string) {
+	if (!contents.some((s) => s.chapter > 0)) return null
 	const here = contents.find((s) => s.id === sectionId)
 	const chapter = contents.filter((s) => s.chapter === here?.chapter && s.kind === 'body' && s.wordCount > 0)
 	return chapter.length > 1 && chapter.at(-1)?.id === sectionId ? chapter.map((s) => s.id) : null
+}
+
+function FinishButton({ reading, onDone }: { reading: ReadingWithContents; onDone: () => void }) {
+	const finish = useFinish(reading, onDone)
+	return (
+		<button
+			type="button"
+			disabled={finish.isPending}
+			onClick={() => finish.mutate()}
+			className="rounded-xl border border-world-line px-3 py-1.5 font-sans text-sm transition hover:bg-world-card active:scale-[0.97]"
+		>
+			Finished
+		</button>
+	)
 }
 
 /** How far below the top of the window the text starts, under the sticky header. */
@@ -551,7 +567,11 @@ export function Reader({ readingId }: { readingId: string }) {
 							← Reading room
 						</Link>
 					)}
-					<h1 className="text-3xl font-semibold tracking-tight md:text-4xl">{r.title}</h1>
+					<div className="flex flex-wrap items-start justify-between gap-3">
+						<h1 className="text-3xl font-semibold tracking-tight md:text-4xl">{r.title}</h1>
+						{/* Finishing is allowed without reading every section; it opens the last one, where the milestone is. */}
+						{!r.finishedAt && <FinishButton reading={r} onDone={() => pick(r.contents.length - 1)} />}
+					</div>
 					<div className="flex flex-wrap items-center justify-between gap-2">
 						<p className="font-sans text-sm text-world-muted">
 							{r.author && `${r.author}${original ? ' · ' : ''}`}
@@ -588,6 +608,7 @@ export function Reader({ readingId }: { readingId: string }) {
 					/>
 				)}
 				{section && section.kind === 'body' && section.wordCount > 0 && <RecallCard readingId={r.id} sectionId={section.id} chapter={chapterToRecall(r.contents, section.id)} />}
+				{current === r.contents.length - 1 && <FinishCard reading={r} />}
 				<div className="flex justify-between gap-2">
 					{current > 0 ? (
 						<button type="button" className={step} onClick={() => pick(current - 1)}>

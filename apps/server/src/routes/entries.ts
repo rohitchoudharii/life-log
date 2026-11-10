@@ -5,6 +5,7 @@ import { decrypt, encrypt } from '../crypto'
 import { asUser, type Tx } from '../db/client'
 import { entries } from '../db/schema'
 import { enqueueLessonCue } from '../jobs'
+import { onFinishedEntry } from '../learning/finish'
 import { addLessonCard, hideLessonCard, updateLessonCard } from '../learning/lessons'
 import { authed } from '../orpc'
 
@@ -19,7 +20,7 @@ function storeText(type: EntryType, id: string, text: string | null | undefined)
 	return { text: value, textCt: null }
 }
 
-function toEntry(row: Row) {
+export function toEntry(row: Row) {
 	const type = row.type as EntryType
 	return {
 		...EntryData.parse({ type, details: row.details }),
@@ -50,6 +51,7 @@ async function find(tx: Tx, id: string, removed: boolean) {
 
 export const entriesRoutes = {
 	create: authed.entries.create.handler(async ({ input, context }) => {
+		if (input.type === 'reading.finished') throw new ORPCError('BAD_REQUEST', { message: 'Mark a reading finished from the reading itself.' })
 		checkLessonText(input.type, input.text)
 		const { entry, needsCue } = await asUser(context.user.id, async (tx) => {
 			const [created] = await tx
@@ -125,6 +127,7 @@ export const entriesRoutes = {
 			const at = new Date()
 			await tx.update(entries).set({ deletedAt: at }).where(eq(entries.id, row.id))
 			await hideLessonCard(tx, row.id, at)
+			await onFinishedEntry(tx, row, at)
 			return { ok: true as const }
 		}),
 	),
@@ -134,6 +137,7 @@ export const entriesRoutes = {
 			const row = await find(tx, input.id, true)
 			const [restored] = await tx.update(entries).set({ deletedAt: null }).where(eq(entries.id, row.id)).returning()
 			await hideLessonCard(tx, row.id, null)
+			await onFinishedEntry(tx, row, null)
 			return toEntry(restored!)
 		}),
 	),
