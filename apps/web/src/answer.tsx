@@ -50,12 +50,15 @@ export function useAnswerKeys(keys: Record<string, () => void>, active = true) {
 
 export type Answered = { answerId: string; given: string | null; confidence: Confidence | null }
 
+const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
+
 /**
- * One written question or cue. The confidence buttons are the submit, so saying how sure you are
- * costs no click; I don't know is an honest miss. The answer id is picked once, so a retry of the
- * same answer counts once. With `keys`, 1 to 3 pick the confidence once the box is left. With
- * `selfCheck` (no AI key), the learner then ticks the model answer's points they made, and the
- * answer is graded from the ticks.
+ * One question or cue: written, or a choice of options. The confidence buttons are the submit, so
+ * saying how sure you are costs no click; I don't know is an honest miss. The answer id is picked
+ * once, so a retry of the same answer counts once. With `keys`, 1 to 3 pick the confidence once
+ * the box is left, and A to D pick an option. With `selfCheck` (no AI key), the learner then ticks
+ * the model answer's points they made, and a written answer is graded from the ticks; a choice is
+ * always graded against its key.
  */
 export function QuestionForm({
 	item,
@@ -66,7 +69,7 @@ export function QuestionForm({
 	onAnswered,
 	onError,
 }: {
-	item: Pick<AskItem, 'cardId' | 'questionId' | 'prompt' | 'code'>
+	item: Pick<AskItem, 'cardId' | 'questionId' | 'prompt' | 'code'> & { options?: string[] | null }
 	mode: 'recall' | 'review' | 'practice'
 	attemptId?: string
 	keys?: boolean
@@ -77,25 +80,36 @@ export function QuestionForm({
 }) {
 	const [answerId] = useState(() => crypto.randomUUID())
 	const [text, setText] = useState('')
+	const [picked, setPicked] = useState<number | null>(null)
 	const [checking, setChecking] = useState<{ confidence: Confidence } | null>(null)
+	const { options } = item
+	const given = options ? (picked === null ? '' : options[picked]!) : text
 	const send = useMutation({
 		mutationFn: (choice: { confidence: Confidence | null; skipped?: boolean; made?: boolean[] }) => {
-			const response = choice.skipped ? { skipped: true as const } : { answer: text, ...(choice.made && { made: choice.made }) }
 			const base = { answerId, cardId: item.cardId, mode, attemptId }
-			return item.questionId
-				? client.review.answer({ ...base, ask: 'question', questionId: item.questionId, response, confidence: choice.confidence })
-				: client.review.answer({ ...base, ask: 'cue', response, confidence: choice.confidence })
+			if (item.questionId) {
+				const response = choice.skipped ? { skipped: true } : options ? { choice: picked } : { answer: text, ...(choice.made && { made: choice.made }) }
+				return client.review.answer({ ...base, ask: 'question', questionId: item.questionId, response, confidence: choice.confidence })
+			}
+			const response = choice.skipped ? { skipped: true as const } : { answer: text, ...(choice.made && { made: choice.made }) }
+			return client.review.answer({ ...base, ask: 'cue', response, confidence: choice.confidence })
 		},
-		onSuccess: (result, choice) => onAnswered(result, { answerId, given: choice.skipped ? null : text, confidence: choice.confidence }),
-		onError: (error) => onError?.(error, text),
+		onSuccess: (result, choice) => onAnswered(result, { answerId, given: choice.skipped ? null : given, confidence: choice.confidence }),
+		onError: (error) => onError?.(error, given),
 	})
-	const empty = !text.trim()
+	const empty = options ? picked === null : !text.trim()
 	const pick = (confidence: Confidence) => {
 		if (empty || send.isPending) return
-		if (selfCheck) setChecking({ confidence })
+		if (selfCheck && !options) setChecking({ confidence })
 		else send.mutate({ confidence })
 	}
-	useAnswerKeys(Object.fromEntries(CONFIDENCE.map((c) => [c.key, () => pick(c.value)])), keys && !checking)
+	useAnswerKeys(
+		{
+			...Object.fromEntries(CONFIDENCE.map((c) => [c.key, () => pick(c.value)])),
+			...Object.fromEntries((options ?? []).map((_, i) => [LETTERS[i]!.toLowerCase(), () => setPicked(i)])),
+		},
+		keys && !checking,
+	)
 	if (checking)
 		return (
 			<SelfCheck
@@ -112,16 +126,36 @@ export function QuestionForm({
 				{item.prompt}
 			</p>
 			{item.code && <pre className="overflow-x-auto rounded-xl bg-world-card p-3 text-sm whitespace-pre-wrap">{item.code}</pre>}
-			<textarea
-				aria-label="Your answer"
-				// The page exists for this one box.
-				autoFocus
-				rows={5}
-				maxLength={4000}
-				value={text}
-				onChange={(e) => setText(e.target.value)}
-				className="w-full rounded-2xl border border-world-line bg-world-card p-4 text-lg leading-relaxed outline-none focus:border-world-accent"
-			/>
+			{options ? (
+				<div role="radiogroup" aria-label="Options" className="grid gap-2">
+					{options.map((option, i) => (
+						<button
+							key={i}
+							type="button"
+							role="radio"
+							aria-checked={picked === i}
+							onClick={() => setPicked(i)}
+							className="flex items-start gap-3 rounded-2xl border border-world-line bg-world-card p-4 text-left text-lg leading-snug transition hover:border-world-accent aria-checked:border-world-accent aria-checked:ring-2 aria-checked:ring-world-accent/30"
+						>
+							<span aria-hidden className="mt-0.5 font-sans text-sm font-semibold text-world-muted">
+								{LETTERS[i]}
+							</span>
+							<span>{option}</span>
+						</button>
+					))}
+				</div>
+			) : (
+				<textarea
+					aria-label="Your answer"
+					// The page exists for this one box.
+					autoFocus
+					rows={5}
+					maxLength={4000}
+					value={text}
+					onChange={(e) => setText(e.target.value)}
+					className="w-full rounded-2xl border border-world-line bg-world-card p-4 text-lg leading-relaxed outline-none focus:border-world-accent"
+				/>
+			)}
 			<div className="grid gap-2">
 				<p className="font-sans text-xs text-world-muted">How sure are you?</p>
 				<div className="flex flex-wrap items-center gap-2">
@@ -269,12 +303,33 @@ export function RevealTile({
 	const { reveal } = result
 	// A cue's one point is the model answer itself; the verdict already says whether it was made.
 	const points = reveal.points.length === 1 && reveal.points[0]!.point === reveal.reference ? [] : reveal.points
-	const verdict = result.overridden ? 'Counted as right' : result.correct ? 'Right' : given === null ? 'Not answered' : 'Not quite'
+	const { choice } = reveal
+	const answered = choice ? choice.picked !== null : given !== null
+	const verdict = result.overridden ? 'Counted as right' : result.correct ? 'Right' : !answered ? 'Not answered' : 'Not quite'
 	return (
 		<div className="grid gap-3 rounded-2xl border border-world-line bg-world-card p-4" data-testid="result">
 			<p className={`font-sans text-sm font-semibold ${result.correct ? 'text-path' : 'text-red'}`}>{verdict}</p>
 			{prompt && <p className="text-lg leading-snug">{prompt}</p>}
-			{given !== null && <p className="whitespace-pre-wrap text-world-muted">You wrote: {given}</p>}
+			{given !== null && !choice && <p className="whitespace-pre-wrap text-world-muted">You wrote: {given}</p>}
+			{choice && (
+				<ul className="grid gap-2" aria-label="Options">
+					{choice.options.map((option, i) => {
+						const right = i === choice.right
+						const mine = i === choice.picked
+						return (
+							<li key={i} className={`grid gap-0.5 rounded-xl border p-3 ${right ? 'border-path' : mine ? 'border-red' : 'border-world-line'}`}>
+								<p className="flex flex-wrap items-baseline gap-x-2">
+									<span className="font-sans text-sm font-semibold text-world-muted">{LETTERS[i]}</span>
+									<span>{option}</span>
+									{right && <span className="font-sans text-xs font-semibold text-path">Right answer</span>}
+									{mine && !right && <span className="font-sans text-xs font-semibold text-red">Your pick</span>}
+								</p>
+								{!right && choice.whyWrong[i] && <p className="font-sans text-sm text-world-muted">{choice.whyWrong[i]}</p>}
+							</li>
+						)
+					})}
+				</ul>
+			)}
 			{reveal.feedback && <p>{reveal.feedback}</p>}
 			{reveal.misconception && <p className="text-red">Not right: {reveal.misconception}</p>}
 			{points.length > 0 && (
@@ -289,13 +344,14 @@ export function RevealTile({
 			)}
 			{reveal.reference && (
 				<p>
-					<span className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">Model answer </span>
+					<span className="font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">{choice ? 'Why ' : 'Model answer '}</span>
 					{reveal.reference}
 				</p>
 			)}
 			{reveal.quote && <p className="text-sm text-world-muted italic">From the text: “{reveal.quote}”</p>}
 			{showDue && <p className="font-sans text-xs text-world-muted">{backIn(result.dueAt)}</p>}
-			{answerId && given !== null && !result.correct && (
+			{/* A choice is checked against its key, so there is nothing to count again; a wrong key is reported instead. */}
+			{answerId && given !== null && !choice && !result.correct && (
 				<div>
 					<button type="button" className={quiet} disabled={override.isPending} onClick={() => override.mutate(answerId)}>
 						Count it as right

@@ -1,6 +1,7 @@
 import type { Answer, AnswerResult, REPORT_REASONS, Reveal } from '@life-log-club/contract'
 import {
 	answerIdea,
+	type ChoiceReveal,
 	defaultScheduler,
 	type Grade,
 	gradeResponse,
@@ -49,6 +50,7 @@ function toReveal(reveal: Record<string, unknown>, quote: string | null): Reveal
 		points: mustHave.map((point, i) => ({ point, status: points[i] ?? 'missing' })),
 		misconception: typeof reveal.misconception === 'string' ? reveal.misconception : null,
 		quote,
+		...(reveal.choice ? { choice: reveal.choice as ChoiceReveal } : {}),
 	}
 }
 
@@ -108,8 +110,8 @@ export async function answerCard(userId: string, input: Answer): Promise<AnswerR
 		gradedBy = 'self'
 	} else {
 		response = input.response
-		// I don't know is graded in code, the learner's own check of the points by them, the rest by the judge.
-		gradedBy = 'skipped' in input.response ? 'code' : 'made' in input.response ? 'self' : 'ai'
+		// I don't know and a choice are graded in code, the learner's own check of the points by them, the rest by the judge.
+		gradedBy = 'skipped' in input.response || 'choice' in input.response ? 'code' : 'made' in input.response ? 'self' : 'ai'
 		try {
 			grade =
 				input.ask === 'cue'
@@ -210,6 +212,8 @@ export function overrideAnswer(userId: string, answerId: string): Promise<Answer
 		if (row.overriddenAt || row.correct) return resultOf(row)
 		if (row.ask === 'self') throw new ORPCError('BAD_REQUEST', { message: 'You rated this answer yourself, so there is nothing to change.' })
 		if (!row.response || 'skipped' in row.response) throw new ORPCError('BAD_REQUEST', { message: 'There is no answer to count. Next time, write what you remember.' })
+		if ('choice' in row.response)
+			throw new ORPCError('BAD_REQUEST', { message: 'A choice is checked against its answer key. If the key is wrong, report the question.' })
 		const [updated] = await tx
 			.update(reviewLog)
 			.set({ rating: 'good', correct: true, overriddenAt: new Date() })

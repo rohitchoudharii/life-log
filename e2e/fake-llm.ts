@@ -30,7 +30,22 @@ const sentences = (text: string) =>
  * the section, with one question each, plus one idea whose quote is in no section, which the
  * app must drop.
  */
-function writeSection(user: string) {
+/** A multiple-choice question on point `k`, the right option first, as models tend to write it. */
+const mcqOn = (k: number, quote: string) => ({
+	type: 'mcq',
+	level: 'apply',
+	content: {
+		prompt: `Which reading of point ${k} of this part holds up?`,
+		options: ['It holds as the text states it.', 'It holds only on some days.', 'It holds for experts alone.', 'It never holds in practice.'],
+		answerIndex: 0,
+		explanation: `The text states it plainly: ${quote}`,
+		whyWrong: ['', 'The text sets no such limit on when.', 'The text says it holds for anyone.', 'The text shows it holding.'],
+	},
+})
+
+/** Key ideas from the first sentences of each section; multiple choice when the member asks for choice only. */
+function writeSection(system: string, user: string) {
+	const choice = system.includes('Every question is mcq.')
 	const ideas = sectionsIn(user).flatMap(({ n, text }) =>
 		sentences(text)
 			.slice(0, 3)
@@ -44,7 +59,7 @@ function writeSection(user: string) {
 					cue: `Which point number ${k + 1} did this part make?`,
 					quote,
 					questions: [
-						{
+						choice ? mcqOn(k + 1, quote) : {
 							type: 'short_answer',
 							level: 'explain',
 							content: {
@@ -103,7 +118,7 @@ function answer(system: string, user: string) {
 	if (system.startsWith('Task: judge-answer')) return JSON.stringify(judgeAnswer(user))
 	if (system.startsWith('Task: grade-recall')) return JSON.stringify(gradeRecall(user))
 	if (system.startsWith('Task: headings')) return JSON.stringify(headings(user))
-	if (system.startsWith('Task: write-section')) return JSON.stringify(writeSection(user))
+	if (system.startsWith('Task: write-section')) return JSON.stringify(writeSection(system, user))
 	if (system.startsWith('Task: check-questions')) return JSON.stringify(checkQuestions(user))
 	if (system.startsWith('Task: lesson-cue')) return JSON.stringify({ cue: 'Where did this lesson come up for you?' })
 	if (system.startsWith('Task: write-cue')) return JSON.stringify({ cue: 'What did you want to keep from this part?' })

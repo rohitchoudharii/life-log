@@ -49,7 +49,7 @@ describe('writeSection', () => {
 				],
 			},
 		})
-		const written = await writeSection(complete, [section], { amount: 'standard', qualityCheck: false })
+		const written = await writeSection(complete, [section], { amount: 'standard', style: 'mixed', qualityCheck: false })
 		expect(written.ideas.map((i) => i.idea)).toEqual(['Idea number 1 about memory.'])
 		expect(written.rejected.map((r) => r.reasons.join())).toEqual([expect.stringMatching(/quote is not in the text/), expect.stringMatching(/gives the idea away/)])
 	})
@@ -57,7 +57,7 @@ describe('writeSection', () => {
 	it('keeps the 20 most important ideas and the rest as spare, most important first', async () => {
 		const many = Array.from({ length: MAX_IDEAS + 2 }, (_, i) => idea(MAX_IDEAS + 2 - i))
 		const { complete } = scripted({ 'write-section': { ideas: many } })
-		const written = await writeSection(complete, [section], { amount: 'quick', qualityCheck: false })
+		const written = await writeSection(complete, [section], { amount: 'quick', style: 'mixed', qualityCheck: false })
 		expect(written.ideas).toHaveLength(MAX_IDEAS)
 		expect(written.ideas[0]!.idea).toBe('Idea number 1 about memory.')
 		expect(written.spare.map((i) => i.idea)).toEqual(['Idea number 21 about memory.', 'Idea number 22 about memory.'])
@@ -70,7 +70,7 @@ describe('writeSection', () => {
 		const inOther = (n: number) => idea(n, { section: 2, idea: `Sleep idea ${n}.`, cue: `Which sleep point ${n}?`, quote: other.text })
 		const first = Array.from({ length: MAX_IDEAS + 1 }, (_, i) => idea(i + 1))
 		const { complete } = scripted({ 'write-section': { ideas: [...first, inOther(30), inOther(31)] } })
-		const written = await writeSection(complete, [section, other], { amount: 'quick', qualityCheck: false })
+		const written = await writeSection(complete, [section, other], { amount: 'quick', style: 'mixed', qualityCheck: false })
 		expect(written.ideas.filter((i) => i.section === 0)).toHaveLength(MAX_IDEAS)
 		expect(written.ideas.filter((i) => i.section === 1).map((i) => i.idea)).toEqual(['Sleep idea 30.', 'Sleep idea 31.'])
 		expect(written.spare.map((i) => i.idea)).toEqual(['Idea number 21 about memory.'])
@@ -82,7 +82,7 @@ describe('writeSection', () => {
 			'check-questions': [{ checks: [{ id: 1, verdict: 'reject', problems: ['the answer key is wrong'] }] }, { checks: [{ id: 1, verdict: 'keep' }] }],
 			'rewrite-questions': { questions: [{ id: 1, ...question('How would a week between tests change what a learner keeps?') }] },
 		})
-		const written = await writeSection(complete, [section], { amount: 'standard', qualityCheck: true })
+		const written = await writeSection(complete, [section], { amount: 'standard', style: 'mixed', qualityCheck: true })
 		expect(calls).toEqual(['write-section', 'check-questions', 'rewrite-questions', 'check-questions'])
 		// Idea 1's question was a definition; idea 2's failed the check. One rewrite came back and passed.
 		expect(written.ideas.map((i) => i.questions.map((q) => (q.content as { prompt: string }).prompt))).toEqual([
@@ -91,16 +91,45 @@ describe('writeSection', () => {
 		])
 	})
 
+	it('writes multiple choice in Mixed, stored shuffled with its reasons in step, and only written questions in Written', async () => {
+		const options = ['Harder recall builds more', 'Rereading is enough', 'Gaps cause forgetting', 'Tests only measure']
+		const whyWrong = ['', 'Rereading feels fluent but gives little practice.', 'The gap is what makes recall effortful.', 'A test is practice too.']
+		const mcq = {
+			type: 'mcq',
+			level: 'apply',
+			content: { prompt: 'A student waits a week before testing herself. Why might she keep more?', options, answerIndex: 0, explanation: 'Effort at recall strengthens it.', whyWrong },
+		}
+		const reply = { 'write-section': { ideas: [idea(1, { questions: [mcq] })] } }
+		const mixed = scripted(reply)
+		const prompts: string[] = []
+		const complete: Complete = (purpose, request) => {
+			prompts.push(request('m').system)
+			return mixed.complete(purpose, request)
+		}
+		const written = await writeSection(complete, [section], { amount: 'standard', style: 'mixed', qualityCheck: false })
+		expect(prompts[0]).toMatch(/about a quarter mcq/)
+		const [stored] = written.ideas[0]!.questions
+		const content = stored!.content as { options: string[]; answerIndex: number; whyWrong: string[] }
+		expect(stored!.type).toBe('mcq')
+		expect([...content.options].sort()).toEqual([...options].sort())
+		expect(content.options[content.answerIndex]).toBe('Harder recall builds more')
+		content.options.forEach((o, i) => expect(content.whyWrong[i]).toBe(whyWrong[options.indexOf(o)]))
+
+		const onlyWritten = await writeSection(scripted(reply).complete, [section], { amount: 'standard', style: 'written', qualityCheck: false })
+		expect(onlyWritten.ideas[0]!.questions).toEqual([])
+		expect(onlyWritten.rejected.map((r) => r.reasons.join())).toContain('type must be one of short_answer')
+	})
+
 	it('puts an idea in the section its quote is in, when sections are written together', async () => {
 		const short = { title: 'Intro', wordCount: 30, text: 'Most of what we read is gone within a week of reading it.' }
 		const { complete } = scripted({ 'write-section': { ideas: [idea(1, { section: 1 })] } })
-		const written = await writeSection(complete, [short, section], { amount: 'quick', qualityCheck: false })
+		const written = await writeSection(complete, [short, section], { amount: 'quick', style: 'mixed', qualityCheck: false })
 		expect(written.ideas[0]!.section).toBe(1)
 	})
 
 	it('refuses a reply that is not JSON', async () => {
 		const complete: Complete = async () => 'Sorry, I cannot help with that.'
-		await expect(writeSection(complete, [section], { amount: 'standard', qualityCheck: false })).rejects.toThrow(/key ideas/)
+		await expect(writeSection(complete, [section], { amount: 'standard', style: 'mixed', qualityCheck: false })).rejects.toThrow(/key ideas/)
 	})
 })
 

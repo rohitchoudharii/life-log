@@ -95,7 +95,8 @@ export async function nextBatch(tx: Tx, limit: number, filter: ReviewFilter, fir
 		const picked = own.find((q) => q.id === pickQuestion(choices, card.level, last.find((l) => l.cardId === card.id)?.questionId ?? null))
 		if (!picked || !isQuestionType(picked.type)) return { ...base, ask: { kind: 'cue', prompt: card.prompt } }
 		const { prompt } = toPrompt(picked.type, picked.content)
-		return { ...base, ask: { kind: 'question', questionId: picked.id, type: picked.type, prompt: prompt.prompt, code: prompt.code ?? null } }
+		const options = 'options' in prompt ? prompt.options : null
+		return { ...base, ask: { kind: 'question', questionId: picked.id, type: picked.type, prompt: prompt.prompt, code: prompt.code ?? null, options } }
 	})
 	return { items, total: due.length, minutes: await minutesFor(tx, due.length) }
 }

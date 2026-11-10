@@ -122,6 +122,11 @@ export const Reveal = z.object({
 	misconception: z.string().nullable(),
 	/** The quote from the text the idea rests on. */
 	quote: z.string().nullable(),
+	/**
+	 * For a multiple-choice question: every option, the right one, the learner's pick (null for
+	 * I don't know), and why each wrong option is wrong.
+	 */
+	choice: z.object({ options: z.array(z.string()), right: z.int(), picked: z.int().nullable(), whyWrong: z.array(z.string()) }).optional(),
 })
 export type Reveal = z.infer<typeof Reveal>
 export const AnswerResult = z.object({
@@ -142,6 +147,8 @@ export const AskItem = z.object({
 	prompt: z.string(),
 	/** Code the question is about, shown as code. */
 	code: z.string().nullable(),
+	/** A multiple-choice question's options, in the order shown; null for a written one. */
+	options: z.array(z.string()).nullable(),
 	answered: z.boolean(),
 })
 export type AskItem = z.infer<typeof AskItem>
@@ -274,7 +281,15 @@ export const ReviewItem = z.object({
 	 * self-rated card without one.
 	 */
 	ask: z.discriminatedUnion('kind', [
-		z.object({ kind: z.literal('question'), questionId: z.uuid(), type: z.string(), prompt: z.string(), code: z.string().nullable() }),
+		z.object({
+			kind: z.literal('question'),
+			questionId: z.uuid(),
+			type: z.string(),
+			prompt: z.string(),
+			code: z.string().nullable(),
+			/** A multiple-choice question's options; null for a written one. */
+			options: z.array(z.string()).nullable(),
+		}),
 		z.object({ kind: z.literal('cue'), prompt: z.string() }),
 		z.object({ kind: z.literal('self'), prompt: z.string() }),
 	]),

@@ -165,6 +165,8 @@ export const reviewRoutes = {
 			const [question] = await tx.select().from(questions).where(and(eq(questions.id, input.questionId), eq(questions.cardId, card.id)))
 			const parsed = question && isQuestionType(question.type) ? questionTypes[question.type].content.safeParse(question.content) : null
 			if (!parsed?.success) throw new ORPCError('NOT_FOUND', { message: 'That question does not exist.' })
+			// A choice is checked against its key in code; only written answers have points to tick.
+			if (!('mustHave' in parsed.data)) throw new ORPCError('BAD_REQUEST', { message: 'This question is checked without a checklist.' })
 			const { reference, mustHave } = parsed.data
 			// The same points the answer is graded against: a question with none is one point, its model answer.
 			return { reference, points: mustHave.length ? mustHave : [reference], quote: card.quote }

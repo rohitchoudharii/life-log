@@ -215,6 +215,7 @@ export async function selfMark(tx: Tx, attemptId: string, marks: { cardId: strin
 const promptOf = (content: Record<string, unknown>) => ({
 	prompt: typeof content.prompt === 'string' ? content.prompt : '',
 	code: typeof content.code === 'string' ? content.code : null,
+	options: Array.isArray(content.options) ? content.options.map(String) : null,
 })
 
 /**
@@ -267,8 +268,8 @@ export async function attemptView(tx: Tx, attemptId: string) {
 	const ask = (cardId: string, questionId: string | null, mode: 'recall' | 'practice') => {
 		const q = questionId ? qs.find((x) => x.id === questionId) : undefined
 		const card = rows.find((c) => c.id === cardId)
-		const { prompt, code } = q ? promptOf(q.content) : { prompt: card?.prompt ?? '', code: null }
-		return { cardId, questionId: q ? questionId : null, prompt, code, answered: Boolean(answerOf(cardId, mode)) }
+		const { prompt, code, options } = q ? promptOf(q.content) : { prompt: card?.prompt ?? '', code: null, options: null }
+		return { cardId, questionId: q ? questionId : null, prompt, code, options, answered: Boolean(answerOf(cardId, mode)) }
 	}
 	const items = asked.map((i) => ask(i.cardId, i.questionId, 'recall'))
 	if (items.some((i) => !i.answered)) return { ...base, items }

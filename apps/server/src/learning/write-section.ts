@@ -178,7 +178,7 @@ export async function writeKeyIdeas(job: WriteJob, lastTry = true): Promise<Writ
 	try {
 		let written: Written | null = null
 		for (let attempt = 0; attempt < 2 && !written?.ideas.length; attempt++)
-			written = await writeSection(complete, batch.map(toText), { amount: prefs.questionAmount, qualityCheck: prefs.qualityCheck })
+			written = await writeSection(complete, batch.map(toText), { amount: prefs.questionAmount, style: prefs.questionStyle, qualityCheck: prefs.qualityCheck })
 		if (!written?.ideas.length) {
 			await asUser(userId, (tx) => setStatus(tx, ids, 'failed', NO_IDEAS))
 			return 'failed'

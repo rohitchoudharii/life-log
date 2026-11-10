@@ -177,7 +177,7 @@ function ReviewCard({ item, mode, onDone }: { item: ReviewItem; mode: 'review' |
 		body = (
 			<>
 				<QuestionForm
-					item={{ cardId: item.cardId, questionId, prompt, code: ask.kind === 'question' ? ask.code : null }}
+					item={{ cardId: item.cardId, questionId, prompt, code: ask.kind === 'question' ? ask.code : null, options: ask.kind === 'question' ? ask.options : null }}
 					mode={mode}
 					keys
 					onAnswered={(result, answered) => setPhase({ kind: 'result', record: { item, result, ...answered } })}

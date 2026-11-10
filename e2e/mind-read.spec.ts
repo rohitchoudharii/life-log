@@ -526,6 +526,78 @@ test('Report a problem on a question in Review retires it, and the answer to it 
 	await expect(page.getByRole('button', { name: 'Report a problem' })).toHaveCount(0)
 })
 
+test('Multiple choice in Review: options stored shuffled, the pick graded against the key, and why each wrong option is wrong', async ({ page }, testInfo) => {
+	const { readingId, ids } = await openWithKey(page)
+	// Choice only, so every question the fake AI writes is multiple choice.
+	await sql(
+		"insert into preferences (user_id, question_style) select user_id, 'choice' from readings where id = $1 on conflict (user_id) do update set question_style = 'choice'",
+		[readingId],
+	)
+	await stay(page)
+	await expect.poll(() => writeStatus(ids[0]!), { timeout: 15_000 }).toBe('ready')
+	const [idea, other] = await ideasOf(ids[0]!)
+	const RIGHT = 'It holds as the text states it.'
+	const reasons: Record<string, string> = {
+		'It holds only on some days.': 'The text sets no such limit on when.',
+		'It holds for experts alone.': 'The text says it holds for anyone.',
+		'It never holds in practice.': 'The text shows it holding.',
+		[RIGHT]: '',
+	}
+	const stored = await sql<{ card_id: string; type: string; content: { options: string[]; answerIndex: number; whyWrong: string[] } }>(
+		'select card_id, type, content from questions where card_id in ($1, $2)',
+		[idea!.id, other!.id],
+	)
+	expect(stored.map((q) => q.type)).toEqual(['mcq', 'mcq'])
+	for (const { content } of stored) {
+		// Shuffled in code, with the key and the reasons moved along with their options.
+		expect(content.options[content.answerIndex]).toBe(RIGHT)
+		content.options.forEach((o, i) => expect(content.whyWrong[i]).toBe(reasons[o]))
+	}
+	await sql("update cards set started_at = now(), level = 1, due_at = now() - interval '2 seconds' where id = $1", [idea!.id])
+	await sql("update cards set started_at = now(), level = 1, due_at = now() - interval '1 second' where id = $1", [other!.id])
+
+	// A wrong pick: the result marks it, shows the right answer, and says why each wrong option is wrong.
+	await page.goto('/mind/review')
+	await expect(page.getByTestId('question')).toHaveText('Which reading of point 1 of this part holds up?')
+	const options = page.getByRole('radiogroup', { name: 'Options' })
+	await expect(options.getByRole('radio')).toHaveCount(4)
+	await expect(page.getByRole('button', { name: 'Sure', exact: true })).toBeDisabled()
+	await options.getByRole('radio', { name: 'It never holds in practice.' }).click()
+	await proof(page, testInfo, 'mcq-ask')
+	await page.getByRole('button', { name: 'Sure', exact: true }).click()
+	const result = page.getByTestId('result')
+	await expect(result).toContainText('Not quite')
+	await expect(result.getByRole('listitem').filter({ hasText: 'It never holds in practice.' })).toContainText('Your pick')
+	await expect(result.getByRole('listitem').filter({ hasText: RIGHT })).toContainText('Right answer')
+	for (const [option, why] of Object.entries(reasons)) if (why) await expect(result.getByRole('listitem').filter({ hasText: option })).toContainText(why)
+	await expect(result).toContainText('Back in 10 minutes')
+	// Checked against its key, so there is nothing to count as right.
+	await expect(result.getByRole('button', { name: 'Count it as right' })).toHaveCount(0)
+	await proof(page, testInfo, 'mcq-wrong')
+	expect(await sql('select ask, graded_by, correct, rating, response from review_log where card_id = $1', [idea!.id])).toEqual([
+		{
+			ask: 'question',
+			graded_by: 'code',
+			correct: false,
+			rating: 'again',
+			response: { choice: stored.find((q) => q.card_id === idea!.id)!.content.options.indexOf('It never holds in practice.') },
+		},
+	])
+	await page.getByRole('button', { name: 'Next' }).click()
+
+	// The right pick, by keys: its letter, then 3 for Sure.
+	await expect(page.getByText('Card 2 of 2')).toBeVisible()
+	const radios = page.getByRole('radiogroup', { name: 'Options' }).getByRole('radio')
+	const right = (await radios.allInnerTexts()).findIndex((t) => t.includes(RIGHT))
+	await page.keyboard.press('abcd'[right]!)
+	await expect(radios.nth(right)).toHaveAttribute('aria-checked', 'true')
+	await page.keyboard.press('3')
+	await expect(page.getByTestId('result')).toContainText('Right')
+	await expect(page.getByTestId('result')).toContainText('Back tomorrow')
+	const [log] = await sql<{ graded_by: string; rating: string; confidence: string }>('select graded_by, rating, confidence from review_log where card_id = $1', [other!.id])
+	expect(log).toEqual({ graded_by: 'code', rating: 'good', confidence: 'sure' })
+})
+
 test('Review without a key: self-rated cards, 20 at a time with Keep going, filters, and answer keys that never switch worlds', async ({ page }, testInfo) => {
 	const desktop = testInfo.project.name === 'desktop'
 	const email = await joinAs(page)

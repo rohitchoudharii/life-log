@@ -248,7 +248,7 @@ test('Review asks a question not asked yet nearest the card’s level, then the 
 	const askOf = async () => (await a.client.review.next({})).items[0]!.ask
 	expect(await a.client.review.next({})).toMatchObject({ total: 1, minutes: 1, items: [{ cardId: card.id, kind: 'idea', source: null, cue: IDEA.prompt }] })
 	// Level 2 is apply.
-	expect(await askOf()).toEqual({ kind: 'question', questionId: apply, type: 'short_answer', prompt: 'At apply: why does spacing help?', code: null })
+	expect(await askOf()).toEqual({ kind: 'question', questionId: apply, type: 'short_answer', prompt: 'At apply: why does spacing help?', code: null, options: null })
 	expect(await a.client.review.answer(written(card.id, apply!, RIGHT))).toMatchObject({ correct: true, rating: 'good' })
 	expect(await cardRow(card.id)).toMatchObject({ level: 3 })
 	await makeDue(card.id)
@@ -444,4 +444,28 @@ test('a saved idea can be edited, removed and restored, and only by its member; 
 	const lesson = await a.client.review.add({ id: randomUUID(), kind: 'lesson', prompt: 'Salary talks?', answer: 'Anchor high.' })
 	expect(await code(a.client.review.update({ id: lesson.id, answer: 'Changed.' }))).toBe('NOT_FOUND')
 	expect(await code(a.client.review.remove({ id: lesson.id }))).toBe('NOT_FOUND')
+})
+
+test('a multiple-choice answer is graded in code against its key, with no AI key needed, and cannot be counted as right', async () => {
+	const { client, user } = await newMember()
+	const card = await client.review.add({ id: randomUUID(), kind: 'idea', prompt: 'Why space practice?', answer: 'Effortful recall lasts.' })
+	const content = { prompt: 'Which holds?', options: ['Wrong one', 'Right one', 'Also wrong', 'Not this'], answerIndex: 1, explanation: 'Effort builds it.', whyWrong: ['W1', '', 'W3', 'W4'] }
+	const [question] = await sql<{ id: string }>("insert into questions (user_id, card_id, type, level, content) values ($1, $2, 'mcq', 'apply', $3) returning id", [user.id, card.id, content])
+	const answer = (response: Record<string, unknown>, answerId = randomUUID()) =>
+		client.review.answer({ answerId, cardId: card.id, mode: 'practice', ask: 'question', questionId: question!.id, response, confidence: 'sure' })
+
+	const wrong = await answer({ choice: 2 })
+	expect(wrong).toMatchObject({
+		correct: false,
+		rating: 'again',
+		reveal: { reference: 'Effort builds it.', choice: { options: content.options, right: 1, picked: 2, whyWrong: ['W1', '', 'W3', 'W4'] } },
+	})
+	expect((await answer({ choice: 1 })).correct).toBe(true)
+	expect((await answer({ skipped: true })).reveal.choice?.picked).toBeNull()
+	expect(await code(answer({ answer: 'Right one' }))).toBe('BAD_REQUEST')
+	expect(await sql('select graded_by from review_log where card_id = $1', [card.id])).toEqual([{ graded_by: 'code' }, { graded_by: 'code' }, { graded_by: 'code' }])
+
+	const [log] = await sql<{ answer_id: string }>('select answer_id from review_log where card_id = $1 and correct = false order by id limit 1', [card.id])
+	expect(await code(client.review.override({ answerId: log!.answer_id }))).toBe('BAD_REQUEST')
+	expect(await code(client.review.checklist({ cardId: card.id, questionId: question!.id }))).toBe('BAD_REQUEST')
 })

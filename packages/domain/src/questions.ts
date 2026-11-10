@@ -146,12 +146,41 @@ export async function gradeWritten(c: Judged, r: WrittenResponse, judge: Judge):
 	}
 }
 
+const mcqContent = z
+	.object({
+		...stem,
+		options: z.array(z.string().min(1)).min(2).max(6),
+		answerIndex: z.int().min(0),
+		/** Why the right option is right. */
+		explanation: z.string().default(''),
+		/** Why each option is wrong, aligned with `options`; empty for the right one. */
+		whyWrong: z.array(z.string()).default([]),
+	})
+	.refine((c) => c.answerIndex < c.options.length, 'answerIndex out of range')
+export type McqContent = z.infer<typeof mcqContent>
+
+/** What a graded choice shows: every option, the right one, the learner's pick (null for I don't know) and why each wrong one is wrong. */
+export type ChoiceReveal = { options: string[]; right: number; picked: number | null; whyWrong: string[] }
+
 export const questionTypes = {
 	short_answer: def({
 		content: z.object(judged),
 		response: writtenResponse,
 		toPrompt: stemOf,
 		grade: gradeWritten,
+	}),
+	/** Four options, one right, each wrong one a tempting misconception. Graded in code. */
+	mcq: def({
+		content: mcqContent,
+		response: z.union([z.object({ choice: z.int().min(0) }), z.object({ skipped: z.literal(true) })]),
+		showsChoices: true,
+		toPrompt: ({ prompt, code, options }) => ({ prompt, code, options }),
+		async grade(c, r) {
+			const picked = 'choice' in r ? r.choice : null
+			const correct = picked === c.answerIndex
+			const choice: ChoiceReveal = { options: c.options, right: c.answerIndex, picked, whyWrong: c.options.map((_, i) => c.whyWrong[i] ?? '') }
+			return { rating: correct ? 'good' : 'again', correct, reveal: { reference: c.explanation || c.options[c.answerIndex], choice } }
+		},
 	}),
 } satisfies Record<string, QuestionTypeDef<z.ZodType, z.ZodType, unknown>>
 
@@ -185,6 +214,21 @@ export function toPrompt(type: QuestionType, content: unknown): QuestionPrompt {
 export function gradeResponse(type: QuestionType, content: unknown, response: unknown, judge: Judge): Promise<Grade> {
 	const t = questionTypes[type] as QuestionTypeDef<z.ZodType, z.ZodType, unknown>
 	return t.grade(content, t.response.parse(response), judge)
+}
+
+/** Models tend to put the right option first; shuffling in code removes that tell. */
+export function shuffleMcq(c: McqContent, random = Math.random): McqContent {
+	const order = c.options.map((_, i) => i)
+	for (let i = order.length - 1; i > 0; i--) {
+		const j = Math.floor(random() * (i + 1))
+		;[order[i], order[j]] = [order[j]!, order[i]!]
+	}
+	return {
+		...c,
+		options: order.map((i) => c.options[i]!),
+		whyWrong: c.whyWrong.length ? order.map((i) => c.whyWrong[i] ?? '') : [],
+		answerIndex: order.indexOf(c.answerIndex),
+	}
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { answerIdea, pickQuestion } from './ideas'
-import { type Grade, gradeResponse, orderForTest, parseQuestionContent, scoreRubric, toPrompt, withConfidence } from './questions'
+import { type Grade, gradeResponse, orderForTest, parseQuestionContent, scoreRubric, shuffleMcq, toPrompt, withConfidence } from './questions'
 import { stepsThenFsrs } from './scheduler'
 
 // Ported from the previous app (packages/core/src/core.test.ts at 4051df5^).
@@ -39,7 +39,59 @@ describe('short answer questions', () => {
 	it('accepts AI content only when it fits a known type', () => {
 		expect(parseQuestionContent('short_answer', { prompt: 'Why?', reference: 'Because.' })).toMatchObject({ mustHave: [], misconceptions: [] })
 		expect(parseQuestionContent('short_answer', { prompt: 'Why?' })).toBeNull()
-		expect(parseQuestionContent('mcq', { prompt: 'Which?', options: ['a', 'b'], answerIndex: 0 })).toBeNull()
+		expect(parseQuestionContent('mcq', { prompt: 'Which?', options: ['a', 'b'], answerIndex: 2 })).toBeNull()
+		expect(parseQuestionContent('mcq', { prompt: 'Which?', options: ['a', 'b'], answerIndex: 1 })).toMatchObject({ explanation: '', whyWrong: [] })
+	})
+})
+
+describe('multiple choice questions', () => {
+	const mcq = { prompt: 'Scale factor?', options: ['d_k', '√d_k', '1/d_k'], answerIndex: 1, explanation: 'Divide by √d_k.', whyWrong: ['Too large.', '', 'Inverted.'] }
+	const noJudge = async () => {
+		throw new Error('judge must not be called')
+	}
+
+	it('hides the MCQ answer key and grades it without the judge', async () => {
+		expect(toPrompt('mcq', mcq)).toEqual({ type: 'mcq', prompt: { prompt: 'Scale factor?', options: mcq.options } })
+		expect(await gradeResponse('mcq', mcq, { choice: 0 }, noJudge)).toMatchObject({
+			correct: false,
+			rating: 'again',
+			reveal: { reference: 'Divide by √d_k.', choice: { options: mcq.options, right: 1, picked: 0, whyWrong: ['Too large.', '', 'Inverted.'] } },
+		})
+		expect(await gradeResponse('mcq', mcq, { choice: 1 }, noJudge)).toMatchObject({ correct: true, rating: 'good' })
+		// I don't know is a miss with nothing picked.
+		expect(await gradeResponse('mcq', mcq, { skipped: true }, noJudge)).toMatchObject({ correct: false, rating: 'again', reveal: { choice: { picked: null } } })
+		expect(() => gradeResponse('mcq', mcq, { answer: 'd_k' }, noJudge)).toThrow()
+	})
+
+	it('spaces a right answer called a guess like a hard one', async () => {
+		const right = await gradeResponse('mcq', mcq, { choice: 1 }, noJudge)
+		const wrong = await gradeResponse('mcq', mcq, { choice: 0 }, noJudge)
+		expect(withConfidence(right, 'guessing')).toMatchObject({ correct: true, rating: 'hard' })
+		expect(withConfidence(right, 'think_so').rating).toBe('good')
+		expect(withConfidence(right, null).rating).toBe('good')
+		// Confidence only lowers credit: a wrong answer stays a miss however it was rated.
+		expect(withConfidence(wrong, 'guessing')).toMatchObject({ correct: false, rating: 'again' })
+		expect(withConfidence(wrong, 'sure')).toMatchObject({ correct: false, rating: 'again' })
+	})
+})
+
+describe('shuffleMcq', () => {
+	it('moves the right answer and its reasons along with the options', () => {
+		const c = { prompt: 'p', options: ['right', 'w1', 'w2', 'w3'], answerIndex: 0, explanation: '', whyWrong: ['', 'r1', 'r2', 'r3'] }
+		const out = shuffleMcq(c, () => 0)
+		expect(out.options[out.answerIndex]).toBe('right')
+		expect(out.answerIndex).not.toBe(0)
+		out.options.forEach((o, i) => expect(out.whyWrong[i]).toBe(o === 'right' ? '' : `r${o.slice(1)}`))
+	})
+
+	it('spreads the right answer over every position', () => {
+		const c = { prompt: 'p', options: ['right', 'w1', 'w2', 'w3'], answerIndex: 0, explanation: '', whyWrong: [] }
+		let seed = 1
+		// A small seeded generator, so the test is the same every run.
+		const random = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646
+		const at = new Set(Array.from({ length: 40 }, () => shuffleMcq(c, random).answerIndex))
+		expect([...at].sort()).toEqual([0, 1, 2, 3])
+		expect(shuffleMcq(c, random).whyWrong).toEqual([])
 	})
 })
 
@@ -128,5 +180,15 @@ describe('orderForTest', () => {
 		const order = orderForTest(items, marks).map((q) => q.cardId)
 		expect(order.slice(0, 2).sort()).toEqual(['b', 'd'])
 		expect(order.slice(2)).toEqual(['c', 'a'])
+	})
+
+	it('puts written questions before multiple choice, because options hint at other answers', () => {
+		const marks = new Map([
+			['a', 'covered'],
+			['b', 'missing'],
+		] as const)
+		const q = (id: string, type: 'short_answer' | 'mcq', cardId: string) => ({ id, type, cardId })
+		const order = orderForTest([q('mcq-missed', 'mcq', 'b'), q('sa-covered', 'short_answer', 'a'), q('sa-missed', 'short_answer', 'b'), q('mcq-covered', 'mcq', 'a')], marks)
+		expect(order.map((x) => x.id)).toEqual(['sa-missed', 'sa-covered', 'mcq-missed', 'mcq-covered'])
 	})
 })
