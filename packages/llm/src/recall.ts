@@ -29,7 +29,9 @@ export function gradeRecallRequest(model: string, input: { ideas: string[]; text
 		system: SYSTEM,
 		user: `Key ideas:\n${input.ideas.map((x, i) => `${i + 1}. ${x}`).join('\n')}\n\n<dump>\n${input.text}\n</dump>`,
 		json: true,
-		maxTokens: 400 + input.ideas.length * 20,
+		// Models that think first spend about 500 tokens on thinking, which counts against this
+		// limit; below 1000 the reply can end before the JSON starts.
+		maxTokens: Math.max(1000, 400 + input.ideas.length * 20),
 		timeoutMs: 60_000,
 	}
 }
