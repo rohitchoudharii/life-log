@@ -1011,6 +1011,133 @@ test('without a key, the sample reading runs the whole loop: dump, Compare with 
 	expect(Math.abs(minutesUntil((await cardNow(covered)).due_at) - 2 * DAY_MINUTES)).toBeLessThanOrEqual(1)
 })
 
+test('Reading aids in the reading settings: Phrases, Focus line, Pacer, Read aloud and Drift check, one at a time, kept in this browser', async ({ page }) => {
+	await page.clock.install()
+	await joinAs(page, 'Rohit', { sample: true })
+	await page.goto('/mind')
+	await page.getByTestId('reading').filter({ hasText: 'How to remember what you read' }).getByRole('link').first().click()
+	await expect(sectionTitle(page)).toHaveText('Rereading feels like learning')
+	// From here time moves only when the test moves it, so each aid's timing is exact.
+	await page.clock.pauseAt(new Date((await page.evaluate(() => Date.now())) + 1000))
+	const settings = page.getByRole('button', { name: 'Reading settings' })
+	const pick = async (aid: string) => {
+		await settings.click()
+		await page.getByRole('group', { name: 'Reading aid' }).getByRole('button', { name: aid, exact: true }).click()
+		await page.keyboard.press('Escape')
+	}
+	const block = (i: number) => page.locator(`[data-block="${i}"]`)
+	const height = async (i: number) => (await block(i).boundingBox())!.height
+	/** The word the Pacer is on, or the word Read aloud marks, or null. */
+	const marked = () =>
+		page.evaluate(() => {
+			const pacer = document.querySelector<HTMLElement>('[data-pacer]')
+			if (pacer) return pacer.dataset.pacer ?? null
+			const range = [...(CSS.highlights.get('focus-word') ?? [])][0]
+			return range instanceof Range ? range.toString() : null
+		})
+
+	// Phrases: one phrase per line, so the first paragraph takes many more lines.
+	const plain = await height(0)
+	await pick('Phrases')
+	expect(await height(0)).toBeGreaterThan(plain * 1.5)
+
+	// Focus line: the text above the line in focus is dimmed, and ↓ moves the line down.
+	await pick('Focus line')
+	expect(await height(0)).toBe(plain)
+	// The lines are measured in the next frame.
+	await page.clock.runFor(100)
+	const dimmed = page.locator('[data-focus-line]')
+	await expect(dimmed).toBeAttached()
+	const above = async () => (await dimmed.boundingBox())?.height ?? 0
+	const before = await above()
+	for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown')
+	await expect.poll(above).toBeGreaterThan(before + 40)
+
+	// Pacer: Start marks the first word on screen and moves on; a tapped word starts it there; Space pauses.
+	await pick('Pacer')
+	await expect(dimmed).toHaveCount(0)
+	const pacer = page.getByRole('group', { name: 'Pacer' })
+	await pacer.getByRole('button', { name: 'Start' }).click()
+	await expect.poll(marked).toBe('You')
+	await page.clock.runFor(1500)
+	expect(await marked()).not.toBe('You')
+	await block(2).click({ position: { x: 3, y: 12 } })
+	await expect.poll(marked).toBe('Recognising')
+	await page.keyboard.press(' ')
+	await expect(pacer.getByRole('button', { name: 'Go on' })).toBeVisible()
+	await page.clock.runFor(3000)
+	expect(await marked()).toBe('Recognising')
+	await pacer.getByRole('button', { name: 'Faster' }).click()
+	await expect(pacer).toContainText('230 words a minute')
+	await pacer.getByRole('button', { name: 'Slower' }).click()
+	await pacer.getByRole('button', { name: 'Slower' }).click()
+	await expect(pacer).toContainText('210 words a minute')
+
+	// The Lamp style softens the text away from the place and keeps the word the Pacer is on in full ink; a pause brings the text back.
+	await settings.click()
+	await page.getByRole('group', { name: 'Pacer style' }).getByRole('button', { name: 'Lamp', exact: true }).click()
+	await page.keyboard.press('Escape')
+	const lamp = () =>
+		page.evaluate(() => ({ soft: CSS.highlights.has('pacer-0'), full: [...(CSS.highlights.get('pacer-10') ?? [])].map(String) }))
+	await pacer.getByRole('button', { name: 'Go on' }).click()
+	await page.clock.runFor(1000)
+	const word = await marked()
+	expect(await lamp()).toEqual({ soft: true, full: expect.arrayContaining([word]) })
+	await page.keyboard.press(' ')
+	await expect.poll(lamp).toEqual({ soft: false, full: [] })
+
+	// Read aloud goes on from the word on screen, with the device's voice or at its pace without one.
+	await pick('Read aloud')
+	await expect.poll(marked).toBeNull()
+	const aloud = page.getByRole('group', { name: 'Read aloud' })
+	await aloud.getByRole('button', { name: 'Listen' }).click()
+	await expect
+		.poll(async () => {
+			await page.clock.runFor(500)
+			return marked()
+		})
+		.not.toBeNull()
+	const first = await marked()
+	await expect
+		.poll(async () => {
+			await page.clock.runFor(500)
+			return marked()
+		})
+		.not.toBe(first)
+	await aloud.getByRole('button', { name: 'Pause' }).click()
+	await expect(aloud.getByRole('button', { name: 'Go on' })).toBeVisible()
+
+	// Drift check asks at the end of about a minute of text, once there was time to read it.
+	// I drifted goes back to where that part starts, and asks again at its end.
+	await page.evaluate(() => window.scrollTo(0, 0))
+	await pick('Drift check')
+	await expect(aloud).toHaveCount(0)
+	const check = page.getByRole('group', { name: 'Drift check' })
+	// The first check comes after the fourth paragraph, 233 words in.
+	const toFourth = () => block(3).evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }))
+	await toFourth()
+	await page.clock.runFor(20_000)
+	await expect(check).toHaveCount(0)
+	await page.clock.runFor(30_000)
+	await expect(check).toContainText('Still with it?')
+	await check.getByRole('button', { name: 'I drifted' }).click()
+	await expect(page.getByRole('status')).toContainText('Back to where this part starts.')
+	await expect(check).toHaveCount(0)
+	await expect.poll(() => block(0).evaluate((el) => el.getBoundingClientRect().top)).toBeLessThan(200)
+	await toFourth()
+	await page.clock.runFor(50_000)
+	await check.getByRole('button', { name: 'Yes' }).click()
+	await expect(page.getByText('✓ With it')).toBeVisible()
+
+	// The aid is kept for the next reading, in this browser.
+	await page.clock.resume()
+	await page.reload()
+	await settings.click()
+	await expect(page.getByRole('group', { name: 'Reading aid' }).getByRole('button', { name: 'Drift check' })).toHaveAttribute('aria-pressed', 'true')
+	await page.getByRole('group', { name: 'Reading aid' }).getByRole('button', { name: 'Pacer', exact: true }).click()
+	await expect(page.getByRole('group', { name: 'Pacer style' }).getByRole('button', { name: 'Lamp', exact: true })).toHaveAttribute('aria-pressed', 'true')
+})
+
 test('without a key, a reading with no key ideas can only be compared with the text, and Done goes on reading', async ({ page }) => {
 	await joinAs(page)
 	await page.goto('/mind')

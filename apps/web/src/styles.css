@@ -78,6 +78,30 @@ body {
 	@apply bg-paper text-ink antialiased;
 }
 
+/* The word the Pacer or Read aloud is on, marked without changing the text. */
+::highlight(focus-word) {
+	background-color: color-mix(in srgb, var(--world-accent) 22%, transparent);
+	text-decoration: underline 2px var(--world-accent);
+	text-underline-offset: 0.25em;
+}
+
+/*
+ * The Pacer's lamps: text away from the reader's place softens to 55% ink (pacer-0, LAMP_FLOOR in
+ * focus.tsx), and words near it step back up to full ink in tenths. Never fainter than that, so
+ * the soft text stays easy to read for a long session.
+ */
+::highlight(pacer-0) { color: color-mix(in srgb, var(--world-ink) 55%, var(--world-bg)); }
+::highlight(pacer-1) { color: color-mix(in srgb, var(--world-ink) 59.5%, var(--world-bg)); }
+::highlight(pacer-2) { color: color-mix(in srgb, var(--world-ink) 64%, var(--world-bg)); }
+::highlight(pacer-3) { color: color-mix(in srgb, var(--world-ink) 68.5%, var(--world-bg)); }
+::highlight(pacer-4) { color: color-mix(in srgb, var(--world-ink) 73%, var(--world-bg)); }
+::highlight(pacer-5) { color: color-mix(in srgb, var(--world-ink) 77.5%, var(--world-bg)); }
+::highlight(pacer-6) { color: color-mix(in srgb, var(--world-ink) 82%, var(--world-bg)); }
+::highlight(pacer-7) { color: color-mix(in srgb, var(--world-ink) 86.5%, var(--world-bg)); }
+::highlight(pacer-8) { color: color-mix(in srgb, var(--world-ink) 91%, var(--world-bg)); }
+::highlight(pacer-9) { color: color-mix(in srgb, var(--world-ink) 95.5%, var(--world-bg)); }
+::highlight(pacer-10) { color: var(--world-ink); }
+
 @media (prefers-reduced-motion: reduce) {
 	*,
 	::before,

@@ -35,13 +35,35 @@ test('a pasted link shows at once as importing, then opens to its sections', asy
 	await page.getByRole('button', { name: 'Next section' }).click()
 	await expect(page.getByRole('heading', { level: 2, name: 'Research and application' })).toBeVisible()
 
-	// The text size a member picks is kept for the next reading, in this browser.
+	// The reading settings a member picks are kept for the next reading, in this browser.
+	const settings = page.getByRole('button', { name: 'Reading settings' })
 	const larger = page.getByRole('group', { name: 'Text size' }).getByRole('button', { name: 'Larger' })
+	const sans = page.getByRole('group', { name: 'Typeface' }).getByRole('button', { name: 'Sans' })
+	await settings.click()
 	await larger.click()
-	await expect(page.locator('article')).toHaveCSS('font-size', '22.4px')
+	await page.getByRole('group', { name: 'Line spacing' }).getByRole('button', { name: 'Loose' }).click()
+	await sans.click()
+	const article = page.locator('article')
+	await expect(article).toHaveCSS('font-size', '22.4px')
+	await expect(article).toHaveCSS('line-height', '42.56px')
+	await expect(article).toHaveCSS('font-family', /system-ui/)
+	await page.keyboard.press('Escape')
+	await expect(larger).toBeHidden()
 	await page.reload()
+	await expect(article).toHaveCSS('font-size', '22.4px')
+	await settings.click()
 	await expect(larger).toHaveAttribute('aria-pressed', 'true')
-	await expect(page.locator('article')).toHaveCSS('font-size', '22.4px')
+	await expect(sans).toHaveAttribute('aria-pressed', 'true')
+
+	// On a wide screen the contents fold away to give the text the room, and stay folded.
+	if (isMobile) return
+	const contents = page.getByRole('navigation', { name: 'Contents' })
+	await page.getByRole('button', { name: 'Hide contents' }).click()
+	await expect(contents).toBeHidden()
+	await page.reload()
+	await expect(contents).toBeHidden()
+	await page.getByRole('button', { name: 'Show contents' }).click()
+	await expect(contents.getByRole('button', { name: 'History', exact: true })).toBeVisible()
 })
 
 test('the same link added twice is one reading, and the second add opens it', async ({ page }) => {

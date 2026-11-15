@@ -2,12 +2,30 @@ import { type ReadingPosition, type ReadingWithContents, type Section, SEEN_SECO
 import type { Block, Note, NoteRef, Link as TextLink } from '@life-log-club/domain'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { type CSSProperties, Fragment, type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { FinishCard, useFinish } from '../finish'
+import {
+	FOCUS_AIDS,
+	FOCUS_LINES,
+	type FocusAid,
+	FocusLine,
+	type FocusLines,
+	FocusPlayer,
+	type Pace,
+	PACER_STYLES,
+	PACES,
+	type PacerStyle,
+	phraseStarts,
+	type Rate,
+	RATES,
+	TOP,
+	useDriftCheck,
+} from '../focus'
 import { importingText } from '../readings'
 import { SaveIdea } from '../save-idea'
 import { client, errorMessage, orpc } from '../rpc'
 import { useToast } from '../toast'
+import { PanelIcon } from '../ui'
 import { TermDialog } from '../word-dialogs'
 
 type NoteMarks = {
@@ -16,6 +34,8 @@ type NoteMarks = {
 	/** Words the AI suggests in this section, underlined faintly where their sentence is. */
 	terms?: Suggestion[]
 	openTerm?: (term: Suggestion) => void
+	/** Sets text one phrase per line, for the Phrases reading aid. */
+	phrases?: boolean
 }
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -37,11 +57,19 @@ function termRanges(text: string, terms: Suggestion[] = []) {
 function Inline({ text, links = [], refs = [], marks }: { text: string; links?: TextLink[]; refs?: NoteRef[]; marks: NoteMarks }) {
 	// A suggested word inside a link stays a link.
 	const terms = termRanges(text, marks.terms).filter((t) => !links.some((l) => l.start < t.end && t.start < l.end))
-	const cuts = [...new Set([0, text.length, ...links.flatMap((l) => [l.start, l.end]), ...refs.map((r) => r.at), ...terms.flatMap((t) => [t.start, t.end])])].sort(
-		(a, b) => a - b,
-	)
+	// A phrase never starts inside a suggested word, so the word stays one button.
+	const phrases = marks.phrases ? phraseStarts(text).filter((p) => !terms.some((t) => t.start < p.at && p.at < t.end)) : []
+	const cuts = [
+		...new Set([0, text.length, ...links.flatMap((l) => [l.start, l.end]), ...refs.map((r) => r.at), ...terms.flatMap((t) => [t.start, t.end]), ...phrases.map((p) => p.at)]),
+	].sort((a, b) => a - b)
 	const out: ReactNode[] = []
 	cuts.forEach((at, i) => {
+		const phrase = phrases.find((p) => p.at === at)
+		if (phrase) {
+			out.push(<br key={`b${at}`} />)
+			// A phrase that goes on a sentence is indented, so each sentence starts at the edge.
+			if (!phrase.sentence) out.push(<span key={`i${at}`} aria-hidden className="inline-block w-[1.4em]" />)
+		}
 		for (const ref of refs.filter((r) => r.at === at)) {
 			const note = marks.notes.get(ref.id)
 			if (!note) continue
@@ -200,6 +228,21 @@ function NoteDialog({ note, onClose }: { note: Note; onClose: () => void }) {
 	)
 }
 
+/** Esc or a click outside `box` closes an open menu, as menus do. */
+function useDismiss(box: RefObject<HTMLElement | null>, open: boolean, setOpen: (open: boolean) => void) {
+	useEffect(() => {
+		if (!open) return
+		const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+		const onDown = (e: PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false)
+		window.addEventListener('keydown', onKey)
+		window.addEventListener('pointerdown', onDown)
+		return () => {
+			window.removeEventListener('keydown', onKey)
+			window.removeEventListener('pointerdown', onDown)
+		}
+	}, [box, open, setOpen])
+}
+
 /**
  * The section's menu: Rewrite questions, and Rewrite key ideas while none of them is in use. A
  * rewrite runs in the background; the line under the title follows it, and every answer and
@@ -233,19 +276,8 @@ function SectionMenu({ section }: { section: Section }) {
 		seenBusy.current = false
 		setAsked(null)
 	}, [asked, busy, section.writeStatus, toast])
-	// Esc or a click outside closes it, as menus do.
 	const box = useRef<HTMLDivElement>(null)
-	useEffect(() => {
-		if (!open) return
-		const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
-		const onDown = (e: PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false)
-		window.addEventListener('keydown', onKey)
-		window.addEventListener('pointerdown', onDown)
-		return () => {
-			window.removeEventListener('keydown', onKey)
-			window.removeEventListener('pointerdown', onDown)
-		}
-	}, [open])
+	useDismiss(box, open, setOpen)
 	const item = 'block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-world disabled:opacity-50'
 	return (
 		<div ref={box} className="relative font-sans">
@@ -378,9 +410,6 @@ function FinishButton({ reading, onDone }: { reading: ReadingWithContents; onDon
 	)
 }
 
-/** How far below the top of the window the text starts, under the sticky header. */
-const TOP = 80
-
 /** The place on screen: the shown section, and its first block not yet scrolled past. Null while it loads. */
 function placeOnScreen(): ReadingPosition | null {
 	const article = document.querySelector<HTMLElement>('article[data-section]')
@@ -390,17 +419,20 @@ function placeOnScreen(): ReadingPosition | null {
 	return { sectionId: article.dataset.section!, block: Number(top?.dataset.block ?? 0) }
 }
 
+const NO_BLOCKS: Block[] = []
+
 /**
- * One section's text. `startAt` is the block to open at, scrolled to once the text is shown.
- * `onEnd` runs when the member reaches its end.
+ * One section's text, with the reading aid `settings` picks. `startAt` is the block to open at,
+ * scrolled to once the text is shown. `onEnd` runs when the member reaches its end.
  */
 function SectionView({
 	id,
 	readingId,
-	size,
+	textStyle,
+	settings,
 	startAt,
 	onEnd,
-}: { id: string; readingId: string; size: string; startAt?: number; onEnd?: () => void }) {
+}: { id: string; readingId: string; textStyle: CSSProperties; settings: ReadingSettings; startAt?: number; onEnd?: () => void }) {
 	const queryClient = useQueryClient()
 	const section = useQuery({
 		...orpc.readings.section.queryOptions({ input: { id } }),
@@ -423,6 +455,8 @@ function SectionView({
 	// Words worth knowing come with the key ideas, once the section is written.
 	const suggested = useQuery({ ...orpc.words.suggestions.queryOptions({ input: { sectionId: id } }), enabled: section.data?.writeStatus === 'ready' })
 	const [openTerm, setOpenTerm] = useState<Suggestion | null>(null)
+	const text = useRef<HTMLDivElement>(null)
+	const driftCheck = useDriftCheck(section.data?.blocks ?? NO_BLOCKS, settings.aid === 'Drift check', text)
 	const loaded = Boolean(section.data)
 	const opened = useRef(false)
 	useEffect(() => {
@@ -433,7 +467,13 @@ function SectionView({
 
 	if (section.isError) return <p role="alert">{errorMessage(section.error)}</p>
 	if (!section.data) return <p className="text-world-muted">Loading…</p>
-	const marks: NoteMarks = { notes: new Map(section.data.notes.map((n) => [n.id, n])), open: setOpenNote, terms: suggested.data, openTerm: setOpenTerm }
+	const marks: NoteMarks = {
+		notes: new Map(section.data.notes.map((n) => [n.id, n])),
+		open: setOpenNote,
+		terms: suggested.data,
+		openTerm: setOpenTerm,
+		phrases: settings.aid === 'Phrases',
+	}
 	const rewriting = ['queued', 'writing'].includes(section.data.writeStatus)
 	const note = section.data.headingsPending
 		? 'Adding headings to this long chapter…'
@@ -450,8 +490,8 @@ function SectionView({
 		<article
 			data-section={id}
 			data-pending={section.data.headingsPending ? '' : undefined}
-			className="grid gap-4 leading-relaxed"
-			style={{ fontSize: size }}
+			className="grid gap-4"
+			style={textStyle}
 		>
 			<header>
 				<div className="flex items-start justify-between gap-3">
@@ -460,12 +500,31 @@ function SectionView({
 				</div>
 				{note && <p className={`font-sans text-xs text-world-muted ${section.data.headingsPending || rewriting ? 'animate-pulse' : ''}`}>{note}</p>}
 			</header>
-			{section.data.blocks.map((b, i) => (
-				// The block a saved position names, and where opening at it puts the top of the screen.
-				<div key={i} data-block={i} style={{ scrollMarginTop: TOP }}>
-					<BlockView block={b} marks={marks} />
-				</div>
-			))}
+			<div ref={text} className="relative grid gap-4">
+				{section.data.blocks.map((b, i) => (
+					<Fragment key={i}>
+						{/* The block a saved position names, and where opening at it puts the top of the screen. */}
+						<div data-block={i} style={{ scrollMarginTop: TOP }}>
+							<BlockView block={b} marks={marks} />
+						</div>
+						{driftCheck(i)}
+					</Fragment>
+				))}
+				{settings.aid === 'Focus line' && <FocusLine root={text} span={Number(FOCUS_LINES[settings.lines])} />}
+			</div>
+			{(settings.aid === 'Pacer' || settings.aid === 'Read aloud') && (
+				// Keyed, so switching between them starts afresh, without the other's mark or place.
+				<FocusPlayer
+					key={settings.aid}
+					root={text}
+					aid={settings.aid}
+					style={settings.pacerStyle}
+					pace={settings.pace}
+					setPace={settings.setPace}
+					rate={settings.rate}
+					setRate={settings.setRate}
+				/>
+			)}
 			{openNote && <NoteDialog note={openNote} onClose={() => setOpenNote(null)} />}
 			{openTerm && <TermDialog term={openTerm} sectionId={id} onClose={() => setOpenTerm(null)} />}
 			{onEnd && <EndMark key={id} onEnd={onEnd} />}
@@ -512,11 +571,23 @@ function Contents({ reading, current, onPick }: { reading: ReadingWithContents; 
 }
 
 /**
- * How the text is set: line width and type size. Kept in this browser, since the right choice
- * depends on the screen.
+ * How the text is set: type size, line width, line spacing and typeface. Kept in this browser,
+ * since the right choice depends on the screen.
  */
-const WIDTHS = { Narrow: '38rem', Medium: '46rem', Wide: '60rem' }
+const WIDTHS = { Narrow: '43.7rem', Medium: '52.9rem', Wide: '69rem' }
 const SIZES = { Small: '1rem', Medium: '1.125rem', Large: '1.25rem', Larger: '1.4rem' }
+const SPACINGS = { Tight: '1.45', Normal: '1.625', Loose: '1.9' }
+// Fonts the device already has, so no download slows the first page. Each stack falls back to a near match on other systems.
+const FACES = {
+	Serif: 'var(--font-serif)',
+	Charter: "Charter, 'Bitstream Charter', 'Sitka Text', Cambria, serif",
+	Georgia: "Georgia, 'Times New Roman', serif",
+	Sans: 'ui-sans-serif, system-ui, sans-serif',
+	Humanist: "Seravek, 'Gill Sans Nova', Ubuntu, Calibri, 'DejaVu Sans', sans-serif",
+	Rounded: 'var(--font-rounded)',
+}
+/** Whether the contents sit beside the text on a wide screen, or fold away. */
+const CONTENTS = { Shown: 'shown', Hidden: 'hidden' }
 
 function useChoice<T extends string>(key: string, options: Record<T, string>, fallback: T) {
 	const [choice, setChoice] = useState<T>(() => {
@@ -531,6 +602,20 @@ function useChoice<T extends string>(key: string, options: Record<T, string>, fa
 		},
 	] as const
 }
+
+function useReadingSettings() {
+	const [size, setSize] = useChoice('reader-size', SIZES, 'Medium')
+	const [width, setWidth] = useChoice('reader-width', WIDTHS, 'Medium')
+	const [spacing, setSpacing] = useChoice('reader-spacing', SPACINGS, 'Normal')
+	const [face, setFace] = useChoice('reader-face', FACES, 'Serif')
+	const [aid, setAid] = useChoice<FocusAid>('reader-aid', FOCUS_AIDS, 'Off')
+	const [lines, setLines] = useChoice<FocusLines>('reader-focus-lines', FOCUS_LINES, '1 line')
+	const [pace, setPace] = useChoice<Pace>('reader-pace', PACES, '220')
+	const [pacerStyle, setPacerStyle] = useChoice<PacerStyle>('reader-pacer-style', PACER_STYLES, 'Steady line')
+	const [rate, setRate] = useChoice<Rate>('reader-rate', RATES, '1')
+	return { size, setSize, width, setWidth, spacing, setSpacing, face, setFace, aid, setAid, lines, setLines, pacerStyle, setPacerStyle, pace, setPace, rate, setRate }
+}
+type ReadingSettings = ReturnType<typeof useReadingSettings>
 
 /** One click picks an option. `label` draws each one; its name is the option's. */
 function Picker<T extends string>({
@@ -566,6 +651,79 @@ const sizeLetter = (s: keyof typeof SIZES) => (
 	</span>
 )
 
+/** The Aa button, and the panel under it that sets the text. Each choice applies at once. */
+function ReadingSettings({ settings: s }: { settings: ReadingSettings }) {
+	const [open, setOpen] = useState(false)
+	const box = useRef<HTMLDivElement>(null)
+	useDismiss(box, open, setOpen)
+	const row = 'grid gap-1.5'
+	const name = 'text-xs font-semibold text-world-muted'
+	const picker = 'grid auto-cols-fr grid-flow-col'
+	return (
+		<div ref={box} className="relative font-sans">
+			<button
+				type="button"
+				aria-label="Reading settings"
+				title="Reading settings"
+				aria-expanded={open}
+				onClick={() => setOpen((o) => !o)}
+				className="grid h-8 place-items-center rounded-lg border border-world-line px-2.5 text-world-muted transition hover:bg-world-card hover:text-world-ink aria-expanded:bg-world-card aria-expanded:text-world-ink"
+			>
+				<span aria-hidden className="font-serif text-base leading-none">
+					A<span className="text-[0.8em]">a</span>
+				</span>
+			</button>
+			{open && (
+				// Above the Pacer's bar, which would otherwise cover the Pacer style on a phone.
+				<div role="group" aria-label="Reading settings" className="absolute right-0 z-40 mt-1 grid w-72 gap-4 rounded-xl bg-world-card p-4 shadow-lg ring-1 ring-world-line">
+					<div className={row}>
+						<p className={name}>Text size</p>
+						<Picker name="Text size" options={SIZES} value={s.size} onPick={s.setSize} label={sizeLetter} className={picker} />
+					</div>
+					{/* On a narrower screen the text already fills it, so width does nothing there. */}
+					<div className={`${row} hidden lg:grid`}>
+						<p className={name}>Text width</p>
+						<Picker name="Text width" options={WIDTHS} value={s.width} onPick={s.setWidth} className={picker} />
+					</div>
+					<div className={row}>
+						<p className={name}>Line spacing</p>
+						<Picker name="Line spacing" options={SPACINGS} value={s.spacing} onPick={s.setSpacing} className={picker} />
+					</div>
+					<div className={row}>
+						<p className={name}>Typeface</p>
+						<Picker
+							name="Typeface"
+							options={FACES}
+							value={s.face}
+							onPick={s.setFace}
+							label={(f) => <span style={{ fontFamily: FACES[f] }}>{f}</span>}
+							className="grid grid-cols-3"
+						/>
+					</div>
+					<div className={`${row} border-t border-world-line pt-4`}>
+						<p className={name}>Reading aid</p>
+						<Picker name="Reading aid" options={FOCUS_AIDS} value={s.aid} onPick={s.setAid} className="grid grid-cols-3" />
+						<p className="text-xs leading-snug text-world-muted">{FOCUS_AIDS[s.aid]}</p>
+					</div>
+					{s.aid === 'Focus line' && (
+						<div className={row}>
+							<p className={name}>Lines in focus</p>
+							<Picker name="Lines in focus" options={FOCUS_LINES} value={s.lines} onPick={s.setLines} className={picker} />
+						</div>
+					)}
+					{s.aid === 'Pacer' && (
+						<div className={row}>
+							<p className={name}>Pacer style</p>
+							<Picker name="Pacer style" options={PACER_STYLES} value={s.pacerStyle} onPick={s.setPacerStyle} className="grid grid-cols-2" />
+							<p className="text-xs leading-snug text-world-muted">{PACER_STYLES[s.pacerStyle]}</p>
+						</div>
+					)}
+				</div>
+			)}
+		</div>
+	)
+}
+
 /**
  * One reading: its contents, and one section at a time. It opens where the member stopped, or at
  * `at` when given, such as the passage of a saved idea.
@@ -578,8 +736,8 @@ export function Reader({ readingId, at: openAt }: { readingId: string; at?: Read
 	})
 	const [current, setCurrent] = useState(0)
 	const [contentsOpen, setContentsOpen] = useState(false)
-	const [width, setWidth] = useChoice('reader-width', WIDTHS, 'Medium')
-	const [size, setSize] = useChoice('reader-size', SIZES, 'Medium')
+	const settings = useReadingSettings()
+	const [contentsShown, setContentsShown] = useChoice<keyof typeof CONTENTS>('reader-contents', CONTENTS, 'Shown')
 	const queryClient = useQueryClient()
 	// Reaching the end of a section marks it read; the end of the last one marks the reading read, which a book counts.
 	const markRead = useMutation({
@@ -603,6 +761,10 @@ export function Reader({ readingId, at: openAt }: { readingId: string; at?: Read
 		placed.current = true
 		const at = (openAt && data.contents.some((s) => s.id === openAt.sectionId) ? openAt : null) ?? data.position
 		const i = at ? data.contents.findIndex((s) => s.id === at.sectionId) : -1
+		// Opening counts as reading it, so Reading now lists it first, even before the member scrolls.
+		const first = data.contents[0]
+		const place = i >= 0 ? at : first && { sectionId: first.id, block: 0 }
+		if (place) void client.readings.savePosition({ id: data.id, ...place })
 		if (i < 0) return
 		setCurrent(i)
 		setStart(at)
@@ -684,25 +846,38 @@ export function Reader({ readingId, at: openAt }: { readingId: string; at?: Read
 		if (to) void client.readings.savePosition({ id: r.id, sectionId: to.id, block: 0 })
 	}
 	const contents = <Contents reading={r} current={current} onPick={pick} />
+	const textStyle = { fontSize: SIZES[settings.size], lineHeight: SPACINGS[settings.spacing], fontFamily: FACES[settings.face] }
+	const fold = 'grid size-7 place-items-center rounded-md text-world-muted transition hover:bg-world-card hover:text-world-ink'
 	const step = 'rounded-xl border border-world-line px-4 py-2 font-sans text-sm transition hover:bg-world-card active:scale-[0.97]'
 
 	return (
-		<div className="grid gap-8 xl:grid-cols-[17rem_minmax(0,1fr)] xl:gap-12">
+		<div className={`grid gap-8 xl:gap-12 ${contentsShown === 'Shown' ? 'xl:grid-cols-[17rem_minmax(0,1fr)]' : 'xl:grid-cols-[2.5rem_minmax(0,1fr)]'}`}>
 			<SaveIdea readingId={r.id} />
 			<aside className="hidden border-r border-world-line xl:block">
-				<div className="sticky top-20 grid max-h-[calc(100dvh-6.5rem)] grid-rows-[auto_minmax(0,1fr)] gap-2 pr-3">
-					<p className="flex items-baseline justify-between px-2 font-sans text-xs font-semibold tracking-wide text-world-muted uppercase">
-						Contents
-						<span className="font-normal tracking-normal normal-case">
-							{current + 1} of {r.contents.length}
-						</span>
-					</p>
-					<nav aria-label="Contents" className="overflow-y-auto overscroll-contain pb-4">
-						{contents}
-					</nav>
-				</div>
+				{contentsShown === 'Shown' ? (
+					<div className="sticky top-20 grid max-h-[calc(100dvh-6.5rem)] grid-rows-[auto_minmax(0,1fr)] gap-2 pr-3">
+						<div className="flex items-center gap-2 pl-2 font-sans text-xs text-world-muted">
+							<p className="mr-auto font-semibold tracking-wide uppercase">Contents</p>
+							<span>
+								{current + 1} of {r.contents.length}
+							</span>
+							<button type="button" aria-label="Hide contents" title="Hide contents" onClick={() => setContentsShown('Hidden')} className={fold}>
+								<PanelIcon open />
+							</button>
+						</div>
+						<nav aria-label="Contents" className="overflow-y-auto overscroll-contain pb-4">
+							{contents}
+						</nav>
+					</div>
+				) : (
+					<div className="sticky top-20 grid justify-items-start gap-1 font-sans text-xs text-world-muted">
+						<button type="button" aria-label="Show contents" title={`Show contents · ${current + 1} of ${r.contents.length}`} onClick={() => setContentsShown('Shown')} className={fold}>
+							<PanelIcon open={false} />
+						</button>
+					</div>
+				)}
 			</aside>
-			<div className="mx-auto grid w-full gap-6" style={{ maxWidth: WIDTHS[width] }}>
+			<div className="mx-auto grid w-full gap-6" style={{ maxWidth: WIDTHS[settings.width] }}>
 				<header className="grid gap-2">
 					{r.book ? (
 						<Link to="/mind/book/$bookId" params={{ bookId: r.book.id }} className="font-sans text-sm text-world-muted">
@@ -727,10 +902,7 @@ export function Reader({ readingId, at: openAt }: { readingId: string; at?: Read
 								</a>
 							)}
 						</p>
-						<div className="flex items-center gap-2">
-							<Picker name="Text size" options={SIZES} value={size} onPick={setSize} label={sizeLetter} className="flex" />
-							<Picker name="Text width" options={WIDTHS} value={width} onPick={setWidth} className="hidden lg:flex" />
-						</div>
+						<ReadingSettings settings={settings} />
 					</div>
 				</header>
 				<div className="xl:hidden">
@@ -748,7 +920,8 @@ export function Reader({ readingId, at: openAt }: { readingId: string; at?: Read
 						key={section.id}
 						id={section.id}
 						readingId={r.id}
-						size={SIZES[size]}
+						textStyle={textStyle}
+						settings={settings}
 						startAt={start?.sectionId === section.id ? start.block : undefined}
 						onEnd={!section.readAt && !markRead.isPending ? () => markRead.mutate({ id: r.id, sectionId: section.id }) : undefined}
 					/>
