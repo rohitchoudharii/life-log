@@ -18,6 +18,20 @@ function useRefreshLibrary() {
 export const chaptersRead = (book: Pick<Book, 'chapterCount' | 'readCount'>) =>
 	book.chapterCount ? `${book.readCount} of ${book.chapterCount} ${book.chapterCount === 1 ? 'chapter' : 'chapters'} read` : 'No chapters yet'
 
+/** Removes a book, with Undo. Its chapters are articles again until Undo puts them back. */
+export function useRemoveBook() {
+	const refresh = useRefreshLibrary()
+	const toast = useToast()
+	return useMutation({
+		mutationFn: (book: Pick<Book, 'id' | 'title'>) => client.books.remove({ id: book.id }).then(() => book),
+		onSuccess: async (book) => {
+			await refresh()
+			toast({ text: `Removed ${book.title}. Its chapters are articles again.`, undo: () => void client.books.restore({ id: book.id }).then(refresh) })
+		},
+		onError: (error) => toast({ text: errorMessage(error) }),
+	})
+}
+
 /** A title box and Save, for a new book. Esc or Cancel closes it. */
 function NewBookForm({ onCreated, onClose }: { onCreated: (book: Book) => void; onClose: () => void }) {
 	const [title, setTitle] = useState('')
@@ -140,26 +154,6 @@ export function AddToBook({ reading }: { reading: Reading }) {
 			</div>
 			{making && <NewBookForm onClose={() => setMaking(false)} onCreated={(book) => add.mutate(book)} />}
 		</div>
-	)
-}
-
-/** A book on Mind: one card with its progress and Continue, opening to its chapters. */
-export function BookItem({ book }: { book: Book }) {
-	return (
-		<li data-testid="book" className="rounded-2xl border border-world-line bg-world-card transition hover:border-world-accent">
-			<Link to="/mind/book/$bookId" params={{ bookId: book.id }} className="block p-4">
-				<p className="font-sans text-xs font-medium tracking-wide text-world-muted uppercase">Book</p>
-				<p className="text-lg leading-snug">{book.title}</p>
-				<p className="mt-1 font-sans text-sm text-world-muted">{chaptersRead(book)}</p>
-			</Link>
-			{book.continueId && (
-				<div className="border-t border-world-line px-4 py-3">
-					<Link to="/mind/read/$readingId" params={{ readingId: book.continueId }} className={`${quiet} inline-block`}>
-						Continue
-					</Link>
-				</div>
-			)}
-		</li>
 	)
 }
 
@@ -288,16 +282,7 @@ export function BookPage({ bookId }: { bookId: string }) {
 		},
 		onError: (error) => toast({ text: errorMessage(error) }),
 	})
-	const remove = useMutation({
-		mutationFn: () => client.books.remove({ id: bookId }),
-		onSuccess: async () => {
-			const name = book.data?.title ?? 'the book'
-			await refresh()
-			void navigate({ to: '/mind' })
-			toast({ text: `Removed ${name}. Its chapters are articles again.`, undo: () => void client.books.restore({ id: bookId }).then(refresh) })
-		},
-		onError: (error) => toast({ text: errorMessage(error) }),
-	})
+	const remove = useRemoveBook()
 
 	if (book.isError) return <p role="alert">{errorMessage(book.error)}</p>
 	if (!book.data) return null
@@ -358,7 +343,7 @@ export function BookPage({ bookId }: { bookId: string }) {
 							Rename
 						</button>
 					)}
-					<button type="button" className={quiet} onClick={() => remove.mutate()}>
+					<button type="button" className={quiet} onClick={() => remove.mutate(b, { onSuccess: () => void navigate({ to: '/mind' }) })}>
 						Remove book
 					</button>
 				</div>

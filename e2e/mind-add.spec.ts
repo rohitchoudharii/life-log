@@ -339,6 +339,7 @@ test('a chapter link adds that chapter, and its card offers the whole book', asy
 	await addLink(page, chapter)
 	await expect(readings(page).getByRole('link', { name: /3\. Placing servers/ })).toBeVisible({ timeout: 15_000 })
 	await expect(readings(page)).toContainText('Part of The Ring Book · 22 pages')
+	await readings(page).getByRole('button', { name: 'More' }).click()
 	await readings(page).getByRole('button', { name: 'Add the whole book' }).click()
 	// The chapter's card becomes the book's.
 	await expect(readings(page)).toHaveCount(1)

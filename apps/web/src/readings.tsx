@@ -1,9 +1,10 @@
-import { FILE_TOO_LARGE, MAX_FILE_BYTES, type Reading } from '@life-log-club/contract'
+import { type Book, FILE_TOO_LARGE, MAX_FILE_BYTES, type Reading } from '@life-log-club/contract'
 import { goalPace } from '@life-log-club/domain'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { type DragEvent, useRef, useState } from 'react'
-import { AddToBook, BookItem, useBooks } from './books'
+import { AddToBook, chaptersRead, quiet, useBooks, useRemoveBook } from './books'
+import { when } from './entries'
 import { client, errorMessage, orpc } from './rpc'
 import { useToast } from './toast'
 
@@ -47,6 +48,7 @@ function useAddReading() {
 				source: 'url',
 				readAt: null,
 				position: null,
+				lastOpenedAt: null,
 				book: null,
 				wordsRead: 0,
 				goalBy: null,
@@ -99,6 +101,7 @@ export function useAddFile() {
 				source: /\.pdf$/i.test(file.name) ? 'pdf_upload' : 'epub',
 				readAt: null,
 				position: null,
+				lastOpenedAt: null,
 				book: null,
 				wordsRead: 0,
 				goalBy: null,
@@ -319,8 +322,19 @@ function useAddBook() {
 const shortDay = (day: string) => new Date(`${day}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
 const todayUtc = () => new Date().toISOString().slice(0, 10)
 
-/** The goal line ("34% · about 12 pages a day to finish by 1 Mar") and Finish by, which sets or clears it. */
-function Goal({ reading }: { reading: Reading }) {
+/** The goal line under a reading's title ("about 12 pages a day to finish by 1 Mar"), or nothing without a goal. */
+function GoalLine({ reading }: { reading: Reading }) {
+	if (!reading.goalBy) return null
+	const pace = goalPace({ wordCount: reading.wordCount, wordsRead: reading.wordsRead, goalBy: reading.goalBy, today: todayUtc() })
+	return (
+		<p className="truncate font-sans text-xs text-world-accent" data-testid="goal">
+			{pace.passed ? 'Goal date passed' : `About ${pace.pagesPerDay} ${pace.pagesPerDay === 1 ? 'page' : 'pages'} a day to finish by ${shortDay(reading.goalBy)}`}
+		</p>
+	)
+}
+
+/** Finish by, which sets the goal day or clears it. */
+function GoalButton({ reading }: { reading: Reading }) {
 	const queryClient = useQueryClient()
 	const [editing, setEditing] = useState(false)
 	const save = useMutation({
@@ -330,39 +344,30 @@ function Goal({ reading }: { reading: Reading }) {
 			await queryClient.invalidateQueries({ queryKey: listKey })
 		},
 	})
-	const pace = reading.goalBy ? goalPace({ wordCount: reading.wordCount, wordsRead: reading.wordsRead, goalBy: reading.goalBy, today: todayUtc() }) : null
+	if (!editing)
+		return (
+			<button type="button" className={quiet} onClick={() => setEditing(true)}>
+				{reading.goalBy ? 'Change goal' : 'Finish by'}
+			</button>
+		)
 	return (
-		<div className="flex flex-wrap items-center gap-2 border-t border-world-line px-4 py-3 font-sans text-sm">
-			{pace && (
-				<p className="mr-auto text-world-muted" data-testid="goal">
-					{pace.passed
-						? `${pace.percent}% · Goal date passed`
-						: `${pace.percent}% · about ${pace.pagesPerDay} ${pace.pagesPerDay === 1 ? 'page' : 'pages'} a day to finish by ${shortDay(reading.goalBy!)}`}
-				</p>
-			)}
-			{editing ? (
-				<label className="flex items-center gap-2">
-					<span>Finish by</span>
-					<input
-						type="date"
-						autoFocus
-						min={todayUtc()}
-						defaultValue={reading.goalBy ?? ''}
-						onChange={(e) => e.target.value && save.mutate(e.target.value)}
-						className="rounded-lg border border-world-line bg-world px-2 py-1"
-					/>
-					{reading.goalBy && (
-						<button type="button" className="text-world-muted underline underline-offset-2" onClick={() => save.mutate(null)}>
-							No goal
-						</button>
-					)}
-				</label>
-			) : (
-				<button type="button" className="rounded-lg border border-world-line px-3 py-1.5 transition hover:bg-world active:scale-[0.97]" onClick={() => setEditing(true)}>
-					{reading.goalBy ? 'Change goal' : 'Finish by'}
+		<label className="flex items-center gap-2">
+			<span>Finish by</span>
+			<input
+				type="date"
+				// biome-ignore lint/a11y/noAutofocus: the member just asked for this box.
+				autoFocus
+				min={todayUtc()}
+				defaultValue={reading.goalBy ?? ''}
+				onChange={(e) => e.target.value && save.mutate(e.target.value)}
+				className="rounded-lg border border-world-line bg-world px-2 py-1"
+			/>
+			{reading.goalBy && (
+				<button type="button" className="text-world-muted underline underline-offset-2" onClick={() => save.mutate(null)}>
+					No goal
 				</button>
 			)}
-		</div>
+		</label>
 	)
 }
 
@@ -400,61 +405,211 @@ export function FinishedReadings() {
 	)
 }
 
-function ReadingItem({ reading }: { reading: Reading }) {
+/** When the member last had it open, or when they added it if they never have. */
+function LastRead({ item }: { item: { lastOpenedAt: Date | null; createdAt: Date } }) {
+	// The day is enough for when it was added; the time is for when it was last read.
+	const text = item.lastOpenedAt ? when(item.lastOpenedAt) : `Added ${when(item.createdAt).replace(/^(Today|Yesterday) .*/, (_, day: string) => day.toLowerCase())}`
+	return <span className={`font-sans text-xs whitespace-nowrap tabular-nums ${item.lastOpenedAt ? '' : 'text-world-muted'}`}>{text}</span>
+}
+
+/** A thin bar and the share read, or Not started. */
+function Progress({ percent, started, small }: { percent: number; started: boolean; small?: boolean }) {
+	return (
+		<span className={small ? 'flex items-center gap-2' : 'grid gap-1'}>
+			<span aria-hidden className={`block h-1 overflow-hidden rounded-full bg-world-line ${small ? 'w-12' : ''}`}>
+				<span className="block h-full bg-world-accent" style={{ width: `${percent}%` }} />
+			</span>
+			<span className="font-sans text-xs text-world-muted tabular-nums">{started || percent ? `${percent}%` : 'Not started'}</span>
+		</span>
+	)
+}
+
+const percentOf = (done: number, total: number) => (total ? Math.round((done / total) * 100) : 0)
+
+// One column on a phone with Continue and More beside it; progress and last read get their own columns from md up.
+const rowGrid = 'relative grid grid-cols-[minmax(0,1fr)_auto_2rem] items-center gap-x-3 px-4 py-2.5 md:grid-cols-[minmax(0,1fr)_7rem_8rem_6rem_2rem]'
+// The title link covers the whole row, so the row opens in one click; the buttons sit above it.
+const stretched = 'block truncate text-lg leading-snug after:absolute after:inset-0 hover:underline'
+const above = 'relative z-10'
+
+/** Remove, and a second step that asks first. Cancel or Esc keeps it. */
+function RemoveButton({ question, pending, onRemove }: { question: string; pending: boolean; onRemove: () => void }) {
+	const [asking, setAsking] = useState(false)
+	if (!asking)
+		return (
+			<button type="button" className={`${quiet} ml-auto`} onClick={() => setAsking(true)}>
+				Remove
+			</button>
+		)
+	return (
+		<div
+			role="group"
+			aria-label="Confirm remove"
+			className="ml-auto flex flex-wrap items-center justify-end gap-2"
+			onKeyDown={(e) => {
+				if (e.key === 'Escape') {
+					e.stopPropagation()
+					setAsking(false)
+				}
+			}}
+		>
+			<span>{question}</span>
+			<button
+				type="button"
+				// biome-ignore lint/a11y/noAutofocus: the member just asked to remove it, so Esc and Enter answer at once.
+				autoFocus
+				disabled={pending}
+				onClick={onRemove}
+				className="rounded-lg bg-red px-3 py-1.5 font-semibold text-white transition hover:opacity-90 active:scale-[0.97] disabled:opacity-60"
+			>
+				Yes, remove
+			</button>
+			<button type="button" className={quiet} onClick={() => setAsking(false)}>
+				Cancel
+			</button>
+		</div>
+	)
+}
+
+function MoreButton({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+	return (
+		<button
+			type="button"
+			aria-label="More"
+			aria-expanded={open}
+			onClick={onToggle}
+			className={`${above} grid size-8 place-items-center rounded-lg font-sans text-world-muted transition hover:bg-world hover:text-world-ink`}
+		>
+			⋯
+		</button>
+	)
+}
+
+const panel = 'flex flex-wrap items-center gap-2 border-t border-dashed border-world-line px-4 py-2.5 font-sans text-sm'
+
+function ContinueLink({ readingId, primary }: { readingId: string; primary: boolean }) {
+	return (
+		<Link
+			to="/mind/read/$readingId"
+			params={{ readingId }}
+			className={`${above} justify-self-end ${primary ? 'rounded-lg bg-world-accent px-3 py-1.5 font-sans text-sm font-semibold text-world-on-accent transition hover:opacity-90' : quiet}`}
+		>
+			Continue
+		</Link>
+	)
+}
+
+/** A book in Reading now: chapters read, last read, Continue at the first chapter not read yet, and Remove under More. */
+function BookItem({ book, primary }: { book: Book; primary: boolean }) {
+	const [more, setMore] = useState(false)
+	const remove = useRemoveBook()
+	return (
+		<li data-testid="book" className="transition hover:bg-world/40">
+			<div className={rowGrid}>
+				<div className="min-w-0">
+					<Link to="/mind/book/$bookId" params={{ bookId: book.id }} className={stretched}>
+						{book.title}
+					</Link>
+					<p className="truncate font-sans text-xs text-world-muted">Book · {chaptersRead(book)}</p>
+					<p className="mt-1 flex items-center gap-2 md:hidden">
+						<Progress small percent={percentOf(book.readCount, book.chapterCount)} started={book.readCount > 0} />
+						<LastRead item={book} />
+					</p>
+				</div>
+				<span className="hidden md:block">
+					<Progress percent={percentOf(book.readCount, book.chapterCount)} started={book.readCount > 0} />
+				</span>
+				<span className="hidden md:block">
+					<LastRead item={book} />
+				</span>
+				{book.continueId ? <ContinueLink readingId={book.continueId} primary={primary} /> : <span />}
+				<MoreButton open={more} onToggle={() => setMore(!more)} />
+			</div>
+			{more && (
+				<div className={panel}>
+					<RemoveButton question="Remove this book? Its chapters become articles again." pending={remove.isPending} onRemove={() => remove.mutate(book)} />
+				</div>
+			)}
+		</li>
+	)
+}
+
+function ReadingItem({ reading, primary }: { reading: Reading; primary: boolean }) {
 	const add = useAddReading()
 	const remove = useRemoveReading()
 	const addBook = useAddBook()
-	const quiet = 'rounded-lg border border-world-line px-3 py-1.5 font-sans text-sm transition hover:bg-world active:scale-[0.97]'
-	if (reading.status === 'ready')
+	const [more, setMore] = useState(false)
+	if (reading.status === 'ready') {
+		const percent = percentOf(reading.wordsRead, reading.wordCount)
 		return (
-			<li data-testid="reading" className="rounded-2xl border border-world-line bg-world-card transition hover:border-world-accent">
-				<Link to="/mind/read/$readingId" params={{ readingId: reading.id }} className="block p-4">
-					<p className="text-lg leading-snug">{reading.title}</p>
-					<p className="mt-1 font-sans text-sm text-world-muted">
-						{[reading.author, host(reading.sourceUrl), `${reading.sectionCount} ${reading.sectionCount === 1 ? 'section' : 'sections'}`, minutes(reading.wordCount)]
-							.filter(Boolean)
-							.join(' · ')}
-					</p>
-				</Link>
-				<Goal reading={reading} />
-				{reading.position && !reading.readAt && (
-					<div className="border-t border-world-line px-4 py-3">
-						<Link to="/mind/read/$readingId" params={{ readingId: reading.id }} className={`${quiet} inline-block`}>
-							Continue
+			<li data-testid="reading" className="transition hover:bg-world/40">
+				<div className={rowGrid}>
+					<div className="min-w-0">
+						<Link to="/mind/read/$readingId" params={{ readingId: reading.id }} className={stretched}>
+							{reading.title}
 						</Link>
-					</div>
-				)}
-				{reading.partOfBook && (
-					<div className="flex flex-wrap items-center justify-between gap-2 border-t border-world-line px-4 py-3 font-sans text-sm">
-						<p className="text-world-muted">
-							Part of <i>{reading.partOfBook.title}</i> · {reading.partOfBook.pages} pages
+						<p className="truncate font-sans text-xs text-world-muted">
+							{[reading.author, host(reading.sourceUrl), `${reading.sectionCount} ${reading.sectionCount === 1 ? 'section' : 'sections'}`, minutes(reading.wordCount)]
+								.filter(Boolean)
+								.join(' · ')}
 						</p>
-						<button type="button" className={quiet} disabled={addBook.isPending} onClick={() => addBook.mutate(reading)}>
-							{addBook.isPending ? 'Adding…' : 'Add the whole book'}
-						</button>
+						<GoalLine reading={reading} />
+						{reading.partOfBook && (
+							<p className="truncate font-sans text-xs text-world-muted">
+								Part of <i>{reading.partOfBook.title}</i> · {reading.partOfBook.pages} pages
+							</p>
+						)}
+						<p className="mt-1 flex items-center gap-2 md:hidden">
+							<Progress small percent={percent} started={!!reading.position} />
+							<LastRead item={reading} />
+						</p>
 					</div>
-				)}
-				{/* Only an article from a link can be a chapter of the member's book. */}
-				{(reading.source === 'url' || reading.source === 'web_capture') && (
-					<div className="flex flex-wrap items-center gap-2 border-t border-world-line px-4 py-3">
-						<AddToBook reading={reading} />
+					<span className="hidden md:block">
+						<Progress percent={percent} started={!!reading.position} />
+					</span>
+					<span className="hidden md:block">
+						<LastRead item={reading} />
+					</span>
+					{reading.position && !reading.readAt ? <ContinueLink readingId={reading.id} primary={primary} /> : <span />}
+					<MoreButton open={more} onToggle={() => setMore(!more)} />
+				</div>
+				{more && (
+					<div className={panel}>
+						<GoalButton reading={reading} />
+						{reading.partOfBook && (
+							<button type="button" className={quiet} disabled={addBook.isPending} onClick={() => addBook.mutate(reading)}>
+								{addBook.isPending ? 'Adding…' : 'Add the whole book'}
+							</button>
+						)}
+						{/* Only an article from a link can be a chapter of the member's book. */}
+						{(reading.source === 'url' || reading.source === 'web_capture') && <AddToBook reading={reading} />}
+						<RemoveButton question="Remove this reading?" pending={remove.isPending} onRemove={() => remove.mutate(reading)} />
 					</div>
 				)}
 			</li>
 		)
+	}
 	return (
-		<li data-testid="reading" className="rounded-2xl border border-dashed border-world-line p-4">
-			<p className="truncate text-lg leading-snug">
-				{reading.status !== 'importing' ? (reading.requestedUrl ?? reading.title) : reading.progress ? reading.title : host(reading.requestedUrl) || reading.title}
-			</p>
-			{reading.status === 'importing' ? (
-				<p className="mt-1 animate-pulse font-sans text-sm text-world-muted">{importingText(reading)}</p>
-			) : (
-				<>
-					<p role="alert" className="mt-1 font-sans text-sm text-red">
-						{reading.error}
+		<li data-testid="reading">
+			<div className={rowGrid}>
+				<div className="min-w-0">
+					<p className="truncate text-lg leading-snug text-world-muted">
+						{reading.status !== 'importing' ? (reading.requestedUrl ?? reading.title) : reading.progress ? reading.title : host(reading.requestedUrl) || reading.title}
 					</p>
-					<div className="mt-3 flex gap-2">
+					{reading.status === 'importing' ? (
+						<p className="animate-pulse truncate font-sans text-xs text-world-muted">{importingText(reading)}</p>
+					) : (
+						<p role="alert" className="font-sans text-xs text-red">
+							{reading.error}
+						</p>
+					)}
+				</div>
+				<span className="hidden md:block" />
+				<span className="hidden md:block">
+					<LastRead item={reading} />
+				</span>
+				{reading.status === 'failed' ? (
+					<div className="col-span-2 flex justify-end gap-2">
 						{/* A file is tried again by adding it again; only a link can be fetched again from here. */}
 						{reading.requestedUrl && (
 							<button type="button" className={quiet} onClick={() => add(reading.requestedUrl!)}>
@@ -465,13 +620,20 @@ function ReadingItem({ reading }: { reading: Reading }) {
 							Remove
 						</button>
 					</div>
-				</>
-			)}
+				) : (
+					<span className="col-span-2" />
+				)}
+			</div>
 		</li>
 	)
 }
 
-/** What the member is reading, newest first, with imports still running and the ones that failed. */
+const lastSeen = (item: { lastOpenedAt: Date | null; createdAt: Date }) => (item.lastOpenedAt ?? item.createdAt).getTime()
+
+/**
+ * What the member is reading, books and readings together, the one they had open last first. One
+ * never opened counts from when it was added, so a new import shows at the top.
+ */
 export function ReadingNow() {
 	const readings = useReadings()
 	const books = useBooks()
@@ -480,14 +642,16 @@ export function ReadingNow() {
 	const reading = readings.data.filter((r) => !r.finishedAt)
 	if (!reading.length && !books.data.length)
 		return <p className="text-world-muted">Nothing to read yet. Paste a link above, or add an EPUB or PDF.</p>
+	const items = [...books.data.map((book) => ({ id: book.id, at: lastSeen(book), book })), ...reading.map((r) => ({ id: r.id, at: lastSeen(r), reading: r }))].sort(
+		(a, b) => b.at - a.at,
+	)
+	// The latest thing to go back to gets the strong Continue.
+	const next = items.find((i) => ('book' in i ? i.book.continueId : i.reading.position && !i.reading.readAt && i.reading.status === 'ready'))?.id
 	return (
-		<ul className="grid items-start gap-3 md:grid-cols-2">
-			{books.data.map((b) => (
-				<BookItem key={b.id} book={b} />
-			))}
-			{reading.map((r) => (
-				<ReadingItem key={r.id} reading={r} />
-			))}
+		<ul aria-label="Reading now" className="divide-y divide-world-line rounded-2xl border border-world-line bg-world-card">
+			{items.map((i) =>
+				'book' in i ? <BookItem key={i.id} book={i.book} primary={i.id === next} /> : <ReadingItem key={i.id} reading={i.reading} primary={i.id === next} />,
+			)}
 		</ul>
 	)
 }

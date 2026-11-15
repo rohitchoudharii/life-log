@@ -58,6 +58,7 @@ export const toReading = ({ reading: r, sectionCount, progress, book, wordsRead 
 	source: r.source,
 	readAt: r.readAt,
 	position: r.position,
+	lastOpenedAt: r.lastOpenedAt,
 	book,
 	wordsRead,
 	goalBy: r.goalBy,

@@ -78,6 +78,23 @@ test('Continue opens the section where the member stopped, and a section is seen
 	expect(await seenAt(first!)).toBeNull()
 })
 
+test('Reading now lists the reading opened last first, and one never opened by when it was added', async ({ page }) => {
+	await joinAs(page)
+	for (const title of ['Older', 'Newer']) expect((await api(page, 'readings/addText', { id: crypto.randomUUID(), text: `# ${title}\n\nA short page to read.`, title })).ok()).toBe(true)
+	await page.goto('/mind')
+	const readings = page.getByTestId('reading')
+	await expect(readings).toHaveText([/^Newer/, /^Older/])
+	await expect(readings.first()).toContainText('Added today')
+
+	// Opening it is enough: no scrolling, no next section.
+	await readings.getByRole('link', { name: 'Older' }).click()
+	await expect(page.getByRole('heading', { level: 1, name: 'Older' })).toBeVisible()
+	await expect.poll(() => sql<{ at: Date | null }>("select last_opened_at as at from readings where title = 'Older'").then((r) => r[0]!.at)).not.toBeNull()
+	await page.goto('/mind')
+	await expect(readings).toHaveText([/^Older/, /^Newer/])
+	await expect(readings.first()).toContainText('Today')
+})
+
 test('reloading keeps the place within a section, 2 seconds after scrolling stops', async ({ page }) => {
 	await joinAs(page)
 	await page.goto('/mind')
@@ -1194,15 +1211,16 @@ test('Finish by sets a pace on the tile; Finished logs the reading as a mileston
 
 	// A goal a week from today (8 days, today included): 600 words = 2 pages, so 1 a day.
 	const goal = new Date(Date.now() + 7 * DAY_MINUTES * 60_000).toISOString().slice(0, 10)
+	await tile.getByRole('button', { name: 'More' }).click()
 	await tile.getByRole('button', { name: 'Finish by' }).click()
 	await tile.getByLabel('Finish by').fill(goal)
 	const label = new Date(`${goal}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
-	await expect(tile.getByTestId('goal')).toHaveText(`0% · about 1 page a day to finish by ${label}`)
+	await expect(tile.getByTestId('goal')).toHaveText(`About 1 page a day to finish by ${label}`)
 	await proof(page, testInfo, 'tile-goal')
 	// A goal day already over says so, and nothing more.
 	await sql("update readings set goal_by = (now() at time zone 'utc')::date - 1 where id = $1", [id])
 	await page.reload()
-	await expect(tile.getByTestId('goal')).toHaveText('0% · Goal date passed')
+	await expect(tile.getByTestId('goal')).toHaveText('Goal date passed')
 
 	// Finished works from any section, without reading them all, and opens the last one.
 	await tile.getByRole('link', { name: /Peak/ }).click()

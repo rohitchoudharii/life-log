@@ -491,6 +491,8 @@ export const Reading = z.object({
 	readAt: z.date().nullable(),
 	/** Where the member stopped reading, which opening the reading goes back to; null before they open it. */
 	position: ReadingPosition.nullable(),
+	/** When the member last had it open, which Reading now sorts by; null before they open it. */
+	lastOpenedAt: z.date().nullable(),
 	/** The member's book this reading is a chapter of. */
 	book: z.object({ id: z.uuid(), title: z.string() }).nullable(),
 	/** Words in the sections read to their end, for the share read against a goal. */
@@ -522,6 +524,8 @@ export const Book = z.object({
 	readCount: z.int(),
 	/** The first chapter not read yet, which Continue opens; null when every chapter is read. */
 	continueId: z.uuid().nullable(),
+	/** When the member last had one of its chapters open; null before they open one. */
+	lastOpenedAt: z.date().nullable(),
 	createdAt: z.date(),
 })
 export type Book = z.infer<typeof Book>

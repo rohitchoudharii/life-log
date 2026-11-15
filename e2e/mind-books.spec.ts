@@ -30,6 +30,7 @@ test('a member makes a book from articles, orders its chapters, and reads it cha
 	// Each article goes into the book with Add to book, and leaves the list as an article.
 	for (const title of ['2. Hashing keys', '1. Why rings']) {
 		const card = readings(page).filter({ hasText: title })
+		await card.getByRole('button', { name: 'More' }).click()
 		await card.getByRole('button', { name: 'Add to book' }).click()
 		await card.getByRole('button', { name: 'Field notes on rings' }).click()
 		await expect(page.getByRole('status')).toContainText('Added to Field notes on rings')
@@ -79,6 +80,7 @@ test('a member makes a book from articles, orders its chapters, and reads it cha
 	await expect(readings(page)).toHaveCount(1)
 	if (isMobile) return
 	// A chapter dragged onto another takes its place.
+	await readings(page).getByRole('button', { name: 'More' }).click()
 	await readings(page).getByRole('button', { name: 'Add to book' }).click()
 	await readings(page).getByRole('button', { name: 'Field notes on rings' }).click()
 	await book(page).getByRole('link').first().click()
@@ -93,6 +95,7 @@ test('Add to book makes a new book with New book…, and offers no book for a fi
 	await addLink(page, `${FAKE_SITE}/articles/execution-model`)
 	const card = readings(page).filter({ hasText: 'JavaScript execution model' })
 	await expect(card.getByRole('link')).toBeVisible({ timeout: 15_000 })
+	await card.getByRole('button', { name: 'More' }).click()
 	await card.getByRole('button', { name: 'Add to book' }).click()
 	await card.getByRole('button', { name: 'New book…' }).click()
 	await card.getByLabel('Book title').fill('JavaScript notes')
@@ -103,7 +106,29 @@ test('Add to book makes a new book with New book…, and offers no book for a fi
 
 	await page.getByLabel('EPUB or PDF file').setInputFiles(new URL('../apps/server/src/import/fixtures/the-prince.epub', import.meta.url).pathname)
 	await expect(readings(page).getByRole('link', { name: /The Prince/ })).toBeVisible({ timeout: 30_000 })
-	await expect(readings(page).filter({ hasText: 'The Prince' }).getByRole('button', { name: 'Add to book' })).toHaveCount(0)
+	const prince = readings(page).filter({ hasText: 'The Prince' })
+	await prince.getByRole('button', { name: 'More' }).click()
+	await expect(prince.getByRole('button', { name: 'Finish by' })).toBeVisible()
+	await expect(prince.getByRole('button', { name: 'Add to book' })).toHaveCount(0)
+
+	// Remove asks first: Cancel keeps the reading, Yes, remove takes it out, and Undo brings it back.
+	await prince.getByRole('button', { name: 'Remove', exact: true }).click()
+	await expect(prince).toContainText('Remove this reading?')
+	await prince.getByRole('button', { name: 'Cancel' }).click()
+	await prince.getByRole('button', { name: 'Remove', exact: true }).click()
+	await prince.getByRole('button', { name: 'Yes, remove' }).click()
+	await expect(page.getByRole('status')).toContainText('Removed: The Prince')
+	await expect(prince).toHaveCount(0)
+	await page.getByRole('button', { name: 'Undo' }).click()
+	await expect(prince).toBeVisible()
+
+	// A book is removed from its row the same way, and its chapter is an article again.
+	await book(page).getByRole('button', { name: 'More' }).click()
+	await book(page).getByRole('button', { name: 'Remove', exact: true }).click()
+	await expect(book(page)).toContainText('Remove this book? Its chapters become articles again.')
+	await book(page).getByRole('button', { name: 'Yes, remove' }).click()
+	await expect(book(page)).toHaveCount(0)
+	await expect(readings(page).filter({ hasText: 'JavaScript execution model' })).toBeVisible()
 })
 
 test("books hold only the member's own articles from links", async ({}, info) => {

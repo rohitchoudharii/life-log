@@ -12,16 +12,18 @@ const bookColumns = {
 	chapterCount: sql<number>`(select count(*)::int ${chapters})`,
 	readCount: sql<number>`(select count(*)::int ${chapters} and r.read_at is not null)`,
 	continueId: sql<string | null>`(select c.reading_id ${chapters} and r.read_at is null and r.status = 'ready' order by c.position limit 1)`,
+	lastOpenedAt: sql<Date | null>`(select max(r.last_opened_at) ${chapters})`.mapWith(readings.lastOpenedAt),
 }
-type BookRow = { book: typeof books.$inferSelect; chapterCount: number; readCount: number; continueId: string | null }
+type BookRow = { book: typeof books.$inferSelect; chapterCount: number; readCount: number; continueId: string | null; lastOpenedAt: Date | null }
 
-const toBook = ({ book: b, chapterCount, readCount, continueId }: BookRow) => ({
+const toBook = ({ book: b, chapterCount, readCount, continueId, lastOpenedAt }: BookRow) => ({
 	id: b.id,
 	title: b.title,
 	author: b.author,
 	chapterCount,
 	readCount,
 	continueId,
+	lastOpenedAt,
 	createdAt: b.createdAt,
 })
 
