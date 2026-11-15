@@ -402,6 +402,11 @@ function settle(p: number, r: number) {
 	}
 	return v * (a * r + ((1 - a) * r) / 2 + p - r)
 }
+/**
+ * A page turn: the text fades out, moves, and fades back in, in this long, while the Pacer's clock
+ * waits. A fade moves nothing across the screen, so it reads as a new page, not as a scroll.
+ */
+const TURN_MS = 320
 /** How dark the lamps leave the text away from the reader's place, as a share of full ink; matches styles.css. */
 const LAMP_FLOOR = 0.55
 
@@ -421,6 +426,7 @@ function runPacer({
 	pace,
 	resumed,
 	bars,
+	floor,
 	onWord,
 	onEnd,
 }: {
@@ -431,6 +437,8 @@ function runPacer({
 	pace: number
 	resumed: boolean
 	bars: HTMLElement[]
+	/** How far down the window text can be read, above the Pacer's controls. */
+	floor: () => number
 	onWord: (i: number) => void
 	onEnd: () => void
 }) {
@@ -585,8 +593,8 @@ function runPacer({
 	// Time the page was too busy to draw, left out of the Pacer's clock: after a stall the guide goes
 	// on from where it was, rather than leaping ahead to catch up.
 	let lost = 0
-	// The page's move up to the next line, while one is under way.
-	let glide: { from: number; by: number; at: number } | null = null
+	// A page turn under way: when it started, how far the page moves, and whether it has moved yet.
+	let page: { at: number; by: number; moved: boolean } | null = null
 	let frame = 0
 	const tick = () => {
 		const real = performance.now()
@@ -594,6 +602,7 @@ function runPacer({
 		last = real
 		// Only a real stall counts: a device that draws fewer frames, such as one saving power, keeps full speed.
 		if (gap > 200) lost += gap - 1000 / 60
+		else if (page) lost += gap
 		const t = real - lost
 		const dt = Math.min(gap, 50)
 		const now = words()
@@ -614,20 +623,25 @@ function runPacer({
 		while (all[i + 1] && starts[i + 1]! <= t) i++
 		if (!all[i] || t >= end) return onEnd()
 		const cur = span(i)
-		// The page moves only as the reader goes to a new line, while the eyes sweep back anyway: once
-		// the line is below a calm height, the page eases up by about a line, and the text stays still
-		// while it is read. A line far out of view, such as after a tap low on the screen, is brought
-		// back in one smooth move.
-		if (shown < 0 || lineOf(shown) !== lineOf(i)) {
-			const y = el.getBoundingClientRect().top + cur.bottom
-			const calm = TOP + (window.innerHeight - TOP) * 0.35
-			if (y < TOP || y > window.innerHeight - 24) keepInView(wordRange(all[i]!).getBoundingClientRect())
-			else if (y > calm) glide = { from: window.scrollY, by: y - calm, at: real }
+		// Like a book, the text stays still while it is read. When the reader goes on to a line that
+		// is not fully on the page, the page turns: that line comes up near the top, under the line just
+		// read, which stays as a reminder of where the reader was.
+		if (!page && (shown < 0 || lineOf(shown) !== lineOf(i))) {
+			const box = el.getBoundingClientRect().top
+			const top = spot(cur.a).top
+			if (box + cur.bottom > floor() || box + top < TOP) {
+				const anchor = cur.a > 0 && all[cur.a - 1]!.block === all[cur.a]!.block ? spot(cur.a - 1).top : top
+				page = { at: real, by: box + anchor - (TOP + 16), moved: false }
+			}
 		}
-		if (glide) {
-			const p = clamp01((real - glide.at) / 350)
-			window.scrollTo(0, glide.from + glide.by * (p < 0.5 ? 2 * p * p : 1 - (2 - 2 * p) ** 2 / 2))
-			if (p === 1) glide = null
+		if (page) {
+			const p = (real - page.at) / TURN_MS
+			if (!page.moved && p >= 0.4) {
+				window.scrollBy(0, page.by)
+				page.moved = true
+			}
+			el.style.opacity = p >= 1 ? '' : String(p < 0.4 ? 1 - p / 0.4 : (p - 0.4) / 0.6)
+			if (p >= 1) page = null
 		}
 		if (i !== shown) {
 			shown = i
@@ -641,7 +655,11 @@ function runPacer({
 			if (cur.a > first) near.unshift(span(cur.a - 1))
 			if (all[cur.z + 1]) near.push(span(cur.z + 1))
 			const used = new Set<HTMLElement>()
+			// The guide runs a little ahead, so it can reach the next line before the page turns to it;
+			// it shows only on lines on the page, never under the controls or the header.
+			const [box, low] = [el.getBoundingClientRect().top, floor()]
 			for (const s of near) {
+				if (box + s.bottom > low || box + spot(s.a).top < TOP) continue
 				const o = Math.min(clamp01((g - s.from + 150) / 150), clamp01(1 - (g - s.to) / 150))
 				if (o <= 0) continue
 				const long = s.to - s.from
@@ -664,6 +682,7 @@ function runPacer({
 	return () => {
 		cancelAnimationFrame(frame)
 		resized.disconnect()
+		el.style.opacity = ''
 		for (let k = 0; k < levels.length; k++) CSS.highlights.delete(`pacer-${k}`)
 	}
 }
@@ -709,6 +728,7 @@ export function FocusPlayer({
 	// Set by a tap on a word, which always starts afresh there.
 	const tapped = useRef(false)
 	const bars = useRef<HTMLElement[]>([])
+	const controls = useRef<HTMLDivElement>(null)
 
 	useEffect(() => () => markWord(null), [])
 
@@ -771,6 +791,7 @@ export function FocusPlayer({
 				pace: Number(pace),
 				resumed: away !== null && away <= 15_000,
 				bars: bars.current,
+				floor: () => (controls.current?.getBoundingClientRect().top ?? window.innerHeight) - 12,
 				onWord: (i) => {
 					at.current = i
 					el.dataset.pacer = wordText(list()[i]!)
@@ -912,7 +933,7 @@ export function FocusPlayer({
 	const small = 'grid size-8 place-items-center rounded-full text-world-muted transition hover:bg-world hover:text-world-ink disabled:opacity-40'
 	return (
 		<div className="pointer-events-none fixed inset-x-0 bottom-24 z-30 flex justify-center px-4 leading-normal md:bottom-6">
-			<div role="group" aria-label={aid} className="pointer-events-auto flex items-center gap-1 rounded-full bg-world-card p-1.5 font-sans text-sm shadow-lg ring-1 ring-world-line">
+			<div ref={controls} role="group" aria-label={aid} className="pointer-events-auto flex items-center gap-1 rounded-full bg-world-card p-1.5 font-sans text-sm shadow-lg ring-1 ring-world-line">
 				<button
 					type="button"
 					onClick={() => setPlaying((p) => !p)}
