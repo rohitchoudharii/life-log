@@ -255,6 +255,21 @@ test('keyboard: L opens + Log, Esc closes it, 1 to 4 switch worlds, and typing i
 	await expect(page).toHaveURL('/')
 })
 
+test('on a wide screen the drawer folds to its dots, and still opens every world', async ({ page }, info) => {
+	test.skip(info.project.name !== 'desktop', 'desktop layout')
+	await joinAs(page)
+	const drawer = page.locator('aside').first()
+	await page.getByRole('button', { name: 'Collapse sidebar' }).click()
+	await expect(drawer.getByText('Life Log Club')).toBeHidden()
+	await expect.poll(async () => (await drawer.boundingBox())!.width).toBeLessThan(100)
+	await page.reload()
+	await page.getByRole('navigation', { name: 'Worlds' }).getByRole('link', { name: 'Body' }).click()
+	await expect(page).toHaveURL('/body')
+	await page.getByRole('button', { name: 'Expand sidebar' }).click()
+	await expect(drawer.getByText('Life Log Club')).toBeVisible()
+	await expect.poll(async () => (await drawer.boundingBox())!.width).toBeGreaterThan(200)
+})
+
 test('on a phone the worlds sit in a bottom bar with + Log in the middle', async ({ page }, info) => {
 	test.skip(info.project.name !== 'phone', 'phone layout')
 	await joinAs(page)

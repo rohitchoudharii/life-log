@@ -21,6 +21,24 @@ export function Button({ className = '', ...props }: ComponentProps<'button'>) {
 	)
 }
 
+/** A line icon in the current text colour; `children` are its SVG shapes on a 24 by 24 grid. */
+export function Icon({ children, className = 'size-4' }: { children: ReactNode; className?: string }) {
+	return (
+		<svg aria-hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={`shrink-0 ${className}`}>
+			{children}
+		</svg>
+	)
+}
+
+/** A panel at the left, with an arrow that says which way a click moves it. */
+export const PanelIcon = ({ open }: { open: boolean }) => (
+	<Icon>
+		<rect width="18" height="18" x="3" y="3" rx="2" />
+		<path d="M9 3v18" />
+		<path d={open ? 'm16 15-3-3 3-3' : 'm14 9 3 3-3 3'} />
+	</Icon>
+)
+
 export function ErrorText({ children }: { children: ReactNode }) {
 	if (!children) return null
 	return (

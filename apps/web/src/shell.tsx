@@ -6,6 +6,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { LogDialog } from './log-dialog'
 import { SignIn } from './pages/sign-in'
 import { orpc } from './rpc'
+import { Icon, PanelIcon } from './ui'
 
 export type World = 'home' | 'mind' | 'body' | 'heart'
 
@@ -46,6 +47,15 @@ function Shell({ user }: { user: User }) {
 		setLogType(type ?? lastType.current)
 	}
 	const signOut = useSignOut()
+	// The drawer at the left can fold to its dots and icons. Kept in this browser, since it depends on the screen.
+	const [navOpen, setNavOpen] = useState(() => localStorage.getItem('nav') !== 'collapsed')
+	const toggleNav = () => {
+		localStorage.setItem('nav', navOpen ? 'collapsed' : 'open')
+		setNavOpen(!navOpen)
+	}
+	// Folded, each row is its icon alone; the label stays for screen readers.
+	const row = `flex items-center gap-3 rounded-lg py-2 text-sm ${navOpen ? 'px-3' : 'justify-center px-0'}`
+	const label = navOpen ? 'flex-1 whitespace-nowrap' : 'sr-only'
 
 	useEffect(() => {
 		function onKey(e: KeyboardEvent) {
@@ -67,41 +77,69 @@ function Shell({ user }: { user: User }) {
 
 	return (
 		<OpenLog value={openLog}>
-			<div data-world={current.world} className="min-h-dvh md:grid md:grid-cols-[15rem_minmax(0,1fr)]">
-				<aside className="sticky top-0 hidden h-dvh flex-col gap-1 bg-navy p-4 font-sans text-white md:flex">
-					<Link to="/" className="mb-6 flex items-center gap-3 px-2">
-						<img src="/logo.png" alt="" className="size-10 rounded-xl" />
-						<span className="font-serif text-lg leading-tight">Life Log Club</span>
-					</Link>
+			<div
+				data-world={current.world}
+				className={`min-h-dvh md:grid md:transition-[grid-template-columns] ${navOpen ? 'md:grid-cols-[15rem_minmax(0,1fr)]' : 'md:grid-cols-[4.5rem_minmax(0,1fr)]'}`}
+			>
+				<aside className={`sticky top-0 hidden h-dvh flex-col gap-1 overflow-hidden bg-navy py-4 font-sans text-white md:flex ${navOpen ? 'px-4' : 'px-3'}`}>
+					{/* Open, the fold button sits beside the name; folded, it sits under the logo. */}
+					<div className={`mb-6 flex items-center gap-2 ${navOpen ? '' : 'flex-col'}`}>
+						<Link to="/" aria-label="Life Log Club" className="flex min-w-0 flex-1 items-center gap-3 px-1">
+							<img src="/logo.png" alt="" className="size-10 shrink-0 rounded-xl" />
+							{navOpen && <span className="font-serif text-lg leading-tight whitespace-nowrap">Life Log Club</span>}
+						</Link>
+						<button
+							type="button"
+							aria-label={navOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+							title={navOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+							aria-expanded={navOpen}
+							onClick={toggleNav}
+							className="grid size-8 shrink-0 place-items-center rounded-lg text-white/60 transition hover:bg-white/10 hover:text-white"
+						>
+							<PanelIcon open={navOpen} />
+						</button>
+					</div>
 					<nav aria-label="Worlds" className="grid gap-1">
 						{WORLDS.map((w, i) => (
 							<Link
 								key={w.to}
 								to={w.to}
 								activeOptions={{ exact: w.to === '/' }}
-								className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-white/75 transition hover:bg-white/10 hover:text-white [&.active]:bg-white/15 [&.active]:text-white"
+								title={navOpen ? undefined : `${w.label} · ${i + 1}`}
+								className={`${row} text-white/75 transition hover:bg-white/10 hover:text-white [&.active]:bg-white/15 [&.active]:text-white`}
 							>
-								<span className={`size-2.5 rounded-full ${w.dot}`} />
-								<span className="flex-1">{w.label}</span>
-								<kbd className="text-xs text-white/40">{i + 1}</kbd>
+								<span className={`size-2.5 shrink-0 rounded-full ${w.dot}`} />
+								<span className={label}>{w.label}</span>
+								{navOpen && <kbd className="text-xs text-white/40">{i + 1}</kbd>}
 							</Link>
 						))}
-						<span aria-disabled className="flex items-center gap-3 px-3 py-2 text-sm text-white/35">
-							<span className="size-2.5 rounded-full bg-path/60" />
-							<span className="flex-1">Path</span>
-							<span className="text-xs">later</span>
+						<span aria-disabled title={navOpen ? undefined : 'Path · later'} className={`${row} text-white/35`}>
+							<span className="size-2.5 shrink-0 rounded-full bg-path/60" />
+							<span className={label}>Path</span>
+							{navOpen && <span className="text-xs">later</span>}
 						</span>
 					</nav>
-					<div className="mt-auto grid gap-1 border-t border-white/10 pt-3 text-sm">
-						<Link to="/settings" className="rounded-lg px-3 py-2 text-white/75 hover:bg-white/10 hover:text-white [&.active]:bg-white/15">
-							Settings
+					<div className="mt-auto grid gap-1 border-t border-white/10 pt-3">
+						<Link to="/settings" title={navOpen ? undefined : 'Settings'} className={`${row} text-white/75 hover:bg-white/10 hover:text-white [&.active]:bg-white/15`}>
+							<Icon>
+								<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+								<circle cx="12" cy="12" r="3" />
+							</Icon>
+							<span className={label}>Settings</span>
 						</Link>
-						<button type="button" onClick={() => signOut.mutate({})} className="rounded-lg px-3 py-2 text-left text-white/75 hover:bg-white/10 hover:text-white">
-							Sign out
+						<button type="button" title={navOpen ? undefined : 'Sign out'} onClick={() => signOut.mutate({})} className={`${row} text-left text-white/75 hover:bg-white/10 hover:text-white`}>
+							<Icon>
+								<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+								<path d="m16 17 5-5-5-5" />
+								<path d="M21 12H9" />
+							</Icon>
+							<span className={label}>Sign out</span>
 						</button>
-						<p className="px-3 pt-2 text-xs text-white/40">
-							<kbd>L</kbd> log · <kbd>1</kbd>–<kbd>4</kbd> worlds
-						</p>
+						{navOpen && (
+							<p className="px-3 pt-2 text-xs whitespace-nowrap text-white/40">
+								<kbd>L</kbd> log · <kbd>1</kbd>–<kbd>4</kbd> worlds
+							</p>
+						)}
 					</div>
 				</aside>
 
