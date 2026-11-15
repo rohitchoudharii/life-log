@@ -3,3 +3,5 @@ packages:
   - packages/*
 allowBuilds:
   esbuild: true
+  # Its install script only asks for donations; OCR works without it.
+  tesseract.js: false

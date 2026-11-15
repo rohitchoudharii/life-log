@@ -12,7 +12,8 @@ export default defineConfig({
 	modules: ['@wxt-dev/module-react'],
 	publicDir: 'icons',
 	// A visible folder, so Chrome's Load unpacked file picker shows it without revealing hidden files.
-	outDir: 'dist',
+	// The production build goes to its own folder, so it and a local build can be loaded side by side.
+	outDir: appOrigin === 'https://lifelog.club' ? 'dist/prod' : 'dist',
 	vite: () => ({ define: { __APP_ORIGIN__: JSON.stringify(appOrigin) } }),
 	manifest: ({ mode }) => ({
 		name: 'Life Log Club',

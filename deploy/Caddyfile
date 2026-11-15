@@ -1,0 +1,42 @@
+# Serves the web app and passes the API's paths to the api container. Caddy gets and renews the
+# HTTPS certificate for {$DOMAIN} by itself. It ignores X-Forwarded-For from clients and sets it to
+# the real address, which the API trusts (TRUST_PROXY).
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# The GoDaddy site that used this domain before installed a service worker at /sw.js, which
+	# keeps showing that old site to browsers that visited it. The app has no service worker, so
+	# this one replaces the old one, removes itself and reloads the page from the server.
+	handle /sw.js {
+		header Content-Type "text/javascript; charset=utf-8"
+		header Cache-Control "no-store"
+		respond `self.addEventListener('install', () => self.skipWaiting())
+self.addEventListener('activate', (event) => {
+	event.waitUntil(
+		self.registration
+			.unregister()
+			.then(() => self.clients.matchAll({ type: 'window' }))
+			.then((clients) => clients.forEach((client) => client.navigate(client.url))),
+	)
+})
+` 200
+	}
+
+	@api path /rpc/* /media/* /health
+	handle @api {
+		reverse_proxy api:8787
+	}
+
+	handle {
+		root * /srv
+		# Vite names these files by their content, so they can be cached for good.
+		header /assets/* cache-control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
+}

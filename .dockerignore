@@ -1,0 +1,9 @@
+**/node_modules
+**/dist
+**/.env
+.git
+.amp
+.claude
+test-results
+playwright-report
+deploy/.env

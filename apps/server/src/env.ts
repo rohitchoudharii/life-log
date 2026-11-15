@@ -6,6 +6,11 @@ const Env = z.object({
 	DATABASE_OWNER_URL: z.url(),
 	DATABASE_URL: z.url(),
 	APP_ORIGIN: z.url().default('http://localhost:5173'),
+	/**
+	 * Set to 1 when a reverse proxy that sets X-Forwarded-For (Caddy in deploy/) is the only way
+	 * in, so sign-in limits count each client's address instead of the proxy's.
+	 */
+	TRUST_PROXY: z.stringbool().default(false),
 	/** Encrypts private fields. Keep a copy outside the server: without it they can't be read. */
 	ENCRYPTION_KEY: z
 		.string()

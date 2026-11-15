@@ -36,6 +36,27 @@ pnpm e2e         # Playwright; starts its own API (:8788), web app (:5174) and f
 - Before the first e2e run: `pnpm exec playwright install chromium`.
 - Run one package's tests with `pnpm --filter @life-log-club/server test` (or `domain`, `web`).
 
+## Production
+
+The app runs at https://lifelog.club on one Amazon Lightsail server (Ubuntu, Sydney, static IP `52.65.175.188`) with Docker Compose: Postgres, the API, and Caddy for HTTPS. `deploy/README.md` explains the setup.
+
+The owner tests changes on the live site, so deploying is part of finishing a change here:
+
+```bash
+pnpm typecheck      # must pass first; a broken build stops the deploy, and the old version keeps running
+pnpm deploy:prod    # copies this working tree to the server, rebuilds, restarts; takes 2 to 4 minutes
+curl https://lifelog.club/health   # expect {"ok":true}
+pnpm logs:prod      # the last 100 log lines of every container; add `api` for the API only
+pnpm invite:prod someone@example.com   # prints an invite link for that email
+pnpm extension:prod  # builds the Chrome extension for lifelog.club into apps/extension/dist/prod/chrome-mv3
+```
+
+- `pnpm deploy:prod` sends the files on disk, not what is committed, so check `git status` first: only finished work goes live.
+- Migrations run when the API starts. A deploy keeps the data (Postgres lives on a Docker volume).
+- Production holds real members' data. Never run `docker compose down -v`, delete volumes, drop or truncate tables, or edit `deploy/.env` on the server. Never print the contents of `deploy/.env`.
+- The SSH key is `~/.ssh/life-log-lightsail.pem` on the owner's Mac. Use the IP, not `lifelog.club`, to reach the server.
+- A copy of the server's secrets is in `~/Documents/life-log-secrets/production.env`. Without its `ENCRYPTION_KEY`, encrypted notes cannot be read.
+
 ## How the server works
 
 - **Contract first.** A new endpoint starts in `packages/contract/src/index.ts`, gets its handler in `apps/server/src/routes/`, and is added to `apps/server/src/router.ts`. Clients only call the API through the contract.
